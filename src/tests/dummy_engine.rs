@@ -3,7 +3,8 @@ use crate::pairing::{
     CurveProjective,
     CurveAffine,
     GroupDecodingError,
-    EncodedPoint
+    EncodedPoint,
+    RawEncodable
 };
 
 use crate::pairing::ff::{
@@ -87,6 +88,12 @@ impl Field for Fr {
 
     fn frobenius_map(&mut self, _: usize) {
         // identity
+    }
+}
+
+impl RawEncodable for Fr {
+    fn into_raw_uncompressed_le(&self) -> Self::Uncompressed {
+        Self::Uncompressed::empty()
     }
 }
 
@@ -248,6 +255,10 @@ impl PrimeField for Fr {
     }
 
     fn into_repr(&self) -> FrRepr {
+        FrRepr::from(*self)
+    }
+
+    fn into_raw_repr(&self) -> FrRepr {
         FrRepr::from(*self)
     }
 

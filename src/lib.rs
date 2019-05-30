@@ -3,7 +3,7 @@
 #[macro_use]
 
 extern crate cfg_if;
-extern crate pairing_ce as pairing_import;
+pub extern crate pairing_ce as pairing;
 extern crate rand;
 extern crate bit_vec;
 extern crate byteorder;
@@ -13,6 +13,9 @@ mod log;
 
 pub mod domain;
 pub mod groth16;
+
+#[cfg(feature = "gpu")]
+pub mod groth16_gpu;
 
 #[cfg(feature = "gm17")]
 pub mod gm17;
@@ -43,9 +46,8 @@ cfg_if! {
     }
 }
 
-pub mod pairing {
-    pub use pairing_import::*;
-}
+pub use pairing::*;
+pub use pairing::ff::*;
 
 mod cs;
 pub use self::cs::*;
