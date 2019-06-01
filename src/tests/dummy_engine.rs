@@ -95,6 +95,17 @@ impl RawEncodable for Fr {
     fn into_raw_uncompressed_le(&self) -> Self::Uncompressed {
         Self::Uncompressed::empty()
     }
+
+    fn from_raw_uncompressed_le_unchecked(
+            encoded: &Self::Uncompressed, 
+            _infinity: bool
+    ) -> Result<Self, GroupDecodingError> {
+        Ok(<Self as Field>::zero())
+    }
+
+    fn from_raw_uncompressed_le(encoded: &Self::Uncompressed, _infinity: bool) -> Result<Self, GroupDecodingError> {
+        Self::from_raw_uncompressed_le_unchecked(&encoded, _infinity)
+    }
 }
 
 impl SqrtField for Fr {
@@ -247,6 +258,14 @@ impl PrimeField for Fr {
     const S: u32 = 10;
 
     fn from_repr(repr: FrRepr) -> Result<Self, PrimeFieldDecodingError> {
+        if repr.0[0] >= (MODULUS_R.0 as u64) {
+            Err(PrimeFieldDecodingError::NotInField(format!("{}", repr)))
+        } else {
+            Ok(Fr(Wrapping(repr.0[0] as u32)))
+        }
+    }
+
+    fn from_raw_repr(repr: FrRepr) -> Result<Self, PrimeFieldDecodingError> {
         if repr.0[0] >= (MODULUS_R.0 as u64) {
             Err(PrimeFieldDecodingError::NotInField(format!("{}", repr)))
         } else {
