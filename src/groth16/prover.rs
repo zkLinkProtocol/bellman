@@ -281,7 +281,11 @@ impl<E:Engine> PreparedProver<E> {
         g_b.add_assign(&b2_answer);
         b1_answer.mul_assign(r);
         g_c.add_assign(&b1_answer);
-        g_c.add_assign(&h.wait()?);
+        let h = h.wait()?;
+
+        println!("Verbose: H affine = {}", h.into_affine());
+        g_c.add_assign(&h);
+        // g_c.add_assign(&h.wait()?);
         g_c.add_assign(&l.wait()?);
 
         elog_verbose!("{} seconds for prover for point multiplication", stopwatch.elapsed());
