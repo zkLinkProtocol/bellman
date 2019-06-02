@@ -86,6 +86,27 @@ fn eval<E: Engine>(
     acc
 }
 
+pub(crate) fn scalars_into_representations<E: Engine>(
+    worker: &Worker,
+    scalars: Vec<E::Fr>
+) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
+{   
+    let mut representations = vec![<E::Fr as PrimeField>::Repr::default(); scalars.len()];
+    worker.scope(scalars.len(), |scope, chunk| {
+        for (scalar, repr) in scalars.chunks(chunk)
+                    .zip(representations.chunks_mut(chunk)) {
+            scope.spawn(move |_| {
+                for (scalar, repr) in scalar.iter()
+                                        .zip(repr.iter_mut()) {
+                    *repr = scalar.into_repr();
+                }
+            });
+        }
+    });
+
+    Ok(representations)
+}
+
 // This is a proving assignment with densities precalculated
 pub struct PreparedProver<E: Engine>{
     assignment: ProvingAssignment<E>,
@@ -213,13 +234,19 @@ impl<E:Engine> PreparedProver<E> {
 
         // TODO: Check that difference in operations for different chunks is small
 
+        let input_len = prover.input_assignment.len();
+        let aux_len = prover.aux_assignment.len();
+
+        let input_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.input_assignment)?);
+        let aux_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.aux_assignment)?);
+
         // TODO: parallelize if it's even helpful
         // TODO: in large settings it may worth to parallelize
-        let input_assignment = Arc::new(prover.input_assignment.into_iter().map(|s| s.into_repr()).collect::<Vec<_>>());
-        let aux_assignment = Arc::new(prover.aux_assignment.into_iter().map(|s| s.into_repr()).collect::<Vec<_>>());
+        // let input_assignment = Arc::new(prover.input_assignment.into_iter().map(|s| s.into_repr()).collect::<Vec<_>>());
+        // let aux_assignment = Arc::new(prover.aux_assignment.into_iter().map(|s| s.into_repr()).collect::<Vec<_>>());
 
-        let input_len = input_assignment.len();
-        let aux_len = aux_assignment.len();
+        // let input_len = input_assignment.len();
+        // let aux_len = aux_assignment.len();
         elog_verbose!("H query is dense in G1,\nOther queries are {} elements in G1 and {} elements in G2",
             2*(input_len + aux_len) + aux_len, input_len + aux_len);
 
@@ -281,11 +308,6 @@ impl<E:Engine> PreparedProver<E> {
         g_b.add_assign(&b2_answer);
         b1_answer.mul_assign(r);
         g_c.add_assign(&b1_answer);
-        // let h = h.wait()?;
-
-        // println!("Verbose: H affine = {}", h.into_affine());
-        // g_c.add_assign(&h);
-        // return Err(SynthesisError::UnexpectedIdentity);
         g_c.add_assign(&h.wait()?);
         g_c.add_assign(&l.wait()?);
 

@@ -26,6 +26,8 @@ use crate::groth16::{
     Proof
 };
 
+use crate::groth16::scalars_into_representations;
+
 use crate::groth16_gpu::GpuParametersSource;
 
 use crate::{
@@ -164,26 +166,26 @@ fn encode_scalars_into_montgommery_representations<E: Engine>(
     Ok(representation)
 }
 
-fn scalars_into_representations<E: Engine>(
-    worker: &Worker,
-    scalars: Vec<E::Fr>
-) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
-{   
-    let mut representations = vec![<E::Fr as PrimeField>::Repr::default(); scalars.len()];
-    worker.scope(scalars.len(), |scope, chunk| {
-        for (scalar, repr) in scalars.chunks(chunk)
-                    .zip(representations.chunks_mut(chunk)) {
-            scope.spawn(move |_| {
-                for (scalar, repr) in scalar.iter()
-                                        .zip(repr.iter_mut()) {
-                    *repr = scalar.into_repr();
-                }
-            });
-        }
-    });
+// fn scalars_into_representations<E: Engine>(
+//     worker: &Worker,
+//     scalars: Vec<E::Fr>
+// ) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
+// {   
+//     let mut representations = vec![<E::Fr as PrimeField>::Repr::default(); scalars.len()];
+//     worker.scope(scalars.len(), |scope, chunk| {
+//         for (scalar, repr) in scalars.chunks(chunk)
+//                     .zip(representations.chunks_mut(chunk)) {
+//             scope.spawn(move |_| {
+//                 for (scalar, repr) in scalar.iter()
+//                                         .zip(repr.iter_mut()) {
+//                     *repr = scalar.into_repr();
+//                 }
+//             });
+//         }
+//     });
 
-    Ok(representations)
-}
+//     Ok(representations)
+// }
 
 fn representations_to_encoding<E: Engine> (
     worker: &Worker,
