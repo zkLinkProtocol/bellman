@@ -20,7 +20,7 @@ use crate::groth16::Parameters;
 use crate::groth16::VerifyingKey;
 
 pub trait GpuParametersSource<E: Engine> {
-    // type G1Encodings: Send + Sync + 'static + AsRef<u8>;
+    // type G1Reference: AsRef<E::G1Affine>;
     type G1Builder: SourceBuilder<E::G1Affine>;
     type G2Builder: SourceBuilder<E::G2Affine>;
 
@@ -40,12 +40,12 @@ pub trait GpuParametersSource<E: Engine> {
         &mut self,
         num_inputs: usize,
         num_aux: usize
-    ) -> Result<(Self::G1Builder, Self::G1Builder), SynthesisError>;
+    ) -> Result<(Self::G1Builder, Arc<& [E::G1Affine]>), SynthesisError>;
     fn get_b_g1(
         &mut self,
         num_inputs: usize,
         num_aux: usize
-    ) -> Result<(Self::G1Builder, Self::G1Builder), SynthesisError>;
+    ) -> Result<(Self::G1Builder, Arc<& [E::G1Affine]>), SynthesisError>;
     fn get_b_g2(
         &mut self,
         num_inputs: usize,
@@ -211,7 +211,7 @@ impl<E: Engine> PartialEq for GpuParameters<E> {
 // }
 
 impl<'a, E: Engine> GpuParametersSource<E> for &'a GpuParameters<E> {
-    // type G1Encodings = Arc<Vec<u8>>;
+    // type G1Reference = Arc<&'a [E::G1Affine]>;
     type G1Builder = (Arc<Vec<E::G1Affine>>, usize);
     type G2Builder = (Arc<Vec<E::G2Affine>>, usize);
 
@@ -255,18 +255,18 @@ impl<'a, E: Engine> GpuParametersSource<E> for &'a GpuParameters<E> {
         &mut self,
         num_inputs: usize,
         _: usize
-    ) -> Result<(Self::G1Builder, Self::G1Builder), SynthesisError>
+    ) -> Result<(Self::G1Builder, Arc<&[E::G1Affine]>), SynthesisError>
     {
-        Ok(((self.a.clone(), 0), (self.a.clone(), num_inputs)))
+        Ok(((self.a.clone(), 0), Arc::new(&self.a[num_inputs..])))
     }
 
     fn get_b_g1(
         &mut self,
         num_inputs: usize,
         _: usize
-    ) -> Result<(Self::G1Builder, Self::G1Builder), SynthesisError>
+    ) -> Result<(Self::G1Builder, Arc<&[E::G1Affine]>), SynthesisError>
     {
-        Ok(((self.b_g1.clone(), 0), (self.b_g1.clone(), num_inputs)))
+        Ok(((self.b_g1.clone(), 0), Arc::new(&self.b_g1[num_inputs..])))
     }
 
     fn get_b_g2(
