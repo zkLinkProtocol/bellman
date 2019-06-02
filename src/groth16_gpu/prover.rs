@@ -280,14 +280,14 @@ impl<E:Engine> PreparedProver<E> {
 
             let m_inv_repr = {
                 let mut repr = vec![];
-                m_inv.into_raw_repr().write_le(&mut repr);
+                m_inv.into_raw_repr().write_le(&mut repr)?;
 
                 repr
             };
 
             let z_inv_repr = {
                 let mut repr = vec![];
-                z_inv.into_raw_repr().write_le(&mut repr);
+                z_inv.into_raw_repr().write_le(&mut repr)?;
 
                 repr
             };
@@ -337,10 +337,10 @@ impl<E:Engine> PreparedProver<E> {
             }
 
             println!("G1 uncompressed representation length = {}", g1_repr_length);
-            let h_point_vector = unsafe {
+            let h_affine = unsafe {
 
                 let mut empty_repr_bytes = vec![];
-                let empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+                let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
                 (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
 
 
@@ -359,11 +359,26 @@ impl<E:Engine> PreparedProver<E> {
                     check_representation.as_ptr()
                 );
 
-                empty_repr_bytes
+                if result != 0 {
+                    println!("Error in CUDA routine");
+                    return Err(SynthesisError::AssignmentMissing);
+                }
+
+                use std::io::Read;
+
+                (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+                let h_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false).map_err(|_| SynthesisError::AssignmentMissing)?;
+
+                println!("H from CUDA = {}", h_affine);
+
+                h_affine
             };
+
+            h_affine
         };
 
-        let h = E::G1Affine::zero().into_projective();
+        let h = h.into_projective();
 
         elog_verbose!("{} seconds for prover for H evaluation (mostly FFT)", stopwatch.elapsed());
 
@@ -560,7 +575,7 @@ pub fn create_random_proof<E, C, R, P: BasesSource<E> + ParameterSource<E>>(
 
 pub fn create_proof<E, C, P: BasesSource<E> + ParameterSource<E>>(
     circuit: C,
-    mut params: P,
+    params: P,
     r: E::Fr,
     s: E::Fr
 ) -> Result<Proof<E>, SynthesisError>
