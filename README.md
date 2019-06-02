@@ -16,6 +16,18 @@ at your option.
 - [Edcon2019_material](https://github.com/matter-labs/Edcon2019_material)
 - [EDCON Workshop record (youtube): Intro to bellman: Practical zkSNARKs constructing for Ethereum](https://www.youtube.com/watch?v=tUY0YGTpehg&t=74s)
 
+### Benchmarking
+
+Benchmark on CPU
+```
+cargo +nightly bench --no-default-features --features multicore
+```
+
+Benchmark on GPU
+```
+cargo +nightly bench --no-default-features --features gpu
+```
+
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally
