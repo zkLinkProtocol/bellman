@@ -369,7 +369,11 @@ fn test_mimc_bn256_gpu() {
             constants: &constants
         };
 
-        generate_random_parameters(c, rng).unwrap()
+        let params = generate_random_parameters(c, rng).unwrap();
+
+        use bellman_ce::groth16_gpu::GpuParameters;
+
+        GpuParameters::from_parameters(params)
     };
 
     // Prepare the verification key (for proof verification)

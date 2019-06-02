@@ -2,6 +2,8 @@ use crate::log::Stopwatch;
 
 use rand::Rng;
 
+use std::io::Read;
+use std::io::Write;
 use std::sync::Arc;
 
 use futures::Future;
@@ -21,11 +23,10 @@ use crate::pairing::ff::{
 };
 
 use crate::groth16::{
-    ParameterSource,
     Proof
 };
 
-use crate::groth16_gpu::BasesSource;
+use crate::groth16_gpu::GpuParametersSource;
 
 use crate::{
     SynthesisError,
@@ -46,7 +47,7 @@ use crate::source::{
     FullDensity
 };
 
-use crate::multiexp::*;
+use crate::multiexp::multiexp;
 
 use crate::worker::{
     Worker
@@ -94,6 +95,126 @@ fn eval<E: Engine>(
 // This is a proving assignment with densities precalculated
 pub struct PreparedProver<E: Engine>{
     assignment: ProvingAssignment<E>,
+}
+
+// fn encode_scalar_representations<E: Engine> (
+//     worker: &Worker,
+//     scalars: &[Scalar<E>]
+// ) -> Result<Vec<u8>, SynthesisError>
+// {   
+//     let representation_size = {
+//         let mut v = vec![];
+//         let zero = E::Fr::zero().into_repr();
+//         zero.write_le(&mut v[..])?;
+
+//         v.len()
+//     };
+//     let mut representation = vec![0u8; scalars.len() * representation_size];
+//     worker.scope(scalars.len(), |scope, chunk| {
+//         for (i, (scalar, repr)) in scalars.chunks(chunk)
+//                     .zip(representation.chunks_mut(chunk*representation_size))
+//                     .enumerate() {
+//             scope.spawn(move |_| {
+//                 for (j, scalar) in scalar.iter()
+//                                             .enumerate() {
+//                     let start = (i*chunk + j)*representation_size;
+//                     let end = (i*chunk + j + 1)*representation_size;
+//                     let write_to = &mut repr[start..end];
+//                     let scalar_repr = scalar.0.into_repr();
+//                     scalar_repr.write_le(write_to).expect("must encode");
+//                 }
+//             });
+//         }
+//     });
+
+//     Ok(representation)
+// }
+
+
+fn encode_scalars_into_montgommery_representations<E: Engine>(
+    worker: &Worker,
+    scalars: Vec<Scalar<E>>
+) -> Result<Vec<u8>, SynthesisError>
+{   
+    let representation_size = {
+        let mut v = vec![];
+        let zero = E::Fr::zero().into_repr();
+        zero.write_le(&mut v[..])?;
+
+        v.len()
+    };
+    let mut representation = vec![0u8; scalars.len() * representation_size];
+    worker.scope(scalars.len(), |scope, chunk| {
+        for (i, (scalar, repr)) in scalars.chunks(chunk)
+                    .zip(representation.chunks_mut(chunk*representation_size))
+                    .enumerate() {
+            scope.spawn(move |_| {
+                for (j, scalar) in scalar.iter()
+                                            .enumerate() {
+                    let start = (i*chunk + j)*representation_size;
+                    let end = (i*chunk + j + 1)*representation_size;
+                    let write_to = &mut repr[start..end];
+                    let scalar_repr = scalar.0.into_raw_repr();
+                    scalar_repr.write_le(write_to).expect("must encode");
+                }
+            });
+        }
+    });
+
+    Ok(representation)
+}
+
+fn scalars_into_representations<E: Engine>(
+    worker: &Worker,
+    scalars: Vec<E::Fr>
+) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
+{   
+    let mut representations = vec![<E::Fr as PrimeField>::Repr::default(); scalars.len()];
+    worker.scope(scalars.len(), |scope, chunk| {
+        for (scalar, repr) in scalars.chunks(chunk)
+                    .zip(representations.chunks_mut(chunk)) {
+            scope.spawn(move |_| {
+                for (scalar, repr) in scalar.iter()
+                                        .zip(repr.iter_mut()) {
+                    *repr = scalar.into_repr();
+                }
+            });
+        }
+    });
+
+    Ok(representations)
+}
+
+fn representations_to_encoding<E: Engine> (
+    worker: &Worker,
+    scalars: &[<E::Fr as PrimeField>::Repr]
+) -> Result<Vec<u8>, SynthesisError>
+{   
+    let representation_size = {
+        let mut v = vec![];
+        let zero = E::Fr::zero().into_repr();
+        zero.write_le(&mut v[..])?;
+
+        v.len()
+    };
+    let mut representation = vec![0u8; scalars.len() * representation_size];
+    worker.scope(scalars.len(), |scope, chunk| {
+        for (i, (scalar, repr)) in scalars.chunks(chunk)
+                    .zip(representation.chunks_mut(chunk*representation_size))
+                    .enumerate() {
+            scope.spawn(move |_| {
+                for (j, scalar) in scalar.iter()
+                                            .enumerate() {
+                    let start = (i*chunk + j)*representation_size;
+                    let end = (i*chunk + j + 1)*representation_size;
+                    let write_to = &mut repr[start..end];
+                    scalar.write_le(write_to).expect("must encode");
+                }
+            });
+        }
+    });
+
+    Ok(representation)
 }
 
 #[derive(Clone)]
@@ -200,10 +321,18 @@ extern "C"{
         m_inv: *const u8,
         result_ptr: *mut u8
     ) -> u32;
+
+    fn dense_multiexp(
+        len: u64, 
+        scalars_repr: *const u8,
+        bases_repr: *const u8,
+        convert_from_montgommery: bool,
+        result_ptr: *mut u8
+    ) -> u32;
 }
 
 impl<E:Engine> PreparedProver<E> {
-    pub fn create_random_proof<R, P: BasesSource<E> + ParameterSource<E>>(
+    pub fn create_random_proof<R, P: GpuParametersSource<E>>(
         self,
         params: P,
         rng: &mut R
@@ -216,7 +345,7 @@ impl<E:Engine> PreparedProver<E> {
         self.create_proof(params, r, s)
     }
 
-    pub fn create_proof<P: BasesSource<E> + ParameterSource<E>>(
+    pub fn create_proof<P: GpuParametersSource<E>>(
         self,
         mut params: P,
         r: E::Fr,
@@ -230,52 +359,21 @@ impl<E:Engine> PreparedProver<E> {
 
         let stopwatch = Stopwatch::new();
 
-        // Kostya: here you start
-        let h = {
-            use std::io::Write;
+        let a_len = prover.a.len();
+        let b_len = prover.b.len();
+        let c_len = prover.c.len();
 
-            let a_len = prover.a.len();
-            let b_len = prover.b.len();
-            let c_len = prover.c.len();
+        let a_representation = encode_scalars_into_montgommery_representations(&worker, prover.a)?;
+        let b_representation = encode_scalars_into_montgommery_representations(&worker, prover.b)?;
+        let c_representation = encode_scalars_into_montgommery_representations(&worker, prover.c)?;
 
-            let (mut expected_h_len, z_inv, m_inv) = calculate_evaluation_domain_params::<E>(a_len)?;
-            elog_verbose!("H query domain size is {}", expected_h_len);
-            expected_h_len = expected_h_len - 1;
-            // TODO: all these can be parallelized
+        let (mut expected_h_len, z_inv, m_inv) = calculate_evaluation_domain_params::<E>(a_len)?;
+        elog_verbose!("H query domain size is {}", expected_h_len);
+        expected_h_len = expected_h_len - 1;
 
-            let mut a_representation: Vec<u8> = vec![];
-            for element in prover.a.into_iter() {
-                let scalar_repr = element.0.into_raw_repr();
-                scalar_repr.write_le(&mut a_representation)?;
-            }
+        let h_bases_representation = params.get_h_bases(expected_h_len)?;
 
-            let mut b_representation: Vec<u8> = vec![];
-            for element in prover.b.into_iter() {
-                let scalar_repr = element.0.into_raw_repr();
-                scalar_repr.write_le(&mut b_representation)?;
-            }
-
-            let mut c_representation: Vec<u8> = vec![];
-            for element in prover.c.into_iter() {
-                let scalar_repr = element.0.into_raw_repr();
-                scalar_repr.write_le(&mut c_representation)?;
-            }
-
-            // println!("Encoded A length = {} bytes", a_representation.len());
-
-            use crate::groth16_gpu::BasesSource;
-
-            let h_bases = params.get_h_bases(expected_h_len)?;
-            let mut bases_representation: Vec<u8> = vec![];
-            for i in 0..h_bases.as_ref().len() {
-                // for base in h_bases.iter() {
-                let base = h_bases.as_ref()[i];
-                let g1_representation = base.into_raw_uncompressed_le();
-                (&mut bases_representation).write(g1_representation.as_ref())?;
-            }
-
-            // println!("Encoded bases length = {} bytes", bases_representation.len());
-
+        let h = worker.compute(move || { 
             let m_inv_repr = {
                 let mut repr = vec![];
                 m_inv.into_raw_repr().write_le(&mut repr)?;
@@ -290,24 +388,10 @@ impl<E:Engine> PreparedProver<E> {
                 repr
             };
 
-
-            // let g1_repr_length = {
-            //     let mut empty_repr_bytes = vec![];
-            //     let empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
-            //     (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
-
-            //     empty_repr_bytes.len() 
-            // };
-
-            // println!("G1 uncompressed representation length = {}", g1_repr_length);
             let h_affine = unsafe {
 
-                let mut empty_repr_bytes = vec![];
+                let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
                 let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
-                (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
-
-                // let mut empty_repr_bytes = vec![0u8; 96];
-
 
                 let result = evaluate_h(
                     a_len as u64,
@@ -317,7 +401,7 @@ impl<E:Engine> PreparedProver<E> {
                     a_representation.as_ptr(),
                     b_representation.as_ptr(),
                     c_representation.as_ptr(),
-                    bases_representation.as_ptr(),
+                    h_bases_representation.as_ref().as_ptr(),
                     z_inv_repr.as_ptr(),
                     m_inv_repr.as_ptr(),
                     empty_repr_bytes.as_mut_ptr()
@@ -327,46 +411,6 @@ impl<E:Engine> PreparedProver<E> {
                     elog_verbose!("Error in CUDA routine");
                     return Err(SynthesisError::AssignmentMissing);
                 }
-
-                use std::io::Read;
-
-                // let mut field_element_bytes = vec![];
-                // let mut field_element_repr = E::Fq::zero().into_raw_repr();
-                // field_element_repr.write_le(&mut field_element_bytes)?;
-
-                // let field_element_len = field_element_bytes.len();
-
-                // assert!(empty_repr_bytes.len() == 2*field_element_len);
-
-                // (&empty_repr_bytes[0..field_element_len]).read_exact(&mut field_element_bytes.as_mut())?;
-                // field_element_repr.read_le(&field_element_bytes[..]);
-
-                // let mut x = E::Fq::from_raw_repr(field_element_repr).unwrap();
-
-                // (&empty_repr_bytes[field_element_len..2*field_element_len]).read_exact(&mut field_element_bytes.as_mut())?;
-                // field_element_repr.read_le(&field_element_bytes[..]);
-
-                // let mut y = E::Fq::from_raw_repr(field_element_repr).unwrap();
-
-                // (&empty_repr_bytes[2*field_element_len..3*field_element_len]).read_exact(&mut field_element_bytes.as_mut())?;
-                // field_element_repr.read_le(&field_element_bytes[..]);
-
-                // let z = E::Fq::from_raw_repr(field_element_repr).unwrap();
-
-                // println!("X in mont= {}", x.into_raw_repr());
-                // println!("Y in mont = {}", y.into_raw_repr());
-                // println!("Z in mont = {}", z.into_raw_repr());
-
-                // let z_inv = z.inverse().unwrap();
-                // x.mul_assign(&z_inv);
-                // y.mul_assign(&z_inv);
-
-                // println!("X = {}", x);
-                // println!("Y = {}", y);
-
-                // let h_affine = E::G1Affine::zero();
-
-                // h_affine
 
                 (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
 
@@ -384,29 +428,59 @@ impl<E:Engine> PreparedProver<E> {
                 h_affine
             };
 
-            h_affine
-        };
-
-        let h = h.into_projective();
+            Ok(h_affine.into_projective())
+        });
 
         elog_verbose!("{} seconds for prover for H evaluation on GPU", stopwatch.elapsed());
 
         let stopwatch = Stopwatch::new();
 
-        // TODO: Check that difference in operations for different chunks is small
+        let input_len = prover.input_assignment.len();
+        let aux_len = prover.aux_assignment.len();
 
-        // TODO: parallelize if it's even helpful
-        // TODO: in large settings it may worth to parallelize
-        let input_assignment = Arc::new(prover.input_assignment.into_iter().map(|s| s.into_repr()).collect::<Vec<_>>());
-        let aux_assignment = Arc::new(prover.aux_assignment.into_iter().map(|s| s.into_repr()).collect::<Vec<_>>());
+        let input_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.input_assignment)?);
+        let aux_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.aux_assignment)?);
 
-        let input_len = input_assignment.len();
-        let aux_len = aux_assignment.len();
         elog_verbose!("H query is dense in G1,\nOther queries are {} elements in G1 and {} elements in G2",
             2*(input_len + aux_len) + aux_len, input_len + aux_len);
 
+        let scalars_encoding = representations_to_encoding::<E>(&worker, &aux_assignment[..])?;
+        let l_bases_representation = params.get_l(aux_assignment.len())?;
+
+        let l = worker.compute(move || {
+            // let l_bases_representation = params.get_l(aux_assignment.len())?;
+
+            // let scalars_encoding = representations_to_encoding(&worker, &aux_assignment[..])?;
+
+            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
+            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+
+            let result = unsafe { dense_multiexp(
+                aux_len as u64,
+                scalars_encoding.as_ptr(),
+                l_bases_representation.as_ref().as_ptr(),
+                false,
+                empty_repr_bytes.as_mut_ptr()
+            ) };
+
+            if result != 0 {
+                elog_verbose!("Error in CUDA routine");
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+            let l_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+            if l_affine.is_err() {
+                elog_verbose!("Error parsing point {}", l_affine.unwrap_err());
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            Ok(l_affine.unwrap().into_projective())
+        });
+
         // Run a dedicated process for dense vector
-        let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
+        // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
 
         let a_aux_density_total = prover.a_aux_density.get_total_density();
 
@@ -463,7 +537,7 @@ impl<E:Engine> PreparedProver<E> {
         g_b.add_assign(&b2_answer);
         b1_answer.mul_assign(r);
         g_c.add_assign(&b1_answer);
-        g_c.add_assign(&h);
+        g_c.add_assign(&h.wait()?);
         g_c.add_assign(&l.wait()?);
 
         elog_verbose!("{} seconds for prover for point multiplication", stopwatch.elapsed());
@@ -569,7 +643,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
     }
 }
 
-pub fn create_random_proof<E, C, R, P: BasesSource<E> + ParameterSource<E>>(
+pub fn create_random_proof<E, C, R, P: GpuParametersSource<E>>(
     circuit: C,
     params: P,
     rng: &mut R
@@ -582,7 +656,7 @@ pub fn create_random_proof<E, C, R, P: BasesSource<E> + ParameterSource<E>>(
     create_proof::<E, C, P>(circuit, params, r, s)
 }
 
-pub fn create_proof<E, C, P: BasesSource<E> + ParameterSource<E>>(
+pub fn create_proof<E, C, P: GpuParametersSource<E>>(
     circuit: C,
     params: P,
     r: E::Fr,

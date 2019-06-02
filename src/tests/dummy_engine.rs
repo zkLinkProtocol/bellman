@@ -97,7 +97,7 @@ impl RawEncodable for Fr {
     }
 
     fn from_raw_uncompressed_le_unchecked(
-            encoded: &Self::Uncompressed, 
+            _encoded: &Self::Uncompressed, 
             _infinity: bool
     ) -> Result<Self, GroupDecodingError> {
         Ok(<Self as Field>::zero())
