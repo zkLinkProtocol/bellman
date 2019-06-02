@@ -8,7 +8,8 @@ use crate::pairing::ff::{
     PrimeField,
     Field,
     PrimeFieldRepr,
-    ScalarEngine};
+    ScalarEngine
+};
 
 use std::sync::Arc;
 use super::source::*;

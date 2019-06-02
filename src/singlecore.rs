@@ -9,7 +9,7 @@ use self::futures::future::{result, FutureResult};
 
 #[derive(Clone)]
 pub struct Worker {
-    cpus: usize,
+    pub(crate) cpus: usize,
 }
 
 impl Worker {

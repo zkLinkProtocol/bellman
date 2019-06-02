@@ -16,10 +16,13 @@ use crate::pairing::{
     EncodedPoint
 };
 
+use crate::source::QueryDensity;
+
 use crate::pairing::ff::{
     PrimeField,
     Field,
-    PrimeFieldRepr
+    PrimeFieldRepr,
+    ScalarEngine
 };
 
 use crate::groth16::{
@@ -164,6 +167,75 @@ fn representations_to_encoding<E: Engine> (
     });
 
     Ok(representation)
+}
+
+fn filter_and_encode_bases_and_scalars<Q, D, E>(
+    worker: &Worker,
+    bases: Arc<Vec<E::G1Affine>>,
+    density_map: D,
+    exponents: Arc<Vec<<E::Fr as PrimeField>::Repr>> 
+    // (
+    // worker: &Worker,
+    // scalars: &[<E::Fr as PrimeField>::Repr]
+) -> Result<(Vec<u8>, Vec<u8>), SynthesisError>
+where for<'a> &'a Q: QueryDensity,
+          D: Send + Sync + 'static + Clone + AsRef<Q>,
+          E: Engine,
+{   
+    assert!(bases.len() == exponents.len());
+    let num_cpus = worker.cpus;
+    // temporary
+    let mut top_level_bases_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
+    let mut top_level_scalar_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
+    let representation_size = {
+        let mut v = vec![];
+        let zero = E::Fr::zero().into_repr();
+        zero.write_le(&mut v[..])?;
+
+        v.len()
+    };
+
+    let g1_representation_size = <E::G1Affine as CurveAffine>::Uncompressed::size();
+    worker.scope(exponents.len(), |scope, chunk| {
+        for (i, (((exponents, bases), bases_res), scalars_res)) in exponents.chunks(chunk)
+                    .zip(bases.chunks(chunk))
+                    .zip(top_level_bases_representation.chunks_mut(1))
+                    .zip(top_level_scalar_representation.chunks_mut(1))
+                    .enumerate() {
+            
+            let density_map = density_map.clone();
+            scope.spawn(move |_| {
+                let density_iter = density_map.as_ref().iter().skip(i*chunk);
+                let mut bases_repr_per_worker: Vec<u8> = Vec::with_capacity(chunk * g1_representation_size);
+                let mut scalars_repr_per_worker: Vec<u8> = Vec::with_capacity(chunk * representation_size);
+                for ((exponent, base), density) in exponents.iter()
+                                .zip(bases.iter())
+                                .zip(density_iter) {
+                    if density {
+                        continue;
+                    }
+                    if exponent.is_zero() {
+                        continue;
+                    }
+                    exponent.write_le(&mut scalars_repr_per_worker).expect("must encode");
+                    let base_repr = base.into_raw_uncompressed_le();
+                    (&mut bases_repr_per_worker).write(base_repr.as_ref()).expect("must encode");
+                    // scalars_offset += representation_size;
+                    // bases_offset += g1_representation_size;
+                }
+
+                // (bases_repr_per_worker, scalars_repr_per_worker)
+
+                bases_res[0] = bases_repr_per_worker;
+                scalars_res[0] = scalars_repr_per_worker;
+            });
+        }
+    });
+
+    let bases = top_level_bases_representation.into_iter().flatten().collect();
+    let scalars = top_level_scalar_representation.into_iter().flatten().collect();
+
+    Ok((scalars, bases))
 }
 
 #[derive(Clone)]
@@ -380,7 +452,7 @@ impl<E:Engine> PreparedProver<E> {
             Ok(h_affine.into_projective())
         });
 
-        elog_verbose!("{} seconds for prover for H evaluation on GPU", stopwatch.elapsed());
+        elog_verbose!("{} seconds for prover to convert to start H evaluation on GPU", stopwatch.elapsed());
 
         let stopwatch = Stopwatch::new();
 
