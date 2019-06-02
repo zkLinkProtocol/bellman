@@ -198,8 +198,7 @@ extern "C"{
         h_repr: *const u8,
         z_inv: *const u8,
         m_inv: *const u8,
-        result_ptr: *mut u8,
-        check_ptr: *const u8
+        result_ptr: *mut u8
     ) -> u32;
 }
 
@@ -240,30 +239,29 @@ impl<E:Engine> PreparedProver<E> {
             let c_len = prover.c.len();
 
             let (mut expected_h_len, z_inv, m_inv) = calculate_evaluation_domain_params::<E>(a_len)?;
-            println!("H query domain size is {}", expected_h_len);
+            elog_verbose!("H query domain size is {}", expected_h_len);
             expected_h_len = expected_h_len - 1;
             // TODO: all these can be parallelized
 
             let mut a_representation: Vec<u8> = vec![];
-            for element in prover.a.iter() {
+            for element in prover.a.into_iter() {
                 let scalar_repr = element.0.into_raw_repr();
                 scalar_repr.write_le(&mut a_representation)?;
             }
 
             let mut b_representation: Vec<u8> = vec![];
-            for element in prover.b.iter() {
+            for element in prover.b.into_iter() {
                 let scalar_repr = element.0.into_raw_repr();
                 scalar_repr.write_le(&mut b_representation)?;
             }
 
             let mut c_representation: Vec<u8> = vec![];
-            for element in prover.c.iter() {
+            for element in prover.c.into_iter() {
                 let scalar_repr = element.0.into_raw_repr();
                 scalar_repr.write_le(&mut c_representation)?;
             }
 
-
-            println!("Encoded A length = {} bytes", a_representation.len());
+            // println!("Encoded A length = {} bytes", a_representation.len());
 
             use crate::groth16_gpu::BasesSource;
 
@@ -276,7 +274,7 @@ impl<E:Engine> PreparedProver<E> {
                 (&mut bases_representation).write(g1_representation.as_ref())?;
             }
 
-            println!("Encoded bases length = {} bytes", bases_representation.len());
+            // println!("Encoded bases length = {} bytes", bases_representation.len());
 
             let m_inv_repr = {
                 let mut repr = vec![];
@@ -293,55 +291,22 @@ impl<E:Engine> PreparedProver<E> {
             };
 
 
-            let g1_repr_length = {
-                let mut empty_repr_bytes = vec![];
-                let empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
-                (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
+            // let g1_repr_length = {
+            //     let mut empty_repr_bytes = vec![];
+            //     let empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+            //     (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
 
-                empty_repr_bytes.len() 
-            };
+            //     empty_repr_bytes.len() 
+            // };
 
-
-            let mut a = EvaluationDomain::from_coeffs(prover.a)?;
-            let mut b = EvaluationDomain::from_coeffs(prover.b)?;
-            let mut c = EvaluationDomain::from_coeffs(prover.c)?;
-
-            // here a coset is a domain where denominator (z) does not vanish
-            // inverse FFT is an interpolation
-            a.ifft(&worker);
-            a.coset_fft(&worker);
-
-            // same is for B and C
-            b.ifft(&worker);
-            b.coset_fft(&worker);
-            c.ifft(&worker);
-            c.coset_fft(&worker);
-
-            // do A*B-C in coset
-            // a.mul_assign(&worker, &b);
- 
-            // a.sub_assign(&worker, &c);
-            drop(c);
-            // z does not vanish in coset, so we divide by non-zero
-            //a.divide_by_z_on_coset(&worker);
-            // // interpolate back in coset
-            //a.icoset_fft(&worker);
-            let mut a = a.into_coeffs();
-            // let a_len = a.len() - 1;
-            // a.truncate(a_len);
-
-            let mut check_representation: Vec<u8> = vec![];
-            for element in a.into_iter() {
-                let scalar_repr = element.0.into_raw_repr();
-                scalar_repr.write_le(&mut check_representation)?;
-            }
-
-            println!("G1 uncompressed representation length = {}", g1_repr_length);
+            // println!("G1 uncompressed representation length = {}", g1_repr_length);
             let h_affine = unsafe {
 
                 let mut empty_repr_bytes = vec![];
                 let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
                 (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
+
+                // let mut empty_repr_bytes = vec![0u8; 96];
 
 
                 let result = evaluate_h(
@@ -355,22 +320,66 @@ impl<E:Engine> PreparedProver<E> {
                     bases_representation.as_ptr(),
                     z_inv_repr.as_ptr(),
                     m_inv_repr.as_ptr(),
-                    empty_repr_bytes.as_mut_ptr(),
-                    check_representation.as_ptr()
+                    empty_repr_bytes.as_mut_ptr()
                 );
 
                 if result != 0 {
-                    println!("Error in CUDA routine");
+                    elog_verbose!("Error in CUDA routine");
                     return Err(SynthesisError::AssignmentMissing);
                 }
 
                 use std::io::Read;
 
+                // let mut field_element_bytes = vec![];
+                // let mut field_element_repr = E::Fq::zero().into_raw_repr();
+                // field_element_repr.write_le(&mut field_element_bytes)?;
+
+                // let field_element_len = field_element_bytes.len();
+
+                // assert!(empty_repr_bytes.len() == 2*field_element_len);
+
+                // (&empty_repr_bytes[0..field_element_len]).read_exact(&mut field_element_bytes.as_mut())?;
+                // field_element_repr.read_le(&field_element_bytes[..]);
+
+                // let mut x = E::Fq::from_raw_repr(field_element_repr).unwrap();
+
+                // (&empty_repr_bytes[field_element_len..2*field_element_len]).read_exact(&mut field_element_bytes.as_mut())?;
+                // field_element_repr.read_le(&field_element_bytes[..]);
+
+                // let mut y = E::Fq::from_raw_repr(field_element_repr).unwrap();
+
+                // (&empty_repr_bytes[2*field_element_len..3*field_element_len]).read_exact(&mut field_element_bytes.as_mut())?;
+                // field_element_repr.read_le(&field_element_bytes[..]);
+
+                // let z = E::Fq::from_raw_repr(field_element_repr).unwrap();
+
+                // println!("X in mont= {}", x.into_raw_repr());
+                // println!("Y in mont = {}", y.into_raw_repr());
+                // println!("Z in mont = {}", z.into_raw_repr());
+
+                // let z_inv = z.inverse().unwrap();
+                // x.mul_assign(&z_inv);
+                // y.mul_assign(&z_inv);
+
+                // println!("X = {}", x);
+                // println!("Y = {}", y);
+
+                // let h_affine = E::G1Affine::zero();
+
+                // h_affine
+
                 (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
 
-                let h_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false).map_err(|_| SynthesisError::AssignmentMissing)?;
+                let h_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+                if h_affine.is_err() {
+                    elog_verbose!("Error parsing point {}", h_affine.unwrap_err());
+                    return Err(SynthesisError::AssignmentMissing);
+                }
 
-                println!("H from CUDA = {}", h_affine);
+                let h_affine = h_affine.unwrap();
+                // .map_err(|_| SynthesisError::AssignmentMissing)?;
+
+                // println!("H from CUDA = {}", h_affine);
 
                 h_affine
             };
@@ -380,7 +389,7 @@ impl<E:Engine> PreparedProver<E> {
 
         let h = h.into_projective();
 
-        elog_verbose!("{} seconds for prover for H evaluation (mostly FFT)", stopwatch.elapsed());
+        elog_verbose!("{} seconds for prover for H evaluation on GPU", stopwatch.elapsed());
 
         let stopwatch = Stopwatch::new();
 
