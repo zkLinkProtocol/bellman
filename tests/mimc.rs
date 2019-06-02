@@ -1,5 +1,8 @@
 // For randomness (during paramgen and proof generation)
-use rand::{thread_rng, Rng};
+use rand::{
+    // thread_rng, 
+    Rng
+};
 
 // For benchmarking
 use std::time::{Duration, Instant};
@@ -174,7 +177,10 @@ impl<'a, E: Engine> Circuit<E> for MiMCDemo<'a, E> {
 fn test_mimc() {
     // This may not be cryptographically safe, use
     // `OsRng` (for example) in production software.
-    let rng = &mut thread_rng();
+    // let rng = &mut thread_rng();
+
+    use rand::{XorShiftRng, SeedableRng};
+    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
     // Generate the MiMC round constants
     let constants = (0..MIMC_ROUNDS).map(|_| rng.gen()).collect::<Vec<_>>();
@@ -258,7 +264,10 @@ fn test_mimc() {
 fn test_mimc_bn256() {
     // This may not be cryptographically safe, use
     // `OsRng` (for example) in production software.
-    let rng = &mut thread_rng();
+    // let rng = &mut thread_rng();
+
+    use rand::{XorShiftRng, SeedableRng};
+    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
     // Generate the MiMC round constants
     let constants = (0..MIMC_ROUNDS).map(|_| rng.gen()).collect::<Vec<_>>();
@@ -342,7 +351,10 @@ fn test_mimc_bn256() {
 fn test_mimc_bn256_gpu() {
     // This may not be cryptographically safe, use
     // `OsRng` (for example) in production software.
-    let rng = &mut thread_rng();
+    // let rng = &mut thread_rng();
+
+    use rand::{XorShiftRng, SeedableRng};
+    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
     // Generate the MiMC round constants
     let constants = (0..MIMC_ROUNDS).map(|_| rng.gen()).collect::<Vec<_>>();
