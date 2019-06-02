@@ -99,40 +99,6 @@ pub struct PreparedProver<E: Engine>{
     assignment: ProvingAssignment<E>,
 }
 
-// fn encode_scalar_representations<E: Engine> (
-//     worker: &Worker,
-//     scalars: &[Scalar<E>]
-// ) -> Result<Vec<u8>, SynthesisError>
-// {   
-//     let representation_size = {
-//         let mut v = vec![];
-//         let zero = E::Fr::zero().into_repr();
-//         zero.write_le(&mut v[..])?;
-
-//         v.len()
-//     };
-//     let mut representation = vec![0u8; scalars.len() * representation_size];
-//     worker.scope(scalars.len(), |scope, chunk| {
-//         for (i, (scalar, repr)) in scalars.chunks(chunk)
-//                     .zip(representation.chunks_mut(chunk*representation_size))
-//                     .enumerate() {
-//             scope.spawn(move |_| {
-//                 for (j, scalar) in scalar.iter()
-//                                             .enumerate() {
-//                     let start = (i*chunk + j)*representation_size;
-//                     let end = (i*chunk + j + 1)*representation_size;
-//                     let write_to = &mut repr[start..end];
-//                     let scalar_repr = scalar.0.into_repr();
-//                     scalar_repr.write_le(write_to).expect("must encode");
-//                 }
-//             });
-//         }
-//     });
-
-//     Ok(representation)
-// }
-
-
 fn encode_scalars_into_montgommery_representations<E: Engine>(
     worker: &Worker,
     scalars: Vec<Scalar<E>>
@@ -151,10 +117,11 @@ fn encode_scalars_into_montgommery_representations<E: Engine>(
                     .zip(representation.chunks_mut(chunk*representation_size))
                     .enumerate() {
             scope.spawn(move |_| {
+                let offset = i*chunk;
                 for (j, scalar) in scalar.iter()
                                             .enumerate() {
-                    let start = (i*chunk + j)*representation_size;
-                    let end = (i*chunk + j + 1)*representation_size;
+                    let start = (offset + j)*representation_size;
+                    let end = (offset + j + 1)*representation_size;
                     let write_to = &mut repr[start..end];
                     let scalar_repr = scalar.0.into_raw_repr();
                     scalar_repr.write_le(write_to).expect("must encode");
@@ -165,27 +132,6 @@ fn encode_scalars_into_montgommery_representations<E: Engine>(
 
     Ok(representation)
 }
-
-// fn scalars_into_representations<E: Engine>(
-//     worker: &Worker,
-//     scalars: Vec<E::Fr>
-// ) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
-// {   
-//     let mut representations = vec![<E::Fr as PrimeField>::Repr::default(); scalars.len()];
-//     worker.scope(scalars.len(), |scope, chunk| {
-//         for (scalar, repr) in scalars.chunks(chunk)
-//                     .zip(representations.chunks_mut(chunk)) {
-//             scope.spawn(move |_| {
-//                 for (scalar, repr) in scalar.iter()
-//                                         .zip(repr.iter_mut()) {
-//                     *repr = scalar.into_repr();
-//                 }
-//             });
-//         }
-//     });
-
-//     Ok(representations)
-// }
 
 fn representations_to_encoding<E: Engine> (
     worker: &Worker,
@@ -205,10 +151,11 @@ fn representations_to_encoding<E: Engine> (
                     .zip(representation.chunks_mut(chunk*representation_size))
                     .enumerate() {
             scope.spawn(move |_| {
+                let offset = i*chunk;
                 for (j, scalar) in scalar.iter()
                                             .enumerate() {
-                    let start = (i*chunk + j)*representation_size;
-                    let end = (i*chunk + j + 1)*representation_size;
+                    let start = (offset + j)*representation_size;
+                    let end = (offset + j + 1)*representation_size;
                     let write_to = &mut repr[start..end];
                     scalar.write_le(write_to).expect("must encode");
                 }
@@ -450,10 +397,6 @@ impl<E:Engine> PreparedProver<E> {
         let l_bases_representation = params.get_l(aux_assignment.len())?;
 
         let l = worker.compute(move || {
-            // let l_bases_representation = params.get_l(aux_assignment.len())?;
-
-            // let scalars_encoding = representations_to_encoding(&worker, &aux_assignment[..])?;
-
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
 
