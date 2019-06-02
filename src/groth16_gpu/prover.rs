@@ -185,7 +185,8 @@ fn calculate_evaluation_domain_params<E: Engine>(length: usize)
     Ok((m, z_inv, m_inv))
 }
 
-extern {
+
+extern "C"{
     fn evaluate_h(
         a_len: u64, 
         b_len: u64, 
@@ -196,8 +197,10 @@ extern {
         c_repr: *const u8,
         h_repr: *const u8,
         z_inv: *const u8,
-        m_inv: *const u8
-    ) -> *const u8;
+        m_inv: *const u8,
+        result_ptr: *mut u8,
+        check_ptr: *const u8
+    ) -> u32;
 }
 
 impl<E:Engine> PreparedProver<E> {
@@ -242,22 +245,23 @@ impl<E:Engine> PreparedProver<E> {
             // TODO: all these can be parallelized
 
             let mut a_representation: Vec<u8> = vec![];
-            for element in prover.a.into_iter() {
+            for element in prover.a.iter() {
                 let scalar_repr = element.0.into_raw_repr();
                 scalar_repr.write_le(&mut a_representation)?;
             }
 
             let mut b_representation: Vec<u8> = vec![];
-            for element in prover.b.into_iter() {
+            for element in prover.b.iter() {
                 let scalar_repr = element.0.into_raw_repr();
                 scalar_repr.write_le(&mut b_representation)?;
             }
 
             let mut c_representation: Vec<u8> = vec![];
-            for element in prover.c.into_iter() {
+            for element in prover.c.iter() {
                 let scalar_repr = element.0.into_raw_repr();
                 scalar_repr.write_le(&mut c_representation)?;
             }
+
 
             println!("Encoded A length = {} bytes", a_representation.len());
 
@@ -297,9 +301,50 @@ impl<E:Engine> PreparedProver<E> {
                 empty_repr_bytes.len() 
             };
 
+
+            let mut a = EvaluationDomain::from_coeffs(prover.a)?;
+            let mut b = EvaluationDomain::from_coeffs(prover.b)?;
+            let mut c = EvaluationDomain::from_coeffs(prover.c)?;
+
+            // here a coset is a domain where denominator (z) does not vanish
+            // inverse FFT is an interpolation
+            a.ifft(&worker);
+            a.coset_fft(&worker);
+
+            // same is for B and C
+            b.ifft(&worker);
+            b.coset_fft(&worker);
+            c.ifft(&worker);
+            c.coset_fft(&worker);
+
+            // do A*B-C in coset
+            // a.mul_assign(&worker, &b);
+ 
+            // a.sub_assign(&worker, &c);
+            drop(c);
+            // z does not vanish in coset, so we divide by non-zero
+            //a.divide_by_z_on_coset(&worker);
+            // // interpolate back in coset
+            //a.icoset_fft(&worker);
+            let mut a = a.into_coeffs();
+            // let a_len = a.len() - 1;
+            // a.truncate(a_len);
+
+            let mut check_representation: Vec<u8> = vec![];
+            for element in a.into_iter() {
+                let scalar_repr = element.0.into_raw_repr();
+                scalar_repr.write_le(&mut check_representation)?;
+            }
+
             println!("G1 uncompressed representation length = {}", g1_repr_length);
             let h_point_vector = unsafe {
-                let result_pointer = evaluate_h(
+
+                let mut empty_repr_bytes = vec![];
+                let empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+                (&mut empty_repr_bytes).write(empty_repr.as_ref())?;
+
+
+                let result = evaluate_h(
                     a_len as u64,
                     b_len as u64,
                     c_len as u64,
@@ -309,12 +354,12 @@ impl<E:Engine> PreparedProver<E> {
                     c_representation.as_ptr(),
                     bases_representation.as_ptr(),
                     z_inv_repr.as_ptr(),
-                    m_inv_repr.as_ptr()
+                    m_inv_repr.as_ptr(),
+                    empty_repr_bytes.as_mut_ptr(),
+                    check_representation.as_ptr()
                 );
 
-                let as_slice = std::slice::from_raw_parts(result_pointer, g1_repr_length);
-
-                as_slice.to_vec()
+                empty_repr_bytes
             };
         };
 

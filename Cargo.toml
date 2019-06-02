@@ -8,6 +8,7 @@ name = "bellman_ce"
 repository = "https://github.com/matter-labs/bellman"
 version = "0.3.0"
 edition = "2018"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "lib", "staticlib"]
