@@ -496,13 +496,10 @@ impl<E:Engine> PreparedProver<E> {
             Ok(affine.into_projective())
         });
 
-
-
         let stopwatch = Stopwatch::new();
 
         let input_len = prover.input_assignment.len();
         let aux_len = prover.aux_assignment.len();
-
         let input_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.input_assignment)?);
         let aux_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.aux_assignment)?);
 
@@ -534,7 +531,6 @@ impl<E:Engine> PreparedProver<E> {
             let l_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
             if l_affine.is_err() {
                 elog_verbose!("Error parsing point {}", l_affine.unwrap_err());
-
                 return Err(SynthesisError::AssignmentMissing);
             }
 
@@ -545,13 +541,10 @@ impl<E:Engine> PreparedProver<E> {
         // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
 
         let a_aux_density_total = prover.a_aux_density.get_total_density();
-
-
         let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
 
         // G1 for A on inputs stays on CPU
         let a_inputs = multiexp(&worker, a_inputs_source, FullDensity, input_assignment.clone());
-
         // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
 
         let (a_bases, a_scalars, a_len) = filter_and_encode_bases_and_scalars::<E>(
@@ -586,6 +579,7 @@ impl<E:Engine> PreparedProver<E> {
                 return Err(SynthesisError::AssignmentMissing);
             }
             let affine = affine.unwrap();
+
             Ok(affine.into_projective())
         });
         // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
@@ -1078,5 +1072,6 @@ pub fn create_proof<E, C, P: GpuParametersSource<E>>(
 {
     let prover = prepare_prover(circuit)?;
 
-    prover.create_proof(params, r, s)
+    prover.create_proof_cpu_fft(params, r, s)
+    // prover.create_proof(params, r, s)
 }
