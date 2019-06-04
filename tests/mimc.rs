@@ -534,3 +534,124 @@ fn test_mimc_bn256_gpu_fft_cpu() {
     println!("Average proving time: {:?} seconds", proving_avg);
     println!("Average verifying time: {:?} seconds", verifying_avg);
 }
+
+#[cfg(feature = "gpu")]
+#[test]
+fn test_mimc_bn256_gpu_all() {
+    // This may not be cryptographically safe, use
+    // `OsRng` (for example) in production software.
+    // let rng = &mut thread_rng();
+
+    use rand::{XorShiftRng, SeedableRng};
+    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+    // Generate the MiMC round constants
+    let constants = (0..MIMC_ROUNDS).map(|_| rng.gen()).collect::<Vec<_>>();
+
+    println!("Creating parameters...");
+
+    // Create parameters for our circuit
+    let params = {
+        let c = MiMCDemo::<Bn256> {
+            xl: None,
+            xr: None,
+            constants: &constants
+        };
+
+        generate_random_parameters(c, rng).unwrap()
+    };
+
+
+    let mut total_proving_cpu = Duration::new(0, 0);
+    let mut total_proving_gpu = Duration::new(0, 0);
+    let mut total_proving_hybrid = Duration::new(0, 0);
+
+    let mut proof_vec = vec![];
+
+    {
+        // Generate a random preimage and compute the image
+        let xl = rng.gen();
+        let xr = rng.gen();
+        let image = mimc::<Bn256>(xl, xr, &constants);
+
+        proof_vec.truncate(0);
+
+        let start = Instant::now();
+        {
+            // Create an instance of our circuit (with the
+            // witness)
+            let c = MiMCDemo {
+                xl: Some(xl),
+                xr: Some(xr),
+                constants: &constants
+            };
+
+            // Create a groth16 proof with our parameters.
+            let proof = bellman_ce::groth16::create_random_proof(c, &params, rng).unwrap();
+
+            proof.write(&mut proof_vec).unwrap();
+        }
+
+        total_proving_cpu += start.elapsed();
+    }
+
+    let params = bellman_ce::groth16_gpu::GpuParameters::from_parameters(params);
+
+    {
+        // Generate a random preimage and compute the image
+        let xl = rng.gen();
+        let xr = rng.gen();
+        let image = mimc::<Bn256>(xl, xr, &constants);
+
+        proof_vec.truncate(0);
+
+        let start = Instant::now();
+        {
+            // Create an instance of our circuit (with the
+            // witness)
+            let c = MiMCDemo {
+                xl: Some(xl),
+                xr: Some(xr),
+                constants: &constants
+            };
+
+            // Create a groth16 proof with our parameters.
+            let proof = bellman_ce::groth16_gpu::create_random_proof_cpu_fft(c, &params, rng).unwrap();
+
+            proof.write(&mut proof_vec).unwrap();
+        }
+
+        total_proving_hybrid += start.elapsed();
+    }
+
+    {
+        // Generate a random preimage and compute the image
+        let xl = rng.gen();
+        let xr = rng.gen();
+        let image = mimc::<Bn256>(xl, xr, &constants);
+
+        proof_vec.truncate(0);
+
+        let start = Instant::now();
+        {
+            // Create an instance of our circuit (with the
+            // witness)
+            let c = MiMCDemo {
+                xl: Some(xl),
+                xr: Some(xr),
+                constants: &constants
+            };
+
+            // Create a groth16 proof with our parameters.
+            let proof = bellman_ce::groth16_gpu::create_random_proof(c, &params, rng).unwrap();
+
+            proof.write(&mut proof_vec).unwrap();
+        }
+
+        total_proving_gpu += start.elapsed();
+    }
+
+    println!("Average proving time on CPU: {:?} seconds", total_proving_cpu);
+    println!("Average proving time on GPU: {:?} seconds", total_proving_gpu);
+    println!("Average proving time on CPU for FFT: {:?} seconds", total_proving_hybrid);
+}
