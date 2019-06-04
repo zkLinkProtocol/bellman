@@ -408,7 +408,19 @@ impl<E:Engine> PreparedProver<E> {
         let r = rng.gen();
         let s = rng.gen();
 
-        // self.create_proof(params, r, s)
+        self.create_proof(params, r, s)
+    }
+
+    pub fn create_random_proof_cpu_fft<R, P: GpuParametersSource<E>>(
+        self,
+        params: P,
+        rng: &mut R
+    ) -> Result<Proof<E>, SynthesisError>
+        where R: Rng
+    {
+        let r = rng.gen();
+        let s = rng.gen();
+
         self.create_proof_cpu_fft(params, r, s)
     }
 
@@ -1074,6 +1086,19 @@ pub fn create_random_proof<E, C, R, P: GpuParametersSource<E>>(
     create_proof::<E, C, P>(circuit, params, r, s)
 }
 
+pub fn create_random_proof_cpu_fft<E, C, R, P: GpuParametersSource<E>>(
+    circuit: C,
+    params: P,
+    rng: &mut R
+) -> Result<Proof<E>, SynthesisError>
+    where E: Engine, C: Circuit<E>, R: Rng
+{
+    let r = rng.gen();
+    let s = rng.gen();
+
+    create_proof_cpu_fft::<E, C, P>(circuit, params, r, s)
+}
+
 pub fn create_proof<E, C, P: GpuParametersSource<E>>(
     circuit: C,
     params: P,
@@ -1084,6 +1109,18 @@ pub fn create_proof<E, C, P: GpuParametersSource<E>>(
 {
     let prover = prepare_prover(circuit)?;
 
+    prover.create_proof(params, r, s)
+}
+
+pub fn create_proof_cpu_fft<E, C, P: GpuParametersSource<E>>(
+    circuit: C,
+    params: P,
+    r: E::Fr,
+    s: E::Fr
+) -> Result<Proof<E>, SynthesisError>
+    where E: Engine, C: Circuit<E>
+{
+    let prover = prepare_prover(circuit)?;
+
     prover.create_proof_cpu_fft(params, r, s)
-    // prover.create_proof(params, r, s)
 }

@@ -1,6 +1,12 @@
 mod prover;
 
-pub use prover::{create_proof, create_random_proof, prepare_prover};
+pub use prover::{
+    create_proof, 
+    create_random_proof, 
+    prepare_prover,
+    create_proof_cpu_fft,
+    create_random_proof_cpu_fft
+};
 
 use std::sync::Arc;
 use std::io::Write;

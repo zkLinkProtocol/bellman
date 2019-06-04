@@ -349,6 +349,7 @@ fn test_mimc_bn256() {
     println!("Average verifying time: {:?} seconds", verifying_avg);
 }
 
+#[cfg(feature = "gpu")]
 #[test]
 fn test_mimc_bn256_gpu() {
     // This may not be cryptographically safe, use
@@ -413,6 +414,99 @@ fn test_mimc_bn256_gpu() {
 
             // Create a groth16 proof with our parameters.
             let proof = bellman_ce::groth16_gpu::create_random_proof(c, &params, rng).unwrap();
+
+            proof.write(&mut proof_vec).unwrap();
+        }
+
+        total_proving += start.elapsed();
+
+        let start = Instant::now();
+        let proof = Proof::read(&proof_vec[..]).unwrap();
+        // Check the proof
+        assert!(verify_proof(
+            &pvk,
+            &proof,
+            &[image]
+        ).unwrap());
+        total_verifying += start.elapsed();
+    }
+    let proving_avg = total_proving / SAMPLES;
+    let proving_avg = proving_avg.subsec_nanos() as f64 / 1_000_000_000f64
+                      + (proving_avg.as_secs() as f64);
+
+    let verifying_avg = total_verifying / SAMPLES;
+    let verifying_avg = verifying_avg.subsec_nanos() as f64 / 1_000_000_000f64
+                      + (verifying_avg.as_secs() as f64);
+
+    println!("Average proving time: {:?} seconds", proving_avg);
+    println!("Average verifying time: {:?} seconds", verifying_avg);
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn test_mimc_bn256_gpu_fft_cpu() {
+    // This may not be cryptographically safe, use
+    // `OsRng` (for example) in production software.
+    // let rng = &mut thread_rng();
+
+    use rand::{XorShiftRng, SeedableRng};
+    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+    // Generate the MiMC round constants
+    let constants = (0..MIMC_ROUNDS).map(|_| rng.gen()).collect::<Vec<_>>();
+
+    println!("Creating parameters...");
+
+    // Create parameters for our circuit
+    let params = {
+        let c = MiMCDemo::<Bn256> {
+            xl: None,
+            xr: None,
+            constants: &constants
+        };
+
+        let params = generate_random_parameters(c, rng).unwrap();
+
+        use bellman_ce::groth16_gpu::GpuParameters;
+
+        GpuParameters::from_parameters(params)
+    };
+
+    // Prepare the verification key (for proof verification)
+    let pvk = prepare_verifying_key(&params.vk);
+
+    println!("Creating proofs...");
+
+    // Let's benchmark stuff!
+    // const SAMPLES: u32 = 50;
+    const SAMPLES: u32 = 1;
+    let mut total_proving = Duration::new(0, 0);
+    let mut total_verifying = Duration::new(0, 0);
+
+    // Just a place to put the proof data, so we can
+    // benchmark deserialization.
+    let mut proof_vec = vec![];
+
+    for _ in 0..SAMPLES {
+        // Generate a random preimage and compute the image
+        let xl = rng.gen();
+        let xr = rng.gen();
+        let image = mimc::<Bn256>(xl, xr, &constants);
+
+        proof_vec.truncate(0);
+
+        let start = Instant::now();
+        {
+            // Create an instance of our circuit (with the
+            // witness)
+            let c = MiMCDemo {
+                xl: Some(xl),
+                xr: Some(xr),
+                constants: &constants
+            };
+
+            // Create a groth16 proof with our parameters.
+            let proof = bellman_ce::groth16_gpu::create_random_proof_fft_cpu(c, &params, rng).unwrap();
 
             proof.write(&mut proof_vec).unwrap();
         }
