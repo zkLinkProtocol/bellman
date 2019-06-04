@@ -419,6 +419,7 @@ impl<E:Engine> PreparedProver<E> {
         s: E::Fr
     ) -> Result<Proof<E>, SynthesisError>
     {        
+        elog_verbose!("Creating proof while keeping FFT on CPU");
         let prover = self.assignment;
         let worker = Worker::new();
 
@@ -687,6 +688,7 @@ impl<E:Engine> PreparedProver<E> {
         s: E::Fr
     ) -> Result<Proof<E>, SynthesisError>
     {        
+        elog_verbose!("Creating proof with FFT on GPU");
         let prover = self.assignment;
         let worker = Worker::new();
 
