@@ -1084,6 +1084,6 @@ pub fn create_proof<E, C, P: GpuParametersSource<E>>(
 {
     let prover = prepare_prover(circuit)?;
 
-    // prover.create_proof_cpu_fft(params, r, s)
-    prover.create_proof(params, r, s)
+    prover.create_proof_cpu_fft(params, r, s)
+    // prover.create_proof(params, r, s)
 }
