@@ -471,6 +471,7 @@ impl<E:Engine> PreparedProver<E> {
 
             a
         };
+
         elog_verbose!("{} seconds for FFT on CPU", stopwatch.elapsed());
 
         let h_len = h.len();
@@ -799,6 +800,81 @@ impl<E:Engine> PreparedProver<E> {
 
         let stopwatch_total_multiexp = Stopwatch::new();
 
+        // Run a dedicated process for dense vector
+        // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
+
+        let a_aux_density_total = prover.a_aux_density.get_total_density();
+        let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
+
+        // G1 for A on inputs stays on CPU
+        let a_inputs = multiexp(&worker, a_inputs_source, FullDensity, input_assignment.clone());
+
+        // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
+
+        let stopwatch = Stopwatch::new();
+
+        let (a_bases, a_scalars, a_len) = filter_and_encode_bases_and_scalars::<E>(
+            &worker,
+            a_aux_source,
+            Arc::new(prover.a_aux_density),
+            aux_assignment.clone()
+        )?;
+
+        elog_verbose!("{} seconds to filter and encode scalars for GPU A-multiexp", stopwatch.elapsed());
+
+        // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
+
+        let b_input_density = Arc::new(prover.b_input_density);
+        let b_input_density_total = b_input_density.get_total_density();
+        let b_aux_density = Arc::new(prover.b_aux_density);
+        let b_aux_density_total = b_aux_density.get_total_density();
+
+        let (b_g1_inputs_source, b_g1_aux_source) = params.get_b_g1(b_input_density_total, b_aux_density_total)?;
+        let b_g1_inputs = multiexp(&worker, b_g1_inputs_source, b_input_density.clone(), input_assignment.clone());
+
+        let stopwatch = Stopwatch::new();
+
+        let (b_bases, b_scalars, b_len) = filter_and_encode_bases_and_scalars::<E>(
+            &worker,
+            b_g1_aux_source,
+            b_aux_density.clone(),
+            aux_assignment.clone()
+        )?;
+
+        elog_verbose!("{} seconds to filter and encode scalars for GPU B-multiexp", stopwatch.elapsed());
+
+        // let b_g1_aux = multiexp(&worker, b_g1_aux_source, b_aux_density.clone(), aux_assignment.clone());
+
+        // G2 operations stay on CPU
+        let (b_g2_inputs_source, b_g2_aux_source) = params.get_b_g2(b_input_density_total, b_aux_density_total)?;
+        
+        let b_g2_inputs = multiexp(&worker, b_g2_inputs_source, b_input_density, input_assignment);
+        let b_g2_aux = multiexp(&worker, b_g2_aux_source, b_aux_density, aux_assignment);
+
+        if vk.delta_g1.is_zero() || vk.delta_g2.is_zero() {
+            // If this element is zero, someone is trying to perform a
+            // subversion-CRS attack.
+            return Err(SynthesisError::UnexpectedIdentity);
+        }
+
+        let mut g_a = vk.delta_g1.mul(r);
+        g_a.add_assign_mixed(&vk.alpha_g1);
+        let mut g_b = vk.delta_g2.mul(s);
+        g_b.add_assign_mixed(&vk.beta_g2);
+        let mut g_c;
+        {
+            let mut rs = r;
+            rs.mul_assign(&s);
+
+            g_c = vk.delta_g1.mul(rs);
+            g_c.add_assign(&vk.alpha_g1.mul(s));
+            g_c.add_assign(&vk.beta_g1.mul(r));
+        }
+
+        g_c.add_assign(&h.wait()?);
+
+        // GPU is free after H, now continue to L
+
         let l = worker.compute(move || {
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
@@ -828,76 +904,9 @@ impl<E:Engine> PreparedProver<E> {
             Ok(l_affine.unwrap().into_projective())
         });
 
-        // Run a dedicated process for dense vector
-        // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
+        g_c.add_assign(&l.wait()?);
 
-        let a_aux_density_total = prover.a_aux_density.get_total_density();
-        let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
-
-        // G1 for A on inputs stays on CPU
-        let a_inputs = multiexp(&worker, a_inputs_source, FullDensity, input_assignment.clone());
-
-        // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
-
-        let stopwatch = Stopwatch::new();
-
-        let (a_bases, a_scalars, a_len) = filter_and_encode_bases_and_scalars::<E>(
-            &worker,
-            a_aux_source,
-            Arc::new(prover.a_aux_density),
-            aux_assignment.clone()
-        )?;
-
-        elog_verbose!("{} seconds to filter and encode scalars for GPU A-multiexp", stopwatch.elapsed());
-
-        let a_aux = worker.compute(move || {
-            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
-            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
-
-            let result = unsafe { dense_multiexp(
-                a_len as u64,
-                a_scalars.as_ptr(),
-                a_bases.as_ptr(),
-                false,
-                empty_repr_bytes.as_mut_ptr()
-            ) };
-
-            if result != 0 {
-                elog_verbose!("Error in CUDA routine");
-                return Err(SynthesisError::AssignmentMissing);
-            }
-
-            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
-
-            let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
-            if affine.is_err() {
-                elog_verbose!("Error parsing point {}", affine.unwrap_err());
-                return Err(SynthesisError::AssignmentMissing);
-            }
-            let affine = affine.unwrap();
-            Ok(affine.into_projective())
-        });
-        // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
-
-        let b_input_density = Arc::new(prover.b_input_density);
-        let b_input_density_total = b_input_density.get_total_density();
-        let b_aux_density = Arc::new(prover.b_aux_density);
-        let b_aux_density_total = b_aux_density.get_total_density();
-
-        let (b_g1_inputs_source, b_g1_aux_source) = params.get_b_g1(b_input_density_total, b_aux_density_total)?;
-        let b_g1_inputs = multiexp(&worker, b_g1_inputs_source, b_input_density.clone(), input_assignment.clone());
-
-        let stopwatch = Stopwatch::new();
-
-        let (b_bases, b_scalars, b_len) = filter_and_encode_bases_and_scalars::<E>(
-            &worker,
-            b_g1_aux_source,
-            b_aux_density.clone(),
-            aux_assignment.clone()
-        )?;
-
-        elog_verbose!("{} seconds to filter and encode scalars for GPU B-multiexp", stopwatch.elapsed());
-
+        // GPU is free now, continue
         let b_g1_aux = worker.compute(move || {
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
@@ -926,49 +935,52 @@ impl<E:Engine> PreparedProver<E> {
             Ok(affine.unwrap().into_projective())
         });
 
-        // let b_g1_aux = multiexp(&worker, b_g1_aux_source, b_aux_density.clone(), aux_assignment.clone());
+        let mut b1_answer = b_g1_inputs.wait()?;
+        b1_answer.add_assign(&b_g1_aux.wait()?);
+        g_c.add_assign(&b1_answer);
 
-        // G2 operations stay on CPU
-        let (b_g2_inputs_source, b_g2_aux_source) = params.get_b_g2(b_input_density_total, b_aux_density_total)?;
-        
-        let b_g2_inputs = multiexp(&worker, b_g2_inputs_source, b_input_density, input_assignment);
-        let b_g2_aux = multiexp(&worker, b_g2_aux_source, b_aux_density, aux_assignment);
+        // GPU is free again
 
-        if vk.delta_g1.is_zero() || vk.delta_g2.is_zero() {
-            // If this element is zero, someone is trying to perform a
-            // subversion-CRS attack.
-            return Err(SynthesisError::UnexpectedIdentity);
-        }
+        let a_aux = worker.compute(move || {
+            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
+            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
 
-        let mut g_a = vk.delta_g1.mul(r);
-        g_a.add_assign_mixed(&vk.alpha_g1);
-        let mut g_b = vk.delta_g2.mul(s);
-        g_b.add_assign_mixed(&vk.beta_g2);
-        let mut g_c;
-        {
-            let mut rs = r;
-            rs.mul_assign(&s);
+            let result = unsafe { dense_multiexp(
+                a_len as u64,
+                a_scalars.as_ptr(),
+                a_bases.as_ptr(),
+                false,
+                empty_repr_bytes.as_mut_ptr()
+            ) };
 
-            g_c = vk.delta_g1.mul(rs);
-            g_c.add_assign(&vk.alpha_g1.mul(s));
-            g_c.add_assign(&vk.beta_g1.mul(r));
-        }
+            if result != 0 {
+                elog_verbose!("Error in CUDA routine");
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+            let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+            if affine.is_err() {
+                elog_verbose!("Error parsing point {}", affine.unwrap_err());
+                return Err(SynthesisError::AssignmentMissing);
+            }
+            let affine = affine.unwrap();
+            Ok(affine.into_projective())
+        });
+
         let mut a_answer = a_inputs.wait()?;
         a_answer.add_assign(&a_aux.wait()?);
         g_a.add_assign(&a_answer);
         a_answer.mul_assign(s);
         g_c.add_assign(&a_answer);
 
-        let mut b1_answer = b_g1_inputs.wait()?;
-        b1_answer.add_assign(&b_g1_aux.wait()?);
+        // this part is completely on CPU and can be delayed as much as possible
         let mut b2_answer = b_g2_inputs.wait()?;
         b2_answer.add_assign(&b_g2_aux.wait()?);
 
         g_b.add_assign(&b2_answer);
         b1_answer.mul_assign(r);
-        g_c.add_assign(&b1_answer);
-        g_c.add_assign(&h.wait()?);
-        g_c.add_assign(&l.wait()?);
 
         elog_verbose!("{} seconds for prover for point multiplication", stopwatch_total_multiexp.elapsed());
 
