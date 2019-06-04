@@ -783,6 +783,10 @@ impl<E:Engine> PreparedProver<E> {
         let scalars_encoding = representations_to_encoding::<E>(&worker, &aux_assignment[..])?;
         let l_bases_representation = params.get_l(aux_assignment.len())?;
 
+        elog_verbose!("{} seconds to encode scalars for GPU L-multiexp", stopwatch.elapsed());
+
+        let stopwatch_total_multiexp = Stopwatch::new();
+
         let l = worker.compute(move || {
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
@@ -816,8 +820,6 @@ impl<E:Engine> PreparedProver<E> {
         // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
 
         let a_aux_density_total = prover.a_aux_density.get_total_density();
-
-
         let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
 
         // G1 for A on inputs stays on CPU
@@ -825,12 +827,16 @@ impl<E:Engine> PreparedProver<E> {
 
         // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
 
+        let stopwatch = Stopwatch::new();
+
         let (a_bases, a_scalars, a_len) = filter_and_encode_bases_and_scalars::<E>(
             &worker,
             a_aux_source,
             Arc::new(prover.a_aux_density),
             aux_assignment.clone()
         )?;
+
+        elog_verbose!("{} seconds to filter and encode scalars for GPU A-multiexp", stopwatch.elapsed());
 
         let a_aux = worker.compute(move || {
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
@@ -869,12 +875,16 @@ impl<E:Engine> PreparedProver<E> {
         let (b_g1_inputs_source, b_g1_aux_source) = params.get_b_g1(b_input_density_total, b_aux_density_total)?;
         let b_g1_inputs = multiexp(&worker, b_g1_inputs_source, b_input_density.clone(), input_assignment.clone());
 
+        let stopwatch = Stopwatch::new();
+
         let (b_bases, b_scalars, b_len) = filter_and_encode_bases_and_scalars::<E>(
             &worker,
             b_g1_aux_source,
             b_aux_density.clone(),
             aux_assignment.clone()
         )?;
+
+        elog_verbose!("{} seconds to filter and encode scalars for GPU B-multiexp", stopwatch.elapsed());
 
         let b_g1_aux = worker.compute(move || {
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
@@ -948,7 +958,7 @@ impl<E:Engine> PreparedProver<E> {
         g_c.add_assign(&h.wait()?);
         g_c.add_assign(&l.wait()?);
 
-        elog_verbose!("{} seconds for prover for point multiplication", stopwatch.elapsed());
+        elog_verbose!("{} seconds for prover for point multiplication", stopwatch_total_multiexp.elapsed());
 
         Ok(Proof {
             a: g_a.into_affine(),
@@ -1074,6 +1084,6 @@ pub fn create_proof<E, C, P: GpuParametersSource<E>>(
 {
     let prover = prepare_prover(circuit)?;
 
-    prover.create_proof_cpu_fft(params, r, s)
-    // prover.create_proof(params, r, s)
+    // prover.create_proof_cpu_fft(params, r, s)
+    prover.create_proof(params, r, s)
 }
