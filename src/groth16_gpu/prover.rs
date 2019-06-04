@@ -225,30 +225,41 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
     let representation_size = {
         std::mem::size_of::<<E::Fr as PrimeField>::Repr>()
     };
-    println!("Num bases = {}", bases.len());
-    println!("Total density = {}", density_map.get_total_density());
-    worker.scope(exponents.len(), |scope, chunk| {
-        for (i, (exponents, scalars_res)) in exponents.chunks(chunk)
-                    .zip(top_level_scalar_representation.chunks_mut(1))
-                    .enumerate() {
-            
-            let density_map = density_map.clone();
-            scope.spawn(move |_| {
-                println!("Skipping {}", i*chunk);
-                let density_iter = density_map.as_ref().iter().skip(i*chunk);
-                let mut scalars_repr_per_worker: Vec<u8> = Vec::with_capacity(chunk * representation_size);
-                for (exponent, density) in exponents.iter()
-                                .zip(density_iter) {
-                    if density {
-                        exponent.write_le(&mut scalars_repr_per_worker).expect("must encode");
-                    } else {
-                        println!("Skipping for i = {}", i);
-                    }
-                }
-                scalars_res[0] = scalars_repr_per_worker;
-            });
+    let total_density = density_map.get_total_density();
+    let num_bases = bases.len();
+    assert_eq!(num_bases, total_density);
+
+    let mut scalars = vec![];
+    for (exponent, density) in exponents.iter().zip(density_map.as_ref().iter()) {
+        if density {
+            exponent.write_le(&mut scalars).expect("must encode");
+        } else {
+            println!("Skipping one exponent");
         }
-    });
+    } 
+    // worker.scope(exponents.len(), |scope, chunk| {
+    //     for (i, (exponents, scalars_res)) in exponents.chunks(chunk)
+    //                 .zip(top_level_scalar_representation.chunks_mut(1))
+    //                 .enumerate() {
+            
+    //         let density_map = density_map.clone();
+    //         scope.spawn(move |_| {
+    //             println!("Skipping {}", i*chunk);
+    //             let density_iter = density_map.as_ref().iter().skip(i*chunk);
+    //             let mut scalars_repr_per_worker: Vec<u8> = Vec::with_capacity(chunk * representation_size);
+    //             for (exponent, density) in exponents.iter()
+    //                             .zip(density_iter) {
+    //                 if density {
+    //                     exponent.write_le(&mut scalars_repr_per_worker).expect("must encode");
+    //                 } else {
+    //                     println!("Skipping for i = {}", i);
+    //                 }
+    //             }
+    //             scalars_res[0] = scalars_repr_per_worker;
+    //         });
+    //     }
+    // });
+    // let scalars: Vec<u8> = top_level_scalar_representation.into_iter().flatten().collect();
 
     let g1_representation_size = <E::G1Affine as CurveAffine>::Uncompressed::size();
     let mut bases_representation: Vec<u8> = vec![0u8; g1_representation_size * bases.len()];
@@ -269,8 +280,9 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
         }
     });
 
-    let scalars: Vec<u8> = top_level_scalar_representation.into_iter().flatten().collect();
+
     let num_scalars = scalars.len() / representation_size;
+    assert_eq!(num_scalars, total_density);
     println!("num scalars: {}", num_scalars);
     bases_representation.truncate(num_scalars * g1_representation_size);
     // println!("Scalars encoding len = {}, for element {}", scalars.len(), scalars.len() / representation_size);
