@@ -861,15 +861,16 @@ impl<E:Engine> PreparedProver<E> {
         g_a.add_assign_mixed(&vk.alpha_g1);
         let mut g_b = vk.delta_g2.mul(s);
         g_b.add_assign_mixed(&vk.beta_g2);
-        let mut g_c;
-        {
+        let mut g_c = {
             let mut rs = r;
             rs.mul_assign(&s);
 
-            g_c = vk.delta_g1.mul(rs);
+            let mut g_c = vk.delta_g1.mul(rs);
             g_c.add_assign(&vk.alpha_g1.mul(s));
             g_c.add_assign(&vk.beta_g1.mul(r));
-        }
+
+            g_c
+        };
 
         g_c.add_assign(&h.wait()?);
 
@@ -937,6 +938,7 @@ impl<E:Engine> PreparedProver<E> {
 
         let mut b1_answer = b_g1_inputs.wait()?;
         b1_answer.add_assign(&b_g1_aux.wait()?);
+        b1_answer.mul_assign(r);
         g_c.add_assign(&b1_answer);
 
         // GPU is free again
@@ -978,9 +980,7 @@ impl<E:Engine> PreparedProver<E> {
         // this part is completely on CPU and can be delayed as much as possible
         let mut b2_answer = b_g2_inputs.wait()?;
         b2_answer.add_assign(&b_g2_aux.wait()?);
-
         g_b.add_assign(&b2_answer);
-        b1_answer.mul_assign(r);
 
         elog_verbose!("{} seconds for prover for point multiplication", stopwatch_total_multiexp.elapsed());
 
