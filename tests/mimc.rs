@@ -506,7 +506,7 @@ fn test_mimc_bn256_gpu_fft_cpu() {
             };
 
             // Create a groth16 proof with our parameters.
-            let proof = bellman_ce::groth16_gpu::create_random_proof_fft_cpu(c, &params, rng).unwrap();
+            let proof = bellman_ce::groth16_gpu::create_random_proof_cpu_fft(c, &params, rng).unwrap();
 
             proof.write(&mut proof_vec).unwrap();
         }
