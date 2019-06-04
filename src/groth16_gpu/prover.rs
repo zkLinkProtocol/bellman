@@ -217,8 +217,9 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
     bases: Arc<&[E::G1Affine]>,
     density_map: Arc<DensityTracker>,
     exponents: Arc<Vec<<E::Fr as PrimeField>::Repr>> 
-) -> Result<(Vec<u8>, Vec<u8>), SynthesisError>
+) -> Result<(Vec<u8>, Vec<u8>, usize), SynthesisError>
 {   
+    // println!("Total bases = {}, exponents = {}", bases.len(), exponents.len());
     let num_cpus = worker.cpus;
     let mut top_level_scalar_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
     let representation_size = {
@@ -265,9 +266,13 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
     });
 
     let scalars: Vec<u8> = top_level_scalar_representation.into_iter().flatten().collect();
-    assert!(scalars.len() / representation_size == bases_representation.len() / g1_representation_size);
+    let num_scalars = scalars.len() / representation_size;
+    bases_representation.truncate(num_scalars * g1_representation_size);
+    // println!("Scalars encoding len = {}, for element {}", scalars.len(), scalars.len() / representation_size);
+    // println!("Bases encoding len = {}, for element {}", bases_representation.len(), bases_representation.len() / g1_representation_size);
+    // assert!(scalars.len() / representation_size == bases_representation.len() / g1_representation_size);
 
-    Ok((scalars, bases_representation))
+    Ok((bases_representation, scalars, num_scalars))
 }
 
 #[derive(Clone)]
@@ -462,7 +467,6 @@ impl<E:Engine> PreparedProver<E> {
 
                 if result != 0 {
                     elog_verbose!("Error in CUDA routine");
-                    println!("Missing1");
                     return Err(SynthesisError::AssignmentMissing);
                 }
 
@@ -471,7 +475,6 @@ impl<E:Engine> PreparedProver<E> {
                 let h_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
                 if h_affine.is_err() {
                     elog_verbose!("Error parsing point {}", h_affine.unwrap_err());
-                    println!("Missing2");
                     return Err(SynthesisError::AssignmentMissing);
                 }
 
@@ -514,7 +517,6 @@ impl<E:Engine> PreparedProver<E> {
 
             if result != 0 {
                 elog_verbose!("Error in CUDA routine");
-                println!("Missing3");
                 return Err(SynthesisError::AssignmentMissing);
             }
 
@@ -523,7 +525,7 @@ impl<E:Engine> PreparedProver<E> {
             let l_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
             if l_affine.is_err() {
                 elog_verbose!("Error parsing point {}", l_affine.unwrap_err());
-                println!("Missing4");
+
                 return Err(SynthesisError::AssignmentMissing);
             }
 
@@ -535,7 +537,7 @@ impl<E:Engine> PreparedProver<E> {
 
         let a_aux_density_total = prover.a_aux_density.get_total_density();
 
-        println!("Num inputs = {}", input_assignment.len());
+        println!("A aux total density = {}", a_aux_density_total);
 
         let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
 
@@ -544,19 +546,20 @@ impl<E:Engine> PreparedProver<E> {
 
         // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
 
-        let (a_bases, a_scalars) = filter_and_encode_bases_and_scalars::<E>(
+        let (a_bases, a_scalars, a_len) = filter_and_encode_bases_and_scalars::<E>(
             &worker,
             a_aux_source,
             Arc::new(prover.a_aux_density),
             aux_assignment.clone()
         )?;
+        println!("A len = {}", a_len);
 
         let a_aux = worker.compute(move || {
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
 
             let result = unsafe { dense_multiexp(
-                a_aux_density_total as u64,
+                a_len as u64,
                 a_scalars.as_ptr(),
                 a_bases.as_ptr(),
                 false,
@@ -576,8 +579,9 @@ impl<E:Engine> PreparedProver<E> {
                 println!("Missing final");
                 return Err(SynthesisError::AssignmentMissing);
             }
-                        println!("End2!");
-            Ok(affine.unwrap().into_projective())
+            let affine = affine.unwrap();
+            println!("A = {}", affine);
+            Ok(affine.into_projective())
         });
         
                 println!("End3!");
@@ -587,18 +591,21 @@ impl<E:Engine> PreparedProver<E> {
         let b_input_density_total = b_input_density.get_total_density();
         let b_aux_density = Arc::new(prover.b_aux_density);
         let b_aux_density_total = b_aux_density.get_total_density();
+        println!("B aux density = {}", b_aux_density_total);
+
 
         let (b_g1_inputs_source, b_g1_aux_source) = params.get_b_g1(b_input_density_total, b_aux_density_total)?;
         println!("End4!");
         let b_g1_inputs = multiexp(&worker, b_g1_inputs_source, b_input_density.clone(), input_assignment.clone());
         println!("End6!");
 
-        let (b_bases, b_scalars) = filter_and_encode_bases_and_scalars::<E>(
+        let (b_bases, b_scalars, b_len) = filter_and_encode_bases_and_scalars::<E>(
             &worker,
             b_g1_aux_source,
             b_aux_density.clone(),
             aux_assignment.clone()
         )?;
+        println!("B len = {}", b_len);
         println!("End7!");
 
         let b_g1_aux = worker.compute(move || {
@@ -607,7 +614,7 @@ impl<E:Engine> PreparedProver<E> {
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
 
             let result = unsafe { dense_multiexp(
-                b_aux_density_total as u64,
+                b_len as u64,
                 b_scalars.as_ptr(),
                 b_bases.as_ptr(),
                 false,
