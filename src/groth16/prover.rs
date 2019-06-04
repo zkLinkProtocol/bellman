@@ -86,7 +86,7 @@ fn eval<E: Engine>(
     acc
 }
 
-pub(crate) fn scalars_into_representations<E: Engine>(
+pub(crate) fn field_elements_into_representations<E: Engine>(
     worker: &Worker,
     scalars: Vec<E::Fr>
 ) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
@@ -99,6 +99,27 @@ pub(crate) fn scalars_into_representations<E: Engine>(
                 for (scalar, repr) in scalar.iter()
                                         .zip(repr.iter_mut()) {
                     *repr = scalar.into_repr();
+                }
+            });
+        }
+    });
+
+    Ok(representations)
+}
+
+pub(crate) fn scalars_into_representations<E: Engine>(
+    worker: &Worker,
+    scalars: Vec<Scalar<E>>
+) -> Result<Vec<<E::Fr as PrimeField>::Repr>, SynthesisError>
+{   
+    let mut representations = vec![<E::Fr as PrimeField>::Repr::default(); scalars.len()];
+    worker.scope(scalars.len(), |scope, chunk| {
+        for (scalar, repr) in scalars.chunks(chunk)
+                    .zip(representations.chunks_mut(chunk)) {
+            scope.spawn(move |_| {
+                for (scalar, repr) in scalar.iter()
+                                        .zip(repr.iter_mut()) {
+                    *repr = scalar.0.into_repr();
                 }
             });
         }
@@ -223,7 +244,8 @@ impl<E:Engine> PreparedProver<E> {
             a.truncate(a_len);
             // TODO: parallelize if it's even helpful
             // TODO: in large settings it may worth to parallelize
-            let a = Arc::new(a.into_iter().map(|s| s.0.into_repr()).collect::<Vec<_>>());
+            let a = Arc::new(scalars_into_representations::<E>(&worker, a)?);
+            // let a = Arc::new(a.into_iter().map(|s| s.0.into_repr()).collect::<Vec<_>>());
 
             multiexp(&worker, params.get_h(a.len())?, FullDensity, a)
         };
@@ -237,8 +259,8 @@ impl<E:Engine> PreparedProver<E> {
         let input_len = prover.input_assignment.len();
         let aux_len = prover.aux_assignment.len();
 
-        let input_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.input_assignment)?);
-        let aux_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.aux_assignment)?);
+        let input_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.input_assignment)?);
+        let aux_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.aux_assignment)?);
 
         // TODO: parallelize if it's even helpful
         // TODO: in large settings it may worth to parallelize

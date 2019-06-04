@@ -29,7 +29,7 @@ use crate::groth16::{
     Proof
 };
 
-use crate::groth16::scalars_into_representations;
+use crate::groth16::{scalars_into_representations, field_elements_into_representations};
 
 use crate::groth16_gpu::GpuParametersSource;
 
@@ -219,8 +219,8 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
     exponents: Arc<Vec<<E::Fr as PrimeField>::Repr>> 
 ) -> Result<(Vec<u8>, Vec<u8>, usize), SynthesisError>
 {   
-    let num_cpus = worker.cpus;
-    let mut top_level_scalar_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
+    // let num_cpus = worker.cpus;
+    // let mut top_level_scalar_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
     let representation_size = {
         std::mem::size_of::<<E::Fr as PrimeField>::Repr>()
     };
@@ -408,7 +408,282 @@ impl<E:Engine> PreparedProver<E> {
         let r = rng.gen();
         let s = rng.gen();
 
-        self.create_proof(params, r, s)
+        // self.create_proof(params, r, s)
+        self.create_proof_cpu_fft(params, r, s)
+    }
+
+    pub fn create_proof_cpu_fft<P: GpuParametersSource<E>>(
+        self,
+        mut params: P,
+        r: E::Fr,
+        s: E::Fr
+    ) -> Result<Proof<E>, SynthesisError>
+    {        
+        let prover = self.assignment;
+        let worker = Worker::new();
+
+        let vk = params.get_vk(prover.input_assignment.len())?;
+
+        let stopwatch = Stopwatch::new();
+
+        let h = {
+            let mut a = EvaluationDomain::from_coeffs(prover.a)?;
+            let mut b = EvaluationDomain::from_coeffs(prover.b)?;
+            let mut c = EvaluationDomain::from_coeffs(prover.c)?;
+            elog_verbose!("H query domain size is {}", a.as_ref().len());
+
+            // here a coset is a domain where denominator (z) does not vanish
+            // inverse FFT is an interpolation
+            a.ifft(&worker);
+            // evaluate in coset
+            a.coset_fft(&worker);
+            // same is for B and C
+            b.ifft(&worker);
+            b.coset_fft(&worker);
+            c.ifft(&worker);
+            c.coset_fft(&worker);
+
+            // do A*B-C in coset
+            a.mul_assign(&worker, &b);
+            drop(b);
+            a.sub_assign(&worker, &c);
+            drop(c);
+            // z does not vanish in coset, so we divide by non-zero
+            a.divide_by_z_on_coset(&worker);
+            // interpolate back in coset
+            a.icoset_fft(&worker);
+            let mut a = a.into_coeffs();
+            let a_len = a.len() - 1;
+            a.truncate(a_len);
+
+            a
+        };
+        elog_verbose!("{} seconds for FFT on CPU", stopwatch.elapsed());
+
+        let h_len = h.len();
+        let h_bases_representation = params.get_h_bases(h.len())?;
+        let h_encoding = scalars_into_representations::<E>(&worker, h)?;
+        let h_scalars_repr = representations_to_encoding::<E>(&worker, &h_encoding[..])?;
+        drop(h_encoding);
+
+        let h = worker.compute(move || {
+            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
+            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+
+            let result = unsafe { dense_multiexp(
+                h_len as u64,
+                h_scalars_repr.as_ptr(),
+                h_bases_representation.as_ref().as_ptr(),
+                false,
+                empty_repr_bytes.as_mut_ptr()
+            ) };
+
+            if result != 0 {
+                elog_verbose!("Error in CUDA routine");
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+            let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+            if affine.is_err() {
+                elog_verbose!("Error parsing point {}", affine.unwrap_err());
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            let affine = affine.unwrap();
+
+            Ok(affine.into_projective())
+        });
+
+
+
+        let stopwatch = Stopwatch::new();
+
+        let input_len = prover.input_assignment.len();
+        let aux_len = prover.aux_assignment.len();
+
+        let input_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.input_assignment)?);
+        let aux_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.aux_assignment)?);
+
+        elog_verbose!("H query is dense in G1,\nOther queries are {} elements in G1 and {} elements in G2",
+            2*(input_len + aux_len) + aux_len, input_len + aux_len);
+
+        let scalars_encoding = representations_to_encoding::<E>(&worker, &aux_assignment[..])?;
+        let l_bases_representation = params.get_l(aux_assignment.len())?;
+
+        let l = worker.compute(move || {
+            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
+            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+
+            let result = unsafe { dense_multiexp(
+                aux_len as u64,
+                scalars_encoding.as_ptr(),
+                l_bases_representation.as_ref().as_ptr(),
+                false,
+                empty_repr_bytes.as_mut_ptr()
+            ) };
+
+            if result != 0 {
+                elog_verbose!("Error in CUDA routine");
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+            let l_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+            if l_affine.is_err() {
+                elog_verbose!("Error parsing point {}", l_affine.unwrap_err());
+
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            Ok(l_affine.unwrap().into_projective())
+        });
+
+        // Run a dedicated process for dense vector
+        // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
+
+        let a_aux_density_total = prover.a_aux_density.get_total_density();
+
+
+        let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
+
+        // G1 for A on inputs stays on CPU
+        let a_inputs = multiexp(&worker, a_inputs_source, FullDensity, input_assignment.clone());
+
+        // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
+
+        let (a_bases, a_scalars, a_len) = filter_and_encode_bases_and_scalars::<E>(
+            &worker,
+            a_aux_source,
+            Arc::new(prover.a_aux_density),
+            aux_assignment.clone()
+        )?;
+
+        let a_aux = worker.compute(move || {
+            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
+            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+
+            let result = unsafe { dense_multiexp(
+                a_len as u64,
+                a_scalars.as_ptr(),
+                a_bases.as_ptr(),
+                false,
+                empty_repr_bytes.as_mut_ptr()
+            ) };
+
+            if result != 0 {
+                elog_verbose!("Error in CUDA routine");
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+            let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+            if affine.is_err() {
+                elog_verbose!("Error parsing point {}", affine.unwrap_err());
+                return Err(SynthesisError::AssignmentMissing);
+            }
+            let affine = affine.unwrap();
+            Ok(affine.into_projective())
+        });
+        // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
+
+        let b_input_density = Arc::new(prover.b_input_density);
+        let b_input_density_total = b_input_density.get_total_density();
+        let b_aux_density = Arc::new(prover.b_aux_density);
+        let b_aux_density_total = b_aux_density.get_total_density();
+
+        let (b_g1_inputs_source, b_g1_aux_source) = params.get_b_g1(b_input_density_total, b_aux_density_total)?;
+        let b_g1_inputs = multiexp(&worker, b_g1_inputs_source, b_input_density.clone(), input_assignment.clone());
+
+        let (b_bases, b_scalars, b_len) = filter_and_encode_bases_and_scalars::<E>(
+            &worker,
+            b_g1_aux_source,
+            b_aux_density.clone(),
+            aux_assignment.clone()
+        )?;
+
+        let b_g1_aux = worker.compute(move || {
+            let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
+            let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+
+            let result = unsafe { dense_multiexp(
+                b_len as u64,
+                b_scalars.as_ptr(),
+                b_bases.as_ptr(),
+                false,
+                empty_repr_bytes.as_mut_ptr()
+            ) };
+
+            if result != 0 {
+                elog_verbose!("Error in CUDA routine");
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            (&empty_repr_bytes[..]).read_exact(&mut empty_repr.as_mut())?;
+
+            let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
+            if affine.is_err() {
+                elog_verbose!("Error parsing point {}", affine.unwrap_err());
+                return Err(SynthesisError::AssignmentMissing);
+            }
+
+            Ok(affine.unwrap().into_projective())
+        });
+
+        // let b_g1_aux = multiexp(&worker, b_g1_aux_source, b_aux_density.clone(), aux_assignment.clone());
+
+        // G2 operations stay on CPU
+        let (b_g2_inputs_source, b_g2_aux_source) = params.get_b_g2(b_input_density_total, b_aux_density_total)?;
+        
+        let b_g2_inputs = multiexp(&worker, b_g2_inputs_source, b_input_density, input_assignment);
+        let b_g2_aux = multiexp(&worker, b_g2_aux_source, b_aux_density, aux_assignment);
+
+        if vk.delta_g1.is_zero() || vk.delta_g2.is_zero() {
+            // If this element is zero, someone is trying to perform a
+            // subversion-CRS attack.
+            return Err(SynthesisError::UnexpectedIdentity);
+        }
+
+        let mut g_a = vk.delta_g1.mul(r);
+        g_a.add_assign_mixed(&vk.alpha_g1);
+        let mut g_b = vk.delta_g2.mul(s);
+        g_b.add_assign_mixed(&vk.beta_g2);
+        let mut g_c;
+        {
+            let mut rs = r;
+            rs.mul_assign(&s);
+
+            g_c = vk.delta_g1.mul(rs);
+            g_c.add_assign(&vk.alpha_g1.mul(s));
+            g_c.add_assign(&vk.beta_g1.mul(r));
+        }
+        let mut a_answer = a_inputs.wait()?;
+        a_answer.add_assign(&a_aux.wait()?);
+        g_a.add_assign(&a_answer);
+        a_answer.mul_assign(s);
+        g_c.add_assign(&a_answer);
+
+        let mut b1_answer = b_g1_inputs.wait()?;
+        b1_answer.add_assign(&b_g1_aux.wait()?);
+        let mut b2_answer = b_g2_inputs.wait()?;
+        b2_answer.add_assign(&b_g2_aux.wait()?);
+
+        g_b.add_assign(&b2_answer);
+        b1_answer.mul_assign(r);
+        g_c.add_assign(&b1_answer);
+        g_c.add_assign(&h.wait()?);
+        g_c.add_assign(&l.wait()?);
+
+        elog_verbose!("{} seconds for prover for point multiplication", stopwatch.elapsed());
+
+        Ok(Proof {
+            a: g_a.into_affine(),
+            b: g_b.into_affine(),
+            c: g_c.into_affine()
+        })
     }
 
     pub fn create_proof<P: GpuParametersSource<E>>(
@@ -503,8 +778,8 @@ impl<E:Engine> PreparedProver<E> {
         let input_len = prover.input_assignment.len();
         let aux_len = prover.aux_assignment.len();
 
-        let input_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.input_assignment)?);
-        let aux_assignment = Arc::new(scalars_into_representations::<E>(&worker, prover.aux_assignment)?);
+        let input_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.input_assignment)?);
+        let aux_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.aux_assignment)?);
 
         elog_verbose!("H query is dense in G1,\nOther queries are {} elements in G1 and {} elements in G2",
             2*(input_len + aux_len) + aux_len, input_len + aux_len);
