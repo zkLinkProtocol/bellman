@@ -295,10 +295,7 @@ impl<E:Engine> PreparedProver<E> {
             g_c.add_assign(&vk.beta_g1.mul(r));
         }
         let mut a_answer = a_inputs.wait()?;
-        let a_aux = a_aux.wait()?;
-        println!("A = {}", a_aux.into_affine());
-        return Err(SynthesisError::UnexpectedIdentity);
-        // a_answer.add_assign(&a_aux.wait()?);
+        a_answer.add_assign(&a_aux.wait()?);
         g_a.add_assign(&a_answer);
         a_answer.mul_assign(s);
         g_c.add_assign(&a_answer);
