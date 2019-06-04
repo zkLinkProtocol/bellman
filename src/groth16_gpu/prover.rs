@@ -108,23 +108,19 @@ fn encode_scalars_into_montgommery_representations<E: Engine>(
 ) -> Result<Vec<u8>, SynthesisError>
 {   
     let representation_size = {
-        let mut v = vec![];
-        let zero = E::Fr::zero().into_repr();
-        zero.write_le(&mut v[..])?;
-
-        v.len()
+        std::mem::size_of::<<E::Fr as PrimeField>::Repr>()
     };
+
     let mut representation = vec![0u8; scalars.len() * representation_size];
     worker.scope(scalars.len(), |scope, chunk| {
         for (i, (scalar, repr)) in scalars.chunks(chunk)
                     .zip(representation.chunks_mut(chunk*representation_size))
                     .enumerate() {
             scope.spawn(move |_| {
-                let offset = i*chunk;
                 for (j, scalar) in scalar.iter()
                                             .enumerate() {
-                    let start = (offset + j)*representation_size;
-                    let end = (offset + j + 1)*representation_size;
+                    let start = j *representation_size;
+                    let end = (j + 1)*representation_size;
                     let write_to = &mut repr[start..end];
                     let scalar_repr = scalar.0.into_raw_repr();
                     scalar_repr.write_le(write_to).expect("must encode");
@@ -142,11 +138,7 @@ fn representations_to_encoding<E: Engine> (
 ) -> Result<Vec<u8>, SynthesisError>
 {   
     let representation_size = {
-        let mut v = vec![];
-        let zero = E::Fr::zero().into_repr();
-        zero.write_le(&mut v[..])?;
-
-        v.len()
+        std::mem::size_of::<<E::Fr as PrimeField>::Repr>()
     };
     let mut representation = vec![0u8; scalars.len() * representation_size];
     worker.scope(scalars.len(), |scope, chunk| {
@@ -154,11 +146,10 @@ fn representations_to_encoding<E: Engine> (
                     .zip(representation.chunks_mut(chunk*representation_size))
                     .enumerate() {
             scope.spawn(move |_| {
-                let offset = i*chunk;
                 for (j, scalar) in scalar.iter()
                                             .enumerate() {
-                    let start = (offset + j)*representation_size;
-                    let end = (offset + j + 1)*representation_size;
+                    let start = (j)*representation_size;
+                    let end = (j + 1)*representation_size;
                     let write_to = &mut repr[start..end];
                     scalar.write_le(write_to).expect("must encode");
                 }
@@ -182,17 +173,14 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
 //           D: Send + Sync + 'static + Clone + AsRef<Q>,
 //           E: Engine,
 {   
-    assert!(bases.len() == exponents.len());
+    // println!("values: {}, {}", bases.len(), exponents.len());
+    // assert!(bases.len() == exponents.len());
     let num_cpus = worker.cpus;
     // temporary
     let mut top_level_bases_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
     let mut top_level_scalar_representation: Vec<Vec<u8>> = vec![vec![]; num_cpus];
     let representation_size = {
-        let mut v = vec![];
-        let zero = E::Fr::zero().into_repr();
-        zero.write_le(&mut v[..])?;
-
-        v.len()
+        std::mem::size_of::<<E::Fr as PrimeField>::Repr>()
     };
 
     let g1_representation_size = <E::G1Affine as CurveAffine>::Uncompressed::size();
@@ -367,7 +355,7 @@ impl<E:Engine> PreparedProver<E> {
         r: E::Fr,
         s: E::Fr
     ) -> Result<Proof<E>, SynthesisError>
-    {
+    {        
         let prover = self.assignment;
         let worker = Worker::new();
 
@@ -384,6 +372,7 @@ impl<E:Engine> PreparedProver<E> {
         let c_representation = encode_scalars_into_montgommery_representations(&worker, prover.c)?;
 
         let (mut expected_h_len, z_inv, m_inv) = calculate_evaluation_domain_params::<E>(a_len)?;
+
         elog_verbose!("H query domain size is {}", expected_h_len);
         expected_h_len = expected_h_len - 1;
 
@@ -425,6 +414,7 @@ impl<E:Engine> PreparedProver<E> {
 
                 if result != 0 {
                     elog_verbose!("Error in CUDA routine");
+                    println!("Missing1");
                     return Err(SynthesisError::AssignmentMissing);
                 }
 
@@ -433,13 +423,12 @@ impl<E:Engine> PreparedProver<E> {
                 let h_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
                 if h_affine.is_err() {
                     elog_verbose!("Error parsing point {}", h_affine.unwrap_err());
+                    println!("Missing2");
                     return Err(SynthesisError::AssignmentMissing);
                 }
 
                 let h_affine = h_affine.unwrap();
-                // .map_err(|_| SynthesisError::AssignmentMissing)?;
 
-                // println!("H from CUDA = {}", h_affine);
 
                 h_affine
             };
@@ -477,6 +466,7 @@ impl<E:Engine> PreparedProver<E> {
 
             if result != 0 {
                 elog_verbose!("Error in CUDA routine");
+                println!("Missing3");
                 return Err(SynthesisError::AssignmentMissing);
             }
 
@@ -485,6 +475,7 @@ impl<E:Engine> PreparedProver<E> {
             let l_affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
             if l_affine.is_err() {
                 elog_verbose!("Error parsing point {}", l_affine.unwrap_err());
+                println!("Missing4");
                 return Err(SynthesisError::AssignmentMissing);
             }
 
@@ -495,6 +486,8 @@ impl<E:Engine> PreparedProver<E> {
         // let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
 
         let a_aux_density_total = prover.a_aux_density.get_total_density();
+
+        println!("Num inputs = {}", input_assignment.len());
 
         let (a_inputs_source, a_aux_source) = params.get_a(input_assignment.len(), a_aux_density_total)?;
 
@@ -532,13 +525,14 @@ impl<E:Engine> PreparedProver<E> {
             let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
             if affine.is_err() {
                 elog_verbose!("Error parsing point {}", affine.unwrap_err());
+                println!("Missing final");
                 return Err(SynthesisError::AssignmentMissing);
             }
-
+                        println!("End2!");
             Ok(affine.unwrap().into_projective())
         });
         
-
+                println!("End3!");
         // let a_aux = multiexp(&worker, a_aux_source, Arc::new(prover.a_aux_density), aux_assignment.clone());
 
         let b_input_density = Arc::new(prover.b_input_density);
@@ -547,7 +541,9 @@ impl<E:Engine> PreparedProver<E> {
         let b_aux_density_total = b_aux_density.get_total_density();
 
         let (b_g1_inputs_source, b_g1_aux_source) = params.get_b_g1(b_input_density_total, b_aux_density_total)?;
+        println!("End4!");
         let b_g1_inputs = multiexp(&worker, b_g1_inputs_source, b_input_density.clone(), input_assignment.clone());
+        println!("End6!");
 
         let (b_bases, b_scalars) = filter_and_encode_bases_and_scalars::<E>(
             &worker,
@@ -555,8 +551,10 @@ impl<E:Engine> PreparedProver<E> {
             b_aux_density.clone(),
             aux_assignment.clone()
         )?;
+        println!("End7!");
 
         let b_g1_aux = worker.compute(move || {
+            println!("End8!");
             let mut empty_repr_bytes = vec![0u8; <E::G1Affine as CurveAffine>::Uncompressed::size()];
             let mut empty_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
 
@@ -570,6 +568,7 @@ impl<E:Engine> PreparedProver<E> {
 
             if result != 0 {
                 elog_verbose!("Error in CUDA routine");
+                println!("Missing5");
                 return Err(SynthesisError::AssignmentMissing);
             }
 
@@ -578,12 +577,16 @@ impl<E:Engine> PreparedProver<E> {
             let affine = E::G1Affine::from_raw_uncompressed_le(&empty_repr, false);
             if affine.is_err() {
                 elog_verbose!("Error parsing point {}", affine.unwrap_err());
+                println!("Missing6");
                 return Err(SynthesisError::AssignmentMissing);
             }
+
+            println!("End!");
 
             Ok(affine.unwrap().into_projective())
         });
 
+        println!("End9!");
         // let b_g1_aux = multiexp(&worker, b_g1_aux_source, b_aux_density.clone(), aux_assignment.clone());
 
         // G2 operations stay on CPU
@@ -595,6 +598,7 @@ impl<E:Engine> PreparedProver<E> {
         if vk.delta_g1.is_zero() || vk.delta_g2.is_zero() {
             // If this element is zero, someone is trying to perform a
             // subversion-CRS attack.
+            println!("Missing7");
             return Err(SynthesisError::UnexpectedIdentity);
         }
 

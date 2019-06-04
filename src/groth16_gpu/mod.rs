@@ -257,6 +257,7 @@ impl<'a, E: Engine> GpuParametersSource<E> for &'a GpuParameters<E> {
         _: usize
     ) -> Result<(Self::G1Builder, Arc<&[E::G1Affine]>), SynthesisError>
     {
+        println!("Total A bases = {}", self.a.len());
         Ok(((self.a.clone(), 0), Arc::new(&self.a[num_inputs..])))
     }
 
