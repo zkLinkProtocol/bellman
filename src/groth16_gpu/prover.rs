@@ -977,12 +977,14 @@ impl<E:Engine> PreparedProver<E> {
         a_answer.mul_assign(s);
         g_c.add_assign(&a_answer);
 
+        elog_verbose!("{} seconds for prover for G1 point multiplication", stopwatch_total_multiexp.elapsed());
+
         // this part is completely on CPU and can be delayed as much as possible
         let mut b2_answer = b_g2_inputs.wait()?;
         b2_answer.add_assign(&b_g2_aux.wait()?);
         g_b.add_assign(&b2_answer);
 
-        elog_verbose!("{} seconds for prover for point multiplication", stopwatch_total_multiexp.elapsed());
+        elog_verbose!("{} seconds for prover for G1 and G2 point multiplication", stopwatch_total_multiexp.elapsed());
 
         Ok(Proof {
             a: g_a.into_affine(),
