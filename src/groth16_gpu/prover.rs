@@ -225,7 +225,8 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
     let representation_size = {
         std::mem::size_of::<<E::Fr as PrimeField>::Repr>()
     };
-
+    println!("Num bases = {}", bases.len());
+    println!("Total density = {}", density_map.get_total_density());
     worker.scope(exponents.len(), |scope, chunk| {
         for (i, (exponents, scalars_res)) in exponents.chunks(chunk)
                     .zip(top_level_scalar_representation.chunks_mut(1))
@@ -233,12 +234,15 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
             
             let density_map = density_map.clone();
             scope.spawn(move |_| {
+                println!("Skipping {}", i*chunk);
                 let density_iter = density_map.as_ref().iter().skip(i*chunk);
                 let mut scalars_repr_per_worker: Vec<u8> = Vec::with_capacity(chunk * representation_size);
                 for (exponent, density) in exponents.iter()
                                 .zip(density_iter) {
                     if density {
                         exponent.write_le(&mut scalars_repr_per_worker).expect("must encode");
+                    } else {
+                        println!("Skipping for i = {}", i);
                     }
                 }
                 scalars_res[0] = scalars_repr_per_worker;
