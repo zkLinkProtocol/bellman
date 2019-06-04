@@ -271,6 +271,7 @@ fn filter_and_encode_bases_and_scalars<E: Engine>(
 
     let scalars: Vec<u8> = top_level_scalar_representation.into_iter().flatten().collect();
     let num_scalars = scalars.len() / representation_size;
+    println!("num scalars: {}", num_scalars);
     bases_representation.truncate(num_scalars * g1_representation_size);
     // println!("Scalars encoding len = {}, for element {}", scalars.len(), scalars.len() / representation_size);
     // println!("Bases encoding len = {}, for element {}", bases_representation.len(), bases_representation.len() / g1_representation_size);
