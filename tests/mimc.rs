@@ -561,6 +561,7 @@ fn test_mimc_bn256_gpu_all() {
         generate_random_parameters(c, rng).unwrap()
     };
 
+    let pvk = prepare_verifying_key(&params.vk);
 
     let mut total_proving_cpu = Duration::new(0, 0);
     let mut total_proving_gpu = Duration::new(0, 0);
@@ -593,6 +594,14 @@ fn test_mimc_bn256_gpu_all() {
         }
 
         total_proving_cpu += start.elapsed();
+
+        let proof = Proof::read(&proof_vec[..]).unwrap();
+        // Check the proof
+        assert!(verify_proof(
+            &pvk,
+            &proof,
+            &[image]
+        ).unwrap());
     }
 
     let params = bellman_ce::groth16_gpu::GpuParameters::from_parameters(params);
@@ -622,6 +631,14 @@ fn test_mimc_bn256_gpu_all() {
         }
 
         total_proving_hybrid += start.elapsed();
+
+        let proof = Proof::read(&proof_vec[..]).unwrap();
+        // Check the proof
+        assert!(verify_proof(
+            &pvk,
+            &proof,
+            &[image]
+        ).unwrap());
     }
 
     {
@@ -649,6 +666,14 @@ fn test_mimc_bn256_gpu_all() {
         }
 
         total_proving_gpu += start.elapsed();
+
+        let proof = Proof::read(&proof_vec[..]).unwrap();
+        // Check the proof
+        assert!(verify_proof(
+            &pvk,
+            &proof,
+            &[image]
+        ).unwrap());
     }
 
     println!("Average proving time on CPU: {:?} seconds", total_proving_cpu);
