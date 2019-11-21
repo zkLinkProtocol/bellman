@@ -23,7 +23,7 @@ pairing = {package = "pairing_ce", version = "0.18.0" }
 byteorder = "1"
 
 futures-cpupool = {version = "0.1", optional = true}
-num_cpus = {version = "1", optional = true}
+num_cpus = "1"
 crossbeam = {version = "0.7.1", optional = true}
 
 prefetch = {version = "0.2", optional = true}
@@ -37,7 +37,7 @@ blake2-rfc = {version = "0.2.18", optional = true}
 default = ["multicore"]
 #default = ["multicore", "nightly"]
 #default = ["wasm"]
-multicore = ["futures-cpupool", "num_cpus", "crossbeam"]
+multicore = ["futures-cpupool", "crossbeam"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []
 wasm = ["web-sys"]
