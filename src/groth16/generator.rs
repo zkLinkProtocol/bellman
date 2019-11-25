@@ -305,7 +305,6 @@ pub fn generate_parameters<E, C>(
 
     elog_verbose!("using inverse FFT to convert powers of tau to Lagrange coefficients...");
 
-    #[cfg(not(feature = "nolog"))]
     let _stopwatch = Stopwatch::new();
 
     // Use inverse FFT to convert powers of tau to Lagrange coefficients
@@ -321,7 +320,6 @@ pub fn generate_parameters<E, C>(
 
     elog_verbose!("evaluating polynomials...");
     
-    #[cfg(not(feature = "nolog"))]
     let _stopwatch = Stopwatch::new();
 
     fn eval<E: Engine>(
