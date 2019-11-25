@@ -59,7 +59,7 @@ cfg_if! {
             pub fn elapsed(&self) -> f64 {
                 (self.perf.now() - self.start) / 1000.0
             }
-        } 
+        }
     } else {
         macro_rules! log {
             ($($t:tt)*) => (println!($($t)*))
