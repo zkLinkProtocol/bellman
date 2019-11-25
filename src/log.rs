@@ -59,10 +59,6 @@ cfg_if! {
             pub fn new() -> Stopwatch {
                 Stopwatch {}
             }
-
-            pub fn elapsed(&self) -> f64 {
-                0f64
-            }
         } 
     } else {
         macro_rules! log {

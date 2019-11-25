@@ -211,7 +211,7 @@ impl<E:Engine> PreparedProver<E> {
 
         let vk = params.get_vk(prover.input_assignment.len())?;
 
-        let stopwatch = Stopwatch::new();
+        let _stopwatch = Stopwatch::new();
 
         let h = {
             let mut a = EvaluationDomain::from_coeffs(prover.a)?;
@@ -250,14 +250,19 @@ impl<E:Engine> PreparedProver<E> {
             multiexp(&worker, params.get_h(a.len())?, FullDensity, a)
         };
 
-        elog_verbose!("{} seconds for prover for H evaluation (mostly FFT)", stopwatch.elapsed());
+        elog_verbose!("{} seconds for prover for H evaluation (mostly FFT)", _stopwatch.elapsed());
 
-        let stopwatch = Stopwatch::new();
+        let _stopwatch = Stopwatch::new();
 
         // TODO: Check that difference in operations for different chunks is small
-
-        let input_len = prover.input_assignment.len();
-        let aux_len = prover.aux_assignment.len();
+        #[cfg(not(feature = "nolog"))]
+        {
+            let input_len = prover.input_assignment.len();
+            let aux_len = prover.aux_assignment.len();
+    
+            elog_verbose!("H quey is densein G1,\nOther queriesare {} elements in G1 and {} elements in G2",
+                2*(input_len + aux_len) + aux_len, input_len + aux_len);
+        }
 
         let input_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.input_assignment)?);
         let aux_assignment = Arc::new(field_elements_into_representations::<E>(&worker, prover.aux_assignment)?);
@@ -269,8 +274,6 @@ impl<E:Engine> PreparedProver<E> {
 
         // let input_len = input_assignment.len();
         // let aux_len = aux_assignment.len();
-        elog_verbose!("H query is dense in G1,\nOther queries are {} elements in G1 and {} elements in G2",
-            2*(input_len + aux_len) + aux_len, input_len + aux_len);
 
         // Run a dedicated process for dense vector
         let l = multiexp(&worker, params.get_l(aux_assignment.len())?, FullDensity, aux_assignment.clone());
@@ -333,7 +336,7 @@ impl<E:Engine> PreparedProver<E> {
         g_c.add_assign(&h.wait()?);
         g_c.add_assign(&l.wait()?);
 
-        elog_verbose!("{} seconds for prover for point multiplication", stopwatch.elapsed());
+        elog_verbose!("{} seconds for prover for point multiplication", _stopwatch.elapsed());
 
         Ok(Proof {
             a: g_a.into_affine(),

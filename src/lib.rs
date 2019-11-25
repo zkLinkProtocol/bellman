@@ -49,6 +49,10 @@ pub use self::cs::*;
 use std::str::FromStr;
 use std::env;
 
-fn verbose_flag() -> bool {
-    option_env!("BELLMAN_VERBOSE").unwrap_or("0") == "1"
+cfg_if!{
+    if #[cfg(any(not(feature = "nolog"), feature = "sonic"))] {
+        fn verbose_flag() -> bool {
+            option_env!("BELLMAN_VERBOSE").unwrap_or("0") == "1"
+        }
+    }
 }
