@@ -36,6 +36,34 @@ cfg_if! {
                 (self.perf.now() - self.start) / 1000.0
             }
         }
+    } else if #[cfg(feature = "nolog")] {
+        macro_rules! log {
+            ($($t:tt)*) => ()
+        }
+
+        macro_rules! elog {
+            ($($t:tt)*) => ()
+        }
+
+        macro_rules! log_verbose {
+            ($($t:tt)*) => ()
+        }
+
+        macro_rules! elog_verbose {
+            ($($t:tt)*) => ()
+        }
+
+        pub struct Stopwatch {}
+
+        impl Stopwatch {
+            pub fn new() -> Stopwatch {
+                Stopwatch {}
+            }
+
+            pub fn elapsed(&self) -> f64 {
+                0f64
+            }
+        } 
     } else {
         macro_rules! log {
             ($($t:tt)*) => (println!($($t)*))
