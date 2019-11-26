@@ -9,7 +9,7 @@ extern crate futures;
 extern crate futures_cpupool;
 extern crate crossbeam;
 
-use self::futures::{Future, IntoFuture, Poll};
+pub(crate) use self::futures::{Future, IntoFuture, Poll};
 use self::futures_cpupool::{CpuPool, CpuFuture};
 use self::crossbeam::thread::{Scope};
 
