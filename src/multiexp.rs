@@ -40,7 +40,7 @@ use cfg_if;
 /// - double the highest accumulator enough times, add to the next one, double the result, add the next accumulator, continue
 /// 
 /// Demo why it works:
-/// ```
+/// ```text
 ///     a * G + b * H = (a_2 * (2^c)^2 + a_1 * (2^c)^1 + a_0) * G + (b_2 * (2^c)^2 + b_1 * (2^c)^1 + b_0) * H
 /// ```
 /// - make buckets over `0` labeled coefficients
