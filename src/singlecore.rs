@@ -53,7 +53,7 @@ impl Worker {
     ) -> R
         where F: FnOnce(&Scope<'a>, usize) -> R
     {
-        let chunk_size = elements;
+        let chunk_size = if elements == 0 { 1 } else { elements };
 
         let scope = Scope{
             _marker: PhantomData
