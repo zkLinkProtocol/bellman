@@ -24,7 +24,7 @@ use super::{
     SynthesisError
 };
 
-use super::worker::Worker;
+use super::worker_new::Worker;
 pub use super::group::*;
 
 pub struct EvaluationDomain<E: Engine, G: Group<E>> {

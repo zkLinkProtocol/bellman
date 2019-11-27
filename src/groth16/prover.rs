@@ -4,8 +4,6 @@ use rand::Rng;
 
 use std::sync::Arc;
 
-use futures::Future;
-
 use crate::pairing::{
     Engine,
     CurveProjective,
@@ -41,9 +39,11 @@ use crate::source::{
     FullDensity
 };
 
-use crate::multiexp::*;
+// use crate::multiexp::*;
 
-use crate::worker::{
+use crate::multexp_new::*;
+
+use crate::worker_new::{
     Worker
 };
 

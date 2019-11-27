@@ -19,6 +19,7 @@ use std::pin::{Pin};
 extern crate futures_new;
 
 use self::futures_new::future::{join_all, JoinAll};
+use self::futures_new::executor::block_on;
 
 use super::worker_new::{Worker, WorkerFuture};
 
@@ -407,6 +408,12 @@ impl<G: CurveProjective> Future for ChunksJoiner<G> {
     }
 }
 
+impl<G: CurveProjective> ChunksJoiner<G> {
+    pub fn wait(self) -> <Self as Future>::Output {
+        block_on(self)
+    }
+}
+
 fn join_chunks<G: CurveProjective>
     (chunks: Vec<Result<G, SynthesisError>>, c: u32) -> Result<G, SynthesisError> {
     if chunks.len() == 0 {
@@ -702,7 +709,7 @@ fn test_bench_new_sparse_multiexp() {
     let start = std::time::Instant::now();
 
     {
-        use crate::multicore::Future; 
+        use crate::worker::Future; 
         let _sparse = multiexp_old(
             &pool,
             (g.clone(), 0),

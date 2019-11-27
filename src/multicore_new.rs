@@ -13,9 +13,10 @@ use std::task::{Context, Poll};
 use std::pin::{Pin};
 use self::futures_new::future::{lazy};
 use self::futures_new::channel::oneshot::{channel, Sender, Receiver};
-use self::futures_new::executor::{ThreadPool};
-// use self::futures_cpupool::{CpuPool, CpuFuture};
 use self::crossbeam::thread::{Scope};
+use self::futures_new::executor::block_on;
+
+use self::futures_new::executor::{ThreadPool};
 
 #[derive(Clone)]
 pub struct Worker {
@@ -23,14 +24,16 @@ pub struct Worker {
     pool: ThreadPool
 }
 
+
 impl Worker {
     // We don't expose this outside the library so that
     // all `Worker` instances have the same number of
     // CPUs configured.
+    
     pub(crate) fn new_with_cpus(cpus: usize) -> Worker {
         Worker {
             cpus: cpus,
-            pool: ThreadPool::builder().pool_size(cpus).create().expect("should create a thread pool for futures execution")
+            pool: ThreadPool::builder().pool_size(cpus).create().expect("should create a thread pool for futures execution"),
         }
     }
 
@@ -111,6 +114,12 @@ impl<T: Send + 'static, E: Send + 'static> Future for WorkerFuture<T, E> {
     }
 }
 
+impl<T: Send + 'static, E: Send + 'static> WorkerFuture<T, E> {
+    pub fn wait(self) -> <Self as Future>::Output {
+        block_on(self)
+    }
+}
+
 fn log2_floor(num: usize) -> u32 {
     assert!(num > 0);
 
@@ -146,6 +155,8 @@ fn test_trivial_spawning() {
             i = i.wrapping_mul(42);
         }
 
+        println!("Done calculating long task");
+
         Ok(i)
     }
 
@@ -153,6 +164,12 @@ fn test_trivial_spawning() {
     println!("Spawning");
     let fut = worker.compute(|| long_fn());
     println!("Done spawning");
+
+    println!("Will sleep now");
+
+    std::thread::sleep(std::time::Duration::from_millis(10000));
+
+    println!("Done sleeping");
 
     let _ = block_on(fut);
 }

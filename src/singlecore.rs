@@ -4,7 +4,7 @@ extern crate futures;
 
 use std::marker::PhantomData;
 
-use self::futures::{Future, IntoFuture, Poll};
+pub(crate) use self::futures::{Future, IntoFuture, Poll};
 use self::futures::future::{result, FutureResult};
 
 #[derive(Clone)]

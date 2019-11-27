@@ -35,7 +35,7 @@ use crate::domain::{
     Scalar
 };
 
-use crate::worker::{
+use crate::worker_new::{
     Worker
 };
 
