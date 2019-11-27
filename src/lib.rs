@@ -32,16 +32,26 @@ cfg_if! {
         compile_error!("Multicore feature is not yet compatible with wasm target arch");
 
         mod multicore;
+        mod multicore_new;
         mod worker {
             pub use crate::multicore::*;
         }
+        mod worker_new {
+            pub use crate::multicore_new::*;
+        }
     } else {
         mod singlecore;
+        mod singlecore_new;
         mod worker {
             pub use crate::singlecore::*;
         }
+        mod worker_new {
+            pub use crate::singlecore_new::*;
+        }
     }
 }
+
+mod multexp_new;
 
 mod cs;
 pub use self::cs::*;

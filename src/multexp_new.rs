@@ -12,8 +12,16 @@ use crate::pairing::ff::{
 
 use std::sync::Arc;
 use super::source::*;
-use futures::{Future};
-use super::worker::Worker;
+use std::future::{Future};
+use std::task::{Context, Poll};
+use std::pin::{Pin};
+
+extern crate futures_new;
+
+use self::futures_new::future::{join_all, JoinAll};
+use self::futures_new::executor::block_on;
+
+use super::worker_new::{Worker, WorkerFuture};
 
 use super::SynthesisError;
 
@@ -55,11 +63,10 @@ fn multiexp_inner<Q, D, G, S>(
     bases: S,
     density_map: D,
     exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
-    // exponents: Arc<Vec<<<G::Engine as Engine>::Fr as PrimeField>::Repr>>,
-    mut skip: u32,
+    skip: u32,
     c: u32,
     handle_trivial: bool
-) -> Box<dyn Future<Item=<G as CurveAffine>::Projective, Error=SynthesisError>>
+) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
     where for<'a> &'a Q: QueryDensity,
           D: Send + Sync + 'static + Clone + AsRef<Q>,
           G: CurveAffine,
@@ -67,9 +74,9 @@ fn multiexp_inner<Q, D, G, S>(
 {
     // Perform this region of the multiexp
     let this = {
-        let bases = bases.clone();
-        let exponents = exponents.clone();
-        let density_map = density_map.clone();
+        // let bases = bases.clone();
+        // let exponents = exponents.clone();
+        // let density_map = density_map.clone();
 
         // This is a Pippenger’s algorithm
         pool.compute(move || {
@@ -133,27 +140,31 @@ fn multiexp_inner<Q, D, G, S>(
         })
     };
 
-    skip += c;
 
-    if skip >= <G::Engine as ScalarEngine>::Fr::NUM_BITS {
-        // There isn't another region.
-        Box::new(this)
-    } else {
-        // There's another region more significant. Calculate and join it with
-        // this region recursively.
-        Box::new(
-            this.join(multiexp_inner(pool, bases, density_map, exponents, skip, c, false))
-                .map(move |(this, mut higher)| {
-                    for _ in 0..c {
-                        higher.double();
-                    }
+    this
 
-                    higher.add_assign(&this);
 
-                    higher
-                })
-        )
-    }
+    // skip += c;
+
+    // if skip >= <G::Engine as ScalarEngine>::Fr::NUM_BITS {
+    //     // There isn't another region.
+    //     Box::new(this)
+    // } else {
+    //     // There's another region more significant. Calculate and join it with
+    //     // this region recursively.
+    //     Box::new(
+    //         this.join(multiexp_inner(pool, bases, density_map, exponents, skip, c, false))
+    //             .map(move |(this, mut higher)| {
+    //                 for _ in 0..c {
+    //                     higher.double();
+    //                 }
+
+    //                 higher.add_assign(&this);
+
+    //                 higher
+    //             })
+    //     )
+    // }
 }
 
 
@@ -168,7 +179,7 @@ cfg_if! {
             skip: u32,
             c: u32,
             handle_trivial: bool
-        ) -> Box<dyn Future<Item=<G as CurveAffine>::Projective, Error=SynthesisError>>
+        ) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
             where for<'a> &'a Q: QueryDensity,
                 D: Send + Sync + 'static + Clone + AsRef<Q>,
                 G: CurveAffine,
@@ -186,7 +197,7 @@ cfg_if! {
             skip: u32,
             c: u32,
             handle_trivial: bool
-        ) -> Box<dyn Future<Item=<G as CurveAffine>::Projective, Error=SynthesisError>>
+        ) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
             where for<'a> &'a Q: QueryDensity,
                 D: Send + Sync + 'static + Clone + AsRef<Q>,
                 G: CurveAffine,
@@ -332,7 +343,7 @@ pub fn multiexp<Q, D, G, S>(
     bases: S,
     density_map: D,
     exponents: Arc<Vec<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>>
-) -> Box<dyn Future<Item=<G as CurveAffine>::Projective, Error=SynthesisError>>
+) -> ChunksJoiner< <G as CurveAffine>::Projective >
     where for<'a> &'a Q: QueryDensity,
           D: Send + Sync + 'static + Clone + AsRef<Q>,
           G: CurveAffine,
@@ -351,7 +362,78 @@ pub fn multiexp<Q, D, G, S>(
         assert!(query_size == exponents.len());
     }
 
-    multiexp_inner_impl(pool, bases, density_map, exponents, 0, c, true)
+    let mut skip = 0;
+    let mut futures = Vec::with_capacity((<G::Engine as ScalarEngine>::Fr::NUM_BITS / c + 1) as usize);
+
+    while skip < <G::Engine as ScalarEngine>::Fr::NUM_BITS {
+        let chunk_future = if skip == 0 {
+            multiexp_inner_impl(pool, bases.clone(), density_map.clone(), exponents.clone(), 0, c, true)
+        } else {
+            multiexp_inner_impl(pool, bases.clone(), density_map.clone(), exponents.clone(), skip, c, false)
+        };
+
+        futures.push(chunk_future);
+        skip += c;
+    }
+
+    let join = join_all(futures);
+
+    ChunksJoiner {
+        join,
+        c
+    } 
+}
+
+pub struct ChunksJoiner<G: CurveProjective> {
+    join: JoinAll< WorkerFuture<G, SynthesisError> >,
+    c: u32
+}
+
+impl<G: CurveProjective> Future for ChunksJoiner<G> {
+    type Output = Result<G, SynthesisError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
+    {
+        let c = self.as_ref().c;
+        let join = unsafe { self.map_unchecked_mut(|s| &mut s.join) };
+        match join.poll(cx) {
+            Poll::Ready(v) => {
+                let v = join_chunks(v, c);
+                return Poll::Ready(v);
+            },
+            Poll::Pending => {
+                return Poll::Pending;
+            }
+        }
+    }
+}
+
+impl<G: CurveProjective> ChunksJoiner<G> {
+    pub fn wait(self) -> <Self as Future>::Output {
+        block_on(self)
+    }
+}
+
+fn join_chunks<G: CurveProjective>
+    (chunks: Vec<Result<G, SynthesisError>>, c: u32) -> Result<G, SynthesisError> {
+    if chunks.len() == 0 {
+        return Ok(G::zero());
+    }
+
+    let mut iter = chunks.into_iter().rev();
+    let higher = iter.next().expect("is some chunk result");
+    let mut higher = higher?;
+
+    for chunk in iter {
+        let this = chunk?;
+        for _ in 0..c {
+            higher.double();
+        }
+
+        higher.add_assign(&this);
+    }
+
+    Ok(higher)
 }
 
 
@@ -477,7 +559,7 @@ fn dense_multiexp_inner<G: CurveAffine>(
 
 
 #[test]
-fn test_with_bls12() {
+fn test_new_multiexp_with_bls12() {
     fn naive_multiexp<G: CurveAffine>(
         bases: Arc<Vec<G>>,
         exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
@@ -497,6 +579,8 @@ fn test_with_bls12() {
     use rand::{self, Rand};
     use crate::pairing::bls12_381::Bls12;
 
+    use self::futures_new::executor::block_on;
+
     const SAMPLES: usize = 1 << 14;
 
     let rng = &mut rand::thread_rng();
@@ -507,18 +591,21 @@ fn test_with_bls12() {
 
     let pool = Worker::new();
 
-    let fast = multiexp(
-        &pool,
-        (g, 0),
-        FullDensity,
-        v
-    ).wait().unwrap();
+    let fast = block_on(
+        multiexp(
+            &pool,
+            (g, 0),
+            FullDensity,
+            v
+        )
+    ).unwrap();
 
     assert_eq!(naive, fast);
 }
 
 #[test]
-fn test_speed_with_bn256() {
+#[ignore]
+fn test_new_multexp_speed_with_bn256() {
     use rand::{self, Rand};
     use crate::pairing::bn256::Bn256;
     use num_cpus;
@@ -532,14 +619,18 @@ fn test_speed_with_bn256() {
 
     let pool = Worker::new();
 
+    use self::futures_new::executor::block_on;
+
     let start = std::time::Instant::now();
 
-    let _fast = multiexp(
-        &pool,
-        (g, 0),
-        FullDensity,
-        v
-    ).wait().unwrap();
+    let _fast = block_on(
+        multiexp(
+            &pool,
+            (g, 0),
+            FullDensity,
+            v
+        )
+    ).unwrap();
 
 
     let duration_ns = start.elapsed().as_nanos() as f64;
@@ -550,7 +641,7 @@ fn test_speed_with_bn256() {
 
 
 #[test]
-fn test_dense_multiexp() {
+fn test_dense_multiexp_vs_new_multiexp() {
     use rand::{XorShiftRng, SeedableRng, Rand, Rng};
     use crate::pairing::bn256::Bn256;
     use num_cpus;
@@ -574,14 +665,18 @@ fn test_dense_multiexp() {
     let duration_ns = start.elapsed().as_nanos() as f64;
     println!("{} ns for dense for {} samples", duration_ns, SAMPLES);
 
+    use self::futures_new::executor::block_on;
+
     let start = std::time::Instant::now();
 
-    let sparse = multiexp(
-        &pool,
-        (Arc::new(g), 0),
-        FullDensity,
-        Arc::new(v)
-    ).wait().unwrap();
+    let sparse = block_on(
+        multiexp(
+            &pool,
+            (Arc::new(g), 0),
+            FullDensity,
+            Arc::new(v)
+        )
+    ).unwrap();
 
     let duration_ns = start.elapsed().as_nanos() as f64;
     println!("{} ns for sparse for {} samples", duration_ns, SAMPLES);
@@ -591,10 +686,14 @@ fn test_dense_multiexp() {
 
 
 #[test]
-fn test_bench_sparse_multiexp() {
+fn test_bench_new_sparse_multiexp() {
     use rand::{XorShiftRng, SeedableRng, Rand, Rng};
     use crate::pairing::bn256::Bn256;
     use num_cpus;
+
+    use super::worker::Worker as WorkerOld;
+    use super::multiexp::multiexp as multiexp_old;
+
 
     const SAMPLES: usize = 1 << 22;
     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
@@ -604,16 +703,39 @@ fn test_bench_sparse_multiexp() {
 
     println!("Done generating test points and scalars");
 
-    let pool = Worker::new();
+    let pool = WorkerOld::new();
+    let g = Arc::new(g);
+    let v = Arc::new(v);
     let start = std::time::Instant::now();
 
-    let _sparse = multiexp(
-        &pool,
-        (Arc::new(g), 0),
-        FullDensity,
-        Arc::new(v)
-    ).wait().unwrap();
+    {
+        use crate::worker::Future; 
+        let _sparse = multiexp_old(
+            &pool,
+            (g.clone(), 0),
+            FullDensity,
+            v.clone()
+        ).wait().unwrap();
+    }
 
     let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("{} ms for sparse for {} samples", duration_ns/1000.0f64, SAMPLES);
+    println!("{} ms for old sparse multiexp for {} samples", duration_ns/1000.0f64, SAMPLES);
+
+    use self::futures_new::executor::block_on;
+
+    let pool = Worker::new();
+
+    let start = std::time::Instant::now();
+
+    let _sparse = block_on(
+        multiexp(
+            &pool,
+            (g.clone(), 0),
+            FullDensity,
+            v.clone()
+        )
+    ).unwrap();
+
+    let duration_ns = start.elapsed().as_nanos() as f64;
+    println!("{} ms for new sparse multiexp for {} samples", duration_ns/1000.0f64, SAMPLES);
 }
