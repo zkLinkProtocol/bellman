@@ -39,11 +39,9 @@ use crate::source::{
     FullDensity
 };
 
-// use crate::multiexp::*;
+use crate::multiexp::*;
 
-use crate::multexp_new::*;
-
-use crate::worker_new::{
+use crate::worker::{
     Worker
 };
 

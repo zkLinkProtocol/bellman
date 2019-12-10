@@ -4,8 +4,12 @@ extern crate futures;
 
 use std::marker::PhantomData;
 
-pub(crate) use self::futures::{Future, IntoFuture, Poll};
-use self::futures::future::{result, FutureResult};
+use std::future::{Future};
+use std::task::{Context, Poll};
+use std::pin::{Pin};
+
+use self::futures::channel::oneshot::{channel, Sender, Receiver};
+use self::futures::executor::{block_on};
 
 #[derive(Clone)]
 pub struct Worker {
@@ -30,20 +34,23 @@ impl Worker {
         0u32
     }
 
-    pub fn compute<F, R>(
+    pub fn compute<F, T, E>(
         &self, f: F
-    ) -> WorkerFuture<R::Item, R::Error>
-        where F: FnOnce() -> R + Send + 'static,
-              R: IntoFuture + 'static,
-              R::Future: Send + 'static,
-              R::Item: Send + 'static,
-              R::Error: Send + 'static
+    ) -> WorkerFuture<T, E>
+        where F: FnOnce() -> Result<T, E> + Send + 'static,
+              T: Send + 'static,
+              E: Send + 'static
     {
-        let future = f().into_future();
+        let result = f();
 
-        WorkerFuture {
-            future: result(future.wait())
-        }
+        let (sender, receiver) = channel();
+        let _ = sender.send(result);
+
+        let worker_future = WorkerFuture {
+            receiver
+        };
+
+        worker_future
     }
 
     pub fn scope<'a, F, R>(
@@ -79,15 +86,63 @@ impl<'a> Scope<'a> {
 }
 
 pub struct WorkerFuture<T, E> {
-    future: FutureResult<T, E>
+    receiver: Receiver<Result<T, E>>
 }
 
 impl<T: Send + 'static, E: Send + 'static> Future for WorkerFuture<T, E> {
-    type Item = T;
-    type Error = E;
+    type Output = Result<T, E>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error>
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
-        self.future.poll()
+        let rec = unsafe { self.map_unchecked_mut(|s| &mut s.receiver) };
+        match rec.poll(cx) {
+            Poll::Ready(v) => {
+                if let Ok(v) = v {
+                    return Poll::Ready(v)
+                } else {
+                    panic!("Worker future can not have canceled sender");
+                }
+            },
+            Poll::Pending => {
+                return Poll::Pending;
+            }
+        }
     }
+}
+
+impl<T: Send + 'static, E: Send + 'static> WorkerFuture<T, E> {
+    pub fn wait(self) -> <Self as Future>::Output {
+        block_on(self)
+    }
+}
+
+
+#[test]
+fn test_trivial_singlecore_spawning() {
+    use self::futures_new::executor::block_on;
+
+    fn long_fn() -> Result<usize, ()> {
+        let mut i: usize = 1;
+        println!("Start calculating long task");
+        for _ in 0..1000000 {
+            i = i.wrapping_mul(42);
+        }
+
+        println!("Done calculating long task");
+
+        Ok(i)
+    }
+
+    let worker = Worker::new();
+    println!("Spawning");
+    let fut = worker.compute(|| long_fn());
+    println!("Done spawning");
+
+    println!("Will sleep now");
+
+    std::thread::sleep(std::time::Duration::from_millis(10000));
+
+    println!("Done sleeping");
+
+    let _ = block_on(fut);
 }
