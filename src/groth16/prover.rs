@@ -26,6 +26,7 @@ use crate::{
     SynthesisError,
     Circuit,
     ConstraintSystem,
+    ThreadConstraintSystem,
     LinearCombination,
     Variable,
     Index
@@ -46,6 +47,10 @@ use crate::multiexp::*;
 use crate::worker::{
     Worker
 };
+
+extern crate tokio;
+
+use tokio::runtime::Runtime;
 
 fn eval<E: Engine>(
     lc: &LinearCombination<E>,
@@ -106,6 +111,37 @@ struct ProvingAssignment<E: Engine> {
     // Assignments of variables
     input_assignment: Vec<E::Fr>,
     aux_assignment: Vec<E::Fr>
+}
+
+struct ThreadProvingAssignment<E: Engine> {
+    input_index: usize,
+    aux_index: usize,
+    constraints: Vec<(LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>,
+    runtime: Runtime,
+    thread_cs: Vec<ThreadConstraintSystem<E, Self>>,
+}
+
+impl<E: Engine> ThreadProvingAssignment<E> {
+    pub fn make_proving_assignment(
+        &mut self
+    ) -> Result<ProvingAssignment<E>, SynthesisError>
+    {
+//        self.runtime.shutdown_on_idle().wait().unwrap();
+
+        let mut prover = ProvingAssignment {
+            a_aux_density: DensityTracker::new(),
+            b_input_density: DensityTracker::new(),
+            b_aux_density: DensityTracker::new(),
+            a: vec![],
+            b: vec![],
+            c: vec![],
+            input_assignment: vec![],
+            aux_assignment: vec![]
+        };
+        // TODO :: merge info
+
+        Ok(prover)
+    }
 }
 
 pub fn prepare_prover<E, C>(
@@ -382,8 +418,75 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
         // Do nothing; we don't care about namespaces in this context.
     }
 
-    fn get_root(&mut self) -> &mut Self::Root {
-        self
+    fn get_root(&mut self) -> &mut Self::Root { self }
+}
+
+impl<E: Engine> ConstraintSystem<E> for ThreadProvingAssignment<E> {
+    type Root = Self;
+
+    fn alloc<F, A, AR>(
+        &mut self,
+        _: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        self.aux_index += 1;
+        Ok(Variable(Index::Aux(self.aux_index - 1)))
+    }
+
+    fn alloc_input<F, A, AR>(
+        &mut self,
+        _: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        self.input_index += 1;
+        Ok(Variable(Index::Input(self.input_index - 1)))
+    }
+
+    fn enforce<A, AR, LA, LB, LC>(
+        &mut self,
+        _: A,
+        a: LA,
+        b: LB,
+        c: LC
+    )
+        where A: FnOnce() -> AR, AR: Into<String>,
+              LA: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+              LB: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+              LC: FnOnce(LinearCombination<E>) -> LinearCombination<E>
+    {
+        let a = a(LinearCombination::zero());
+        let b = b(LinearCombination::zero());
+        let c = c(LinearCombination::zero());
+
+        self.constraints.push((a,b,c));
+    }
+
+    fn push_namespace<NR, N>(&mut self, _: N)
+        where NR: Into<String>, N: FnOnce() -> NR
+    {
+        // Do nothing; we don't care about namespaces in this context.
+    }
+
+    fn pop_namespace(&mut self)
+    {
+        // Do nothing; we don't care about namespaces in this context.
+    }
+
+    fn get_root(&mut self) -> &mut Self::Root { self }
+
+    fn add_new_ThreadCS<'a, NR, N>(
+        &mut self,
+        name_fn: N,
+        start_index: usize
+    ) -> &mut ThreadConstraintSystem<E, Self::Root>
+        where NR: Into<String>, N: FnOnce() -> NR
+    {
+        self.thread_cs.push(ThreadConstraintSystem::new(start_index));
+        self.thread_cs.last_mut().unwrap()
     }
 }
 

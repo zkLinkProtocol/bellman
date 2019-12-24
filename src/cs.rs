@@ -7,6 +7,10 @@ use std::error::Error;
 use std::io;
 use std::marker::PhantomData;
 
+extern crate tokio;
+
+use tokio::runtime::Runtime;
+
 /// Computations are expressed in terms of arithmetic circuits, in particular
 /// rank-1 quadratic constraint systems. The `Circuit` trait represents a
 /// circuit that can be synthesized. The `synthesize` method is called during
@@ -20,7 +24,7 @@ pub trait Circuit<E: Engine> {
 }
 
 /// Represents a variable in our constraint system.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Variable(pub(crate) Index);
 
 impl Variable {
@@ -39,7 +43,7 @@ impl Variable {
 
 /// Represents the index of either an input variable or
 /// auxillary variable.
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
 pub enum Index {
     Input(usize),
     Aux(usize)
@@ -72,7 +76,7 @@ impl<E: Engine> Add<(E::Fr, Variable)> for LinearCombination<E> {
     }
 }
 
-impl<E: Engine> Sub<(E::Fr, Variable)> for LinearCombination<E> {    
+impl<E: Engine> Sub<(E::Fr, Variable)> for LinearCombination<E> {
     type Output = LinearCombination<E>;
 
     fn sub(self, (mut coeff, var): (E::Fr, Variable)) -> LinearCombination<E> {
@@ -274,6 +278,116 @@ pub trait ConstraintSystem<E: Engine>: Sized {
 
         Namespace(self.get_root(), PhantomData)
     }
+
+    /// Add new ThreadConstraintSystem.
+    fn add_new_ThreadCS<'a, NR, N>(
+        &mut self,
+        name_fn: N,
+        start_index: usize
+    ) -> &mut ThreadConstraintSystem<E, Self::Root>
+        where NR: Into<String>, N: FnOnce() -> NR
+    {
+        panic!("only for reimplemented calling");
+    }
+}
+
+use std::collections::HashMap;
+
+pub struct RememberedInfo<E: Engine>
+{
+    start_index: usize,
+    last_used: usize,
+    constraints: Vec<(String, LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>,
+    outside_variables: HashMap<Variable,Variable>
+}
+
+// TODO :: description
+pub struct ThreadConstraintSystem<E: Engine, CS: ConstraintSystem<E>>
+(
+    RememberedInfo<E>,
+    PhantomData<CS>,
+);
+
+impl<E: Engine, CS: ConstraintSystem<E>> ThreadConstraintSystem<E, CS>
+{
+    pub fn new(start_index: usize) -> Self
+    {
+        ThreadConstraintSystem(
+            RememberedInfo {
+                start_index: start_index,
+                last_used: 0,
+                constraints: vec![],
+                outside_variables: HashMap::new(),
+            },
+            PhantomData
+        )
+    }
+    pub fn add_outside_variable(&mut self, var1: Variable, var2: Variable)
+    {
+        self.0.outside_variables.insert(var1,var2);
+    }
+}
+
+impl<E: Engine, CS: ConstraintSystem<E>> ConstraintSystem<E> for ThreadConstraintSystem<E, CS> {
+    type Root = Self;
+
+    fn one() -> Variable { CS::one() }
+
+    fn alloc<F, A, AR>(
+        &mut self,
+        annotation: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        self.0.last_used += 1;
+        Ok(Variable(Index::Aux(self.0.last_used)))
+    }
+
+    fn alloc_input<F, A, AR>(
+        &mut self,
+        annotation: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        panic!("not available in this context");
+    }
+
+    fn enforce<A, AR, LA, LB, LC>(
+        &mut self,
+        annotation: A,
+        a: LA,
+        b: LB,
+        c: LC
+    )
+        where A: FnOnce() -> AR, AR: Into<String>,
+              LA: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+              LB: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+              LC: FnOnce(LinearCombination<E>) -> LinearCombination<E>
+    {
+        let a = a(LinearCombination::zero());
+        let b = b(LinearCombination::zero());
+        let c = c(LinearCombination::zero());
+        self.0.constraints.push((annotation().into(),a,b,c));
+    }
+
+    // Downstream users who use `namespace` will never interact with these
+    // functions and they will never be invoked because the namespace is
+    // never a root constraint system.
+
+    fn push_namespace<NR, N>(&mut self, _: N)
+        where NR: Into<String>, N: FnOnce() -> NR
+    {
+        // Do nothing; we don't care about namespaces in this context.
+    }
+
+    fn pop_namespace(&mut self)
+    {
+        // Do nothing; we don't care about namespaces in this context.
+    }
+
+    fn get_root(&mut self) -> &mut Self::Root { self }
 }
 
 /// This is a "namespaced" constraint system which borrows a constraint system (pushing
@@ -341,6 +455,16 @@ impl<'cs, E: Engine, CS: ConstraintSystem<E>> ConstraintSystem<E> for Namespace<
     {
         self.0.get_root()
     }
+
+    fn add_new_ThreadCS<'a, NR, N>(
+        &mut self,
+        name_fn: N,
+        start_index: usize
+    ) -> &mut ThreadConstraintSystem<E, Self::Root>
+        where NR: Into<String>, N: FnOnce() -> NR
+    {
+        self.0.add_new_ThreadCS(name_fn,start_index)
+    }
 }
 
 impl<'a, E: Engine, CS: ConstraintSystem<E>> Drop for Namespace<'a, E, CS> {
@@ -407,5 +531,15 @@ impl<'cs, E: Engine, CS: ConstraintSystem<E>> ConstraintSystem<E> for &'cs mut C
     fn get_root(&mut self) -> &mut Self::Root
     {
         (**self).get_root()
+    }
+
+    fn add_new_ThreadCS<'a, NR, N>(
+        &mut self,
+        name_fn: N,
+        start_index: usize
+    ) -> &mut ThreadConstraintSystem<E, Self::Root>
+        where NR: Into<String>, N: FnOnce() -> NR
+    {
+        (**self).add_new_ThreadCS(name_fn,start_index)
     }
 }
