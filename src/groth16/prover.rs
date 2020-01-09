@@ -4,8 +4,6 @@ use rand::Rng;
 
 use std::sync::Arc;
 
-use futures::Future;
-
 use crate::pairing::{
     Engine,
     CurveProjective,
