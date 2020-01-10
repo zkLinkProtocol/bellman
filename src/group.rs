@@ -50,6 +50,7 @@ impl<G: CurveProjective> Group<G::Engine> for Point<G> {
     }
 }
 
+#[derive(Eq)]
 pub struct Scalar<E: Engine>(pub E::Fr);
 
 impl<E: Engine> PartialEq for Scalar<E> {

@@ -51,8 +51,14 @@ pub enum Index {
 
 /// This represents a linear combination of some variables, with coefficients
 /// in the scalar field of a pairing-friendly elliptic curve group.
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq)]
 pub struct LinearCombination<E: Engine>(pub(crate) Vec<(Variable, E::Fr)>);
+
+impl<E: Engine> PartialEq for LinearCombination<E> {
+    fn eq(&self, other: &LinearCombination<E>) -> bool {
+        self.0==other.0
+    }
+}
 
 impl<E: Engine> AsRef<[(Variable, E::Fr)]> for LinearCombination<E> {
     fn as_ref(&self) -> &[(Variable, E::Fr)] {
@@ -208,6 +214,9 @@ impl fmt::Display for SynthesisError {
     }
 }
 
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::Receiver;
+
 /// Represents a constraint system which can have new variables
 /// allocated and constrains between them formed.
 pub trait ConstraintSystem<E: Engine>: Sized {
@@ -280,12 +289,19 @@ pub trait ConstraintSystem<E: Engine>: Sized {
     }
 
     /// Add new ThreadConstraintSystem.
-    fn add_new_ThreadCS<'a, NR, N>(
+    fn reserve_memory_for_thread_info(
+        &mut self
+    ) -> Sender<RememberedInfo<E>>
+    {
+        panic!("only for reimplemented calling");
+    }
+
+    fn alloc_thread_output<F, A, AR>(
         &mut self,
-        name_fn: N,
-        start_index: usize
-    ) -> &mut ThreadConstraintSystem<E, Self::Root>
-        where NR: Into<String>, N: FnOnce() -> NR
+        annotation: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
     {
         panic!("only for reimplemented calling");
     }
@@ -293,12 +309,14 @@ pub trait ConstraintSystem<E: Engine>: Sized {
 
 use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct RememberedInfo<E: Engine>
 {
-    start_index: usize,
-    last_used: usize,
-    constraints: Vec<(String, LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>,
-    outside_variables: HashMap<Variable,Variable>
+    pub last_used_index: usize,
+    pub constraints: Vec<(String, LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>,
+    pub outside_variables: HashMap<Variable,Variable>, /// (in thread, global cs)
+    pub thread_outputs: HashMap<Variable,Variable>, /// (in thread, global cs)
+    pub my_aux_values: Vec<E::Fr>,
 }
 
 // TODO :: description
@@ -310,21 +328,41 @@ pub struct ThreadConstraintSystem<E: Engine, CS: ConstraintSystem<E>>
 
 impl<E: Engine, CS: ConstraintSystem<E>> ThreadConstraintSystem<E, CS>
 {
-    pub fn new(start_index: usize) -> Self
+    pub fn new() -> Self
     {
         ThreadConstraintSystem(
             RememberedInfo {
-                start_index: start_index,
-                last_used: 0,
+                last_used_index: 0,
                 constraints: vec![],
                 outside_variables: HashMap::new(),
+                thread_outputs: HashMap::new(),
+                my_aux_values: vec![],
             },
             PhantomData
         )
     }
+
+    pub fn get_rem_info(
+        &mut self
+    ) -> RememberedInfo<E>
+    {
+        self.0.clone()
+    }
+
     pub fn add_outside_variable(&mut self, var1: Variable, var2: Variable)
     {
         self.0.outside_variables.insert(var1,var2);
+    }
+
+    pub fn add_thread_output(&mut self, var1: Variable, var2: Variable) { self.0.thread_outputs.insert(var1,var2); }
+
+    pub fn get_constraints(
+        &mut self
+    ) -> Vec<(String, LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>
+    {
+//        self.runtime.shutdown_on_idle().wait().unwrap();
+
+        self.0.constraints.clone()
     }
 }
 
@@ -340,8 +378,9 @@ impl<E: Engine, CS: ConstraintSystem<E>> ConstraintSystem<E> for ThreadConstrain
     ) -> Result<Variable, SynthesisError>
         where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
     {
-        self.0.last_used += 1;
-        Ok(Variable(Index::Aux(self.0.last_used)))
+        self.0.my_aux_values.push(f()?);
+        self.0.last_used_index += 1;
+        Ok(Variable(Index::Aux(self.0.last_used_index - 1)))
     }
 
     fn alloc_input<F, A, AR>(
@@ -456,14 +495,21 @@ impl<'cs, E: Engine, CS: ConstraintSystem<E>> ConstraintSystem<E> for Namespace<
         self.0.get_root()
     }
 
-    fn add_new_ThreadCS<'a, NR, N>(
-        &mut self,
-        name_fn: N,
-        start_index: usize
-    ) -> &mut ThreadConstraintSystem<E, Self::Root>
-        where NR: Into<String>, N: FnOnce() -> NR
+    fn reserve_memory_for_thread_info(
+        &mut self
+    ) -> Sender<RememberedInfo<E>>
     {
-        self.0.add_new_ThreadCS(name_fn,start_index)
+        self.0.reserve_memory_for_thread_info()
+    }
+
+    fn alloc_thread_output<F, A, AR>(
+        &mut self,
+        annotation: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        self.0.alloc_thread_output(annotation, f)
     }
 }
 
@@ -533,13 +579,20 @@ impl<'cs, E: Engine, CS: ConstraintSystem<E>> ConstraintSystem<E> for &'cs mut C
         (**self).get_root()
     }
 
-    fn add_new_ThreadCS<'a, NR, N>(
-        &mut self,
-        name_fn: N,
-        start_index: usize
-    ) -> &mut ThreadConstraintSystem<E, Self::Root>
-        where NR: Into<String>, N: FnOnce() -> NR
+    fn reserve_memory_for_thread_info(
+        &mut self
+    ) -> Sender<RememberedInfo<E>>
     {
-        (**self).add_new_ThreadCS(name_fn,start_index)
+        (**self).reserve_memory_for_thread_info()
+    }
+
+    fn alloc_thread_output<F, A, AR>(
+        &mut self,
+        annotation: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        (**self).alloc_thread_output(annotation, f)
     }
 }

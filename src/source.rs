@@ -98,7 +98,7 @@ impl<'a> QueryDensity for &'a FullDensity {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DensityTracker {
     bv: BitVec,
     total_density: usize

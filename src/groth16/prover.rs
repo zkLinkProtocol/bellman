@@ -26,6 +26,7 @@ use crate::{
     SynthesisError,
     Circuit,
     ConstraintSystem,
+    RememberedInfo,
     ThreadConstraintSystem,
     LinearCombination,
     Variable,
@@ -96,8 +97,8 @@ pub struct PreparedProver<E: Engine>{
     assignment: ProvingAssignment<E>,
 }
 
-#[derive(Clone)]
-struct ProvingAssignment<E: Engine> {
+#[derive(Clone, Eq)]
+pub struct ProvingAssignment<E: Engine> {
     // Density of queries
     a_aux_density: DensityTracker,
     b_input_density: DensityTracker,
@@ -110,24 +111,78 @@ struct ProvingAssignment<E: Engine> {
 
     // Assignments of variables
     input_assignment: Vec<E::Fr>,
-    aux_assignment: Vec<E::Fr>
+    aux_assignment: Vec<E::Fr>,
+
+    all_constraints: Vec<(LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>,
 }
 
-struct ThreadProvingAssignment<E: Engine> {
-    input_index: usize,
-    aux_index: usize,
+impl<E: Engine> ProvingAssignment<E> {
+    pub fn new() -> Self
+    {
+        ProvingAssignment {
+            a_aux_density: DensityTracker::new(),
+            b_input_density: DensityTracker::new(),
+            b_aux_density: DensityTracker::new(),
+            a: vec![],
+            b: vec![],
+            c: vec![],
+            input_assignment: vec![],
+            aux_assignment: vec![],
+            all_constraints: vec![]
+        }
+    }
+}
+
+impl<E: Engine> PartialEq for ProvingAssignment<E> {
+    fn eq(&self, other: &ProvingAssignment<E>) -> bool {
+//        println!("kek1 COMP :: {:?} {:?}",self.a_aux_density,other.a_aux_density);
+//        println!("comparing :: {:?}",self.a_aux_density == other.a_aux_density);
+//        println!("comparing :: {:?}",self.b_input_density == other.b_input_density);
+//        println!("comparing :: {:?}",self.b_aux_density == other.b_aux_density);
+//        println!("comparing :: {:?}",self.a == other.a);
+//        println!("comparing kek1 :: {:?} {:?}",self.a.len(),other.a.len());
+//        println!("comparing :: {:?}",self.b == other.b);
+//        println!("comparing :: {:?}",self.c == other.c);
+//        println!("comparing :: {:?}",self.input_assignment == other.input_assignment);
+//        println!("comparing :: {:?}",self.aux_assignment == other.aux_assignment);
+        self.a_aux_density == other.a_aux_density &&
+        self.b_input_density == other.b_input_density &&
+        self.b_aux_density == other.b_aux_density &&
+        self.a == other.a &&
+        self.b == other.b &&
+        self.c == other.c &&
+        self.input_assignment == other.input_assignment &&
+        self.aux_assignment == other.aux_assignment &&
+        self.all_constraints == other.all_constraints
+    }
+}
+
+use std::sync::mpsc::channel;
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::Receiver;
+
+pub struct ThreadProvingAssignment<E: Engine> {
+    my_aux_values: Vec<(E::Fr,bool)>, /// (value, is_thread_output)
+    my_input_values: Vec<E::Fr>,
     constraints: Vec<(LinearCombination<E>, LinearCombination<E>, LinearCombination<E>)>,
-    runtime: Runtime,
-    thread_cs: Vec<ThreadConstraintSystem<E, Self>>,
+    receivers: Vec<(usize,usize,Receiver<RememberedInfo<E>>)>,
 }
 
 impl<E: Engine> ThreadProvingAssignment<E> {
+    pub fn new() -> Self
+    {
+        ThreadProvingAssignment::<E> {
+            my_aux_values: vec![],
+            my_input_values: vec![],
+            constraints: vec![],
+            receivers: vec![],
+        }
+    }
+
     pub fn make_proving_assignment(
         &mut self
     ) -> Result<ProvingAssignment<E>, SynthesisError>
     {
-//        self.runtime.shutdown_on_idle().wait().unwrap();
-
         let mut prover = ProvingAssignment {
             a_aux_density: DensityTracker::new(),
             b_input_density: DensityTracker::new(),
@@ -136,9 +191,146 @@ impl<E: Engine> ThreadProvingAssignment<E> {
             b: vec![],
             c: vec![],
             input_assignment: vec![],
-            aux_assignment: vec![]
+            aux_assignment: vec![],
+            all_constraints: vec![]
         };
-        // TODO :: merge info
+
+        let mut idx_aux: usize = 0;
+        let mut idx_constr: usize = 0;
+        let mut idx_thread: usize = 0;
+
+        for value in self.my_input_values.clone(){
+            prover.alloc_input(|| "one more input", || Ok(value));
+        }
+
+        let mut real_indexes: Vec<Variable> = vec![Variable(Index::Input(0)); self.my_aux_values.len()];
+
+        while (idx_aux<self.my_aux_values.len() || idx_constr<self.constraints.len() || idx_thread<self.receivers.len()){
+            if (idx_thread==self.receivers.len()){
+                while (idx_aux<self.my_aux_values.len()){
+                    if (!self.my_aux_values[idx_aux].1){
+                        let real_var = prover.alloc(|| "one more aux", || Ok(self.my_aux_values[idx_aux].0)).unwrap();
+                        real_indexes[idx_aux] = real_var;
+                    }
+
+                    idx_aux += 1;
+                }
+                while (idx_constr<self.constraints.len()){
+                    let transform_global_LC = |lc: LinearCombination<E>| {
+                        let mut res = LinearCombination::<E>::zero();
+                        for (var, coeff) in lc.0 {
+                            let real_variable = match var {
+                                Variable(Index::Aux(i)) => real_indexes[i],
+                                Variable(Index::Input(i)) => var,
+                            };
+                            res.0.push((real_variable, coeff));
+                        }
+                        res
+                    };
+                    let a = transform_global_LC(self.constraints[idx_constr].0.clone());
+                    let b = transform_global_LC(self.constraints[idx_constr].1.clone());
+                    let c = transform_global_LC(self.constraints[idx_constr].2.clone());
+                    prover.enforce(
+                        || "one more not thread enforce",
+                        |_| a,
+                        |_| b,
+                        |_| c
+                    );
+
+                    idx_constr += 1;
+                }
+            }
+            else{
+                while (idx_aux<self.receivers[idx_thread].0){
+                    if (!self.my_aux_values[idx_aux].1){
+                        let real_var = prover.alloc(|| "one more aux", || Ok(self.my_aux_values[idx_aux].0)).unwrap();
+                        real_indexes[idx_aux] = real_var;
+                    }
+
+                    idx_aux += 1;
+                }
+                while (idx_constr<self.receivers[idx_thread].1){
+                    let transform_global_LC = |lc: LinearCombination<E>| {
+                        let mut res = LinearCombination::<E>::zero();
+                        for (var, coeff) in lc.0 {
+                            let real_variable = match var {
+                                Variable(Index::Aux(i)) => real_indexes[i],
+                                Variable(Index::Input(i)) => var,
+                            };
+                            res.0.push((real_variable, coeff));
+                        }
+                        res
+                    };
+                    let a = transform_global_LC(self.constraints[idx_constr].0.clone());
+                    let b = transform_global_LC(self.constraints[idx_constr].1.clone());
+                    let c = transform_global_LC(self.constraints[idx_constr].2.clone());
+                    prover.enforce(
+                        || "one more not thread enforce",
+                        |_| a,
+                        |_| b,
+                        |_| c
+                    );
+
+                    idx_constr += 1;
+                }
+
+                let remembered_info = self.receivers[idx_thread].2.recv().unwrap();
+                let mut local_real_indexes: Vec<Variable> = vec![Variable(Index::Input(0)); remembered_info.my_aux_values.len()];
+                for (index, value) in remembered_info.my_aux_values.iter().enumerate(){
+                    if (!remembered_info.outside_variables.contains_key(&Variable(Index::Aux(index)))){
+                        let real_variable = prover.alloc(|| "one more local(or output) variable", || Ok(*value))?;
+                        if (remembered_info.thread_outputs.contains_key(&Variable(Index::Aux(index)))){
+                            if let Variable(Index::Aux(index)) = remembered_info.thread_outputs.get(&Variable(Index::Aux(index))).unwrap(){
+                                real_indexes[*index]=real_variable;
+                            }
+                        }
+                        else{
+                            local_real_indexes[index]=real_variable;
+                        }
+                    }
+                }
+                for (annotation,a,b,c) in &remembered_info.constraints{
+                    let transform_global_LC = |lc: LinearCombination<E>| {
+                        let mut res = LinearCombination::<E>::zero();
+                        for (var, coeff) in lc.0 {
+                            let real_variable =
+                            if (remembered_info.outside_variables.contains_key(&var)) {
+                                match remembered_info.outside_variables.get(&var).unwrap() {
+                                    Variable(Index::Aux(index)) => real_indexes[*index],
+                                    Variable(Index::Input(index)) => Variable(Index::Input(*index)),
+                                }
+                            }
+                            else if (remembered_info.thread_outputs.contains_key(&var)){
+                                match remembered_info.thread_outputs.get(&var).unwrap() {
+                                    Variable(Index::Aux(index)) => real_indexes[*index],
+                                    Variable(Index::Input(index)) => Variable(Index::Input(*index)),
+                                }
+                            }
+                            else{
+                                match var {
+                                    Variable(Index::Aux(index)) => local_real_indexes[index],
+                                    Variable(Index::Input(0)) => Variable(Index::Input(0)),
+                                    Variable(Index::Input(index)) => panic!("thread can't contain inputs inside"),
+                                }
+                            };
+                            res.0.push((real_variable, coeff));
+                        }
+                        res
+                    };
+
+                    let a = transform_global_LC(a.clone());
+                    let b = transform_global_LC(b.clone());
+                    let c = transform_global_LC(c.clone());
+                    prover.enforce(
+                        || "one more not thread enforce",
+                        |_| a,
+                        |_| b,
+                        |_| c
+                    );
+                }
+                idx_thread += 1;
+            }
+        }
 
         Ok(prover)
     }
@@ -157,7 +349,8 @@ pub fn prepare_prover<E, C>(
         b: vec![],
         c: vec![],
         input_assignment: vec![],
-        aux_assignment: vec![]
+        aux_assignment: vec![],
+        all_constraints: vec![]
     };
 
     prover.alloc_input(|| "", || Ok(E::Fr::one()))?;
@@ -342,6 +535,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
         where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
     {
         self.aux_assignment.push(f()?);
+//        println!("ProvingAssignment alloc :: {:?}",self.aux_assignment.last().unwrap());
         self.a_aux_density.add_element();
         self.b_aux_density.add_element();
 
@@ -356,6 +550,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
         where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
     {
         self.input_assignment.push(f()?);
+//        println!("ProvingAssignment alloc_input :: {:?}",self.input_assignment.last().unwrap());
         self.b_input_density.add_element();
 
         Ok(Variable(Index::Input(self.input_assignment.len() - 1)))
@@ -376,6 +571,18 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
         let a = a(LinearCombination::zero());
         let b = b(LinearCombination::zero());
         let c = c(LinearCombination::zero());
+//        println!("ProvingAssignment enforce");
+//        let print_pasana= |a: LinearCombination<E>| {
+//            for i in a.0{
+//                println!("    {:?} {:?}",i.0,i.1);
+//            }
+//            println!("----------------");
+//        };
+//        print_pasana(a.clone());
+//        print_pasana(b.clone());
+//        print_pasana(c.clone());
+
+        self.all_constraints.push((a.clone() ,b.clone() ,c.clone()));
 
         self.a.push(Scalar(eval(
             &a,
@@ -431,8 +638,8 @@ impl<E: Engine> ConstraintSystem<E> for ThreadProvingAssignment<E> {
     ) -> Result<Variable, SynthesisError>
         where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
     {
-        self.aux_index += 1;
-        Ok(Variable(Index::Aux(self.aux_index - 1)))
+        self.my_aux_values.push((f()?, false));
+        Ok(Variable(Index::Aux(self.my_aux_values.len() - 1)))
     }
 
     fn alloc_input<F, A, AR>(
@@ -442,8 +649,8 @@ impl<E: Engine> ConstraintSystem<E> for ThreadProvingAssignment<E> {
     ) -> Result<Variable, SynthesisError>
         where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
     {
-        self.input_index += 1;
-        Ok(Variable(Index::Input(self.input_index - 1)))
+        self.my_input_values.push(f()?);
+        Ok(Variable(Index::Input(self.my_input_values.len() - 1)))
     }
 
     fn enforce<A, AR, LA, LB, LC>(
@@ -462,7 +669,7 @@ impl<E: Engine> ConstraintSystem<E> for ThreadProvingAssignment<E> {
         let b = b(LinearCombination::zero());
         let c = c(LinearCombination::zero());
 
-        self.constraints.push((a,b,c));
+        self.constraints.push((a, b, c));
     }
 
     fn push_namespace<NR, N>(&mut self, _: N)
@@ -478,15 +685,24 @@ impl<E: Engine> ConstraintSystem<E> for ThreadProvingAssignment<E> {
 
     fn get_root(&mut self) -> &mut Self::Root { self }
 
-    fn add_new_ThreadCS<'a, NR, N>(
-        &mut self,
-        name_fn: N,
-        start_index: usize
-    ) -> &mut ThreadConstraintSystem<E, Self::Root>
-        where NR: Into<String>, N: FnOnce() -> NR
+    fn reserve_memory_for_thread_info(
+        &mut self
+    ) -> Sender<RememberedInfo<E>>
     {
-        self.thread_cs.push(ThreadConstraintSystem::new(start_index));
-        self.thread_cs.last_mut().unwrap()
+        let (tx, rx) = channel::<RememberedInfo<E>>();
+        self.receivers.push((self.my_aux_values.len(), self.constraints.len() ,rx));
+        tx
+    }
+
+    fn alloc_thread_output<F, A, AR>(
+        &mut self,
+        _: A,
+        f: F
+    ) -> Result<Variable, SynthesisError>
+        where F: FnOnce() -> Result<E::Fr, SynthesisError>, A: FnOnce() -> AR, AR: Into<String>
+    {
+        self.my_aux_values.push((f()?, true));
+        Ok(Variable(Index::Aux(self.my_aux_values.len() - 1)))
     }
 }
 
@@ -519,7 +735,8 @@ pub fn create_proof<E, C, P: ParameterSource<E>>(
         b: vec![],
         c: vec![],
         input_assignment: vec![],
-        aux_assignment: vec![]
+        aux_assignment: vec![],
+        all_constraints: vec![]
     };
 
     prover.alloc_input(|| "", || Ok(E::Fr::one()))?;
