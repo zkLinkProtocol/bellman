@@ -485,4 +485,11 @@ impl CurveAffine for Fr {
     fn into_projective(&self) -> Self::Projective {
         *self
     }
+
+    fn into_xy_unchecked(&self) -> (Self::Base, Self::Base) {
+        (<Fr as Field>::one(), <Fr as Field>::one())
+    }
+    fn from_xy_unchecked(_x: Self::Base, _y: Self::Base) -> Self {
+        <Fr as Field>::one()
+    }
 }

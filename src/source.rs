@@ -24,6 +24,13 @@ pub trait SourceBuilder<G: CurveAffine>: Send + Sync + 'static + Clone {
     fn new(self) -> Self::Source;
 }
 
+/// An object that builds a source of bases.
+pub trait AccessableSourceBuilder<G: CurveAffine>: Send + Sync + 'static + Clone {
+    type AccessableSource: AccessableSource<G>;
+
+    fn new(self) -> Self::AccessableSource;
+}
+
 /// A source of bases, like an iterator.
 pub trait Source<G: CurveAffine> {
     /// Parses the element from the source. Fails if the point is at infinity.
@@ -33,8 +40,20 @@ pub trait Source<G: CurveAffine> {
     fn skip(&mut self, amt: usize) -> Result<(), SynthesisError>;
 }
 
+pub trait AccessableSource<G: CurveAffine>: Source<G> {
+    fn get(&mut self) -> Result<G, SynthesisError>;
+}
+
 impl<G: CurveAffine> SourceBuilder<G> for (Arc<Vec<G>>, usize) {
     type Source = (Arc<Vec<G>>, usize);
+
+    fn new(self) -> (Arc<Vec<G>>, usize) {
+        (self.0.clone(), self.1)
+    }
+}
+
+impl<G: CurveAffine> AccessableSourceBuilder<G> for (Arc<Vec<G>>, usize) {
+    type AccessableSource = (Arc<Vec<G>>, usize);
 
     fn new(self) -> (Arc<Vec<G>>, usize) {
         (self.0.clone(), self.1)
@@ -66,6 +85,24 @@ impl<G: CurveAffine> Source<G> for (Arc<Vec<G>>, usize) {
         self.1 += amt;
 
         Ok(())
+    }
+}
+
+impl<G: CurveAffine> AccessableSource<G> for (Arc<Vec<G>>, usize) {
+    fn get(&mut self) -> Result<G, SynthesisError> {
+        if self.0.len() <= self.1 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "expected more bases when adding from source").into());
+        }
+
+        if self.0[self.1].is_zero() {
+            return Err(SynthesisError::UnexpectedIdentity)
+        }
+
+        let p = self.0[self.1];
+
+        self.1 += 1;
+
+        Ok(p)
     }
 }
 
