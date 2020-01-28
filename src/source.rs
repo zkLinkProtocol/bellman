@@ -42,6 +42,7 @@ pub trait Source<G: CurveAffine> {
 
 pub trait AccessableSource<G: CurveAffine>: Source<G> {
     fn get(&mut self) -> Result<G, SynthesisError>;
+    fn get_ref(&mut self) -> Result<&G, SynthesisError>;
 }
 
 impl<G: CurveAffine> SourceBuilder<G> for (Arc<Vec<G>>, usize) {
@@ -99,6 +100,22 @@ impl<G: CurveAffine> AccessableSource<G> for (Arc<Vec<G>>, usize) {
         }
 
         let p = self.0[self.1];
+
+        self.1 += 1;
+
+        Ok(p)
+    }
+
+    fn get_ref(&mut self) -> Result<&G, SynthesisError> {
+        if self.0.len() <= self.1 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "expected more bases when adding from source").into());
+        }
+
+        if self.0[self.1].is_zero() {
+            return Err(SynthesisError::UnexpectedIdentity)
+        }
+
+        let p = &self.0[self.1];
 
         self.1 += 1;
 

@@ -177,7 +177,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
             let mut bases = bases.new();
             let mut work_sizes: Vec<usize> = vec![0; (1 << c) - 1];
 
-            let mut bucket_sums = vec![<G as CurveAffine>::Projective::zero(); (1 << c) - 1];
+            // let mut bucket_sums = vec![<G as CurveAffine>::Projective::zero(); (1 << c) - 1];
 
             let mut scratch_x_diff: Vec<Vec<G::Base>> = vec![Vec::with_capacity(reduction_size); (1 << c) - 1];
             let mut scratch_y_diff: Vec<Vec<G::Base>> = vec![Vec::with_capacity(reduction_size); (1 << c) - 1];
@@ -187,7 +187,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
             // it will be 2^c - 1 buckets (no bucket for zeroes)
 
             // Create space for the buckets
-            let mut buckets: Vec<Vec<G>> = vec![Vec::with_capacity(reduction_size*2); (1 << c) - 1];
+            let mut buckets: Vec<Vec<(G::Base, G::Base)>> = vec![Vec::with_capacity(reduction_size*2); (1 << c) - 1];
 
             let zero = <G::Engine as ScalarEngine>::Fr::zero().into_repr();
             let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
@@ -200,7 +200,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
                         bases.skip(1)?;
                     } else if exp == one {
                         if handle_trivial {
-                            buckets[0].push(bases.get()?);
+                            buckets[0].push(bases.get_ref()?.into_xy_unchecked());
                             work_sizes[0] += 1;
                             if work_sizes[0] & 1 == 0 {
                                 work_size += 1;
@@ -219,7 +219,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
                         let exp = exp.as_ref()[0] % (1 << c);
 
                         if exp != 0 {
-                            buckets[(exp-1) as usize].push(bases.get()?);
+                            buckets[(exp-1) as usize].push(bases.get_ref()?.into_xy_unchecked());
                             work_sizes[(exp-1) as usize] += 1;
                             if work_sizes[(exp-1) as usize] & 1 == 0 {
                                 work_size += 1;
@@ -232,7 +232,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
                 }
 
                 if work_size >= reduction_size {
-                    work_size = reduce(&mut buckets, &mut scratch_x_diff, &mut scratch_y_diff, &mut scratch_x0_x1_y0, &mut work_sizes)?;
+                    work_size = reduce::<G>(&mut buckets, &mut scratch_x_diff, &mut scratch_y_diff, &mut scratch_x0_x1_y0, &mut work_sizes)?;
                     // {
                     //     for ((bucket, running_sum_per_bucket), size) in buckets.iter_mut()
                     //                                         .zip(bucket_sums.iter_mut())
@@ -248,7 +248,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
                 }
             }
 
-            work_size = reduce(&mut buckets, &mut scratch_x_diff, &mut scratch_y_diff, &mut scratch_x0_x1_y0, &mut work_sizes)?;
+            work_size = reduce::<G>(&mut buckets, &mut scratch_x_diff, &mut scratch_y_diff, &mut scratch_x0_x1_y0, &mut work_sizes)?;
             // {
                 // for ((bucket, running_sum_per_bucket), size) in buckets.iter_mut()
                 //                                     .zip(bucket_sums.iter_mut())
@@ -281,7 +281,8 @@ fn affine_multiexp_inner<Q, D, G, S>(
             for exp in buckets.into_iter().rev() {
                 let mut subsum = G::Projective::zero();
                 for b in exp.into_iter() {
-                    subsum.add_assign_mixed(&b);
+                    let p = G::from_xy_unchecked(b.0, b.1);
+                    subsum.add_assign_mixed(&p);
                 }
                 running_sum.add_assign(&subsum);
                 acc.add_assign(&running_sum);
@@ -294,7 +295,7 @@ fn affine_multiexp_inner<Q, D, G, S>(
     this
 }
 
-fn total_len<G: CurveAffine>(buckets: &Vec<Vec<G>>) -> usize {
+fn total_len<G: CurveAffine>(buckets: &Vec<Vec<(G::Base, G::Base)>>) -> usize {
     let mut result = 0;
     for b in buckets.iter() {
         result += b.len();
@@ -304,13 +305,13 @@ fn total_len<G: CurveAffine>(buckets: &Vec<Vec<G>>) -> usize {
 }
 
 fn reduce<G: CurveAffine>(
-    buckets: &mut Vec<Vec<G>>, 
+    buckets: &mut Vec<Vec<(G::Base, G::Base)>>, 
     scratch_pad_x_diff: &mut Vec<Vec<G::Base>>,
     scratch_pad_y_diff: &mut Vec<Vec<G::Base>>, 
     scratch_pad_x0_x1_y0: &mut Vec<Vec<(G::Base, G::Base, G::Base)>>,
     work_counters: &mut Vec<usize>
 ) -> Result<usize, SynthesisError> {
-    let initial_size = total_len(&*buckets);
+    let initial_size = total_len::<G>(&*buckets);
 
     // First pass: compute [a, ab, abc, ...]
     let mut prod = Vec::with_capacity(initial_size);
@@ -346,13 +347,8 @@ fn reduce<G: CurveAffine>(
 
         // let mut iter = b.into_iter();
         for _ in 0..(len/2) {
-            let p0 = drain_iter.next().unwrap();
-            let p1 = drain_iter.next().unwrap();
-            // let p0 = b.pop().unwrap();
-            // let p1 = b.pop().unwrap();
-
-            let (x0, y0) = p0.into_xy_unchecked();
-            let (x1, y1) = p1.into_xy_unchecked();
+            let (x0, y0) = drain_iter.next().unwrap();
+            let (x1, y1) = drain_iter.next().unwrap();
 
             let mut y_diff = y1;
             y_diff.sub_assign(&y0);
@@ -417,8 +413,7 @@ fn reduce<G: CurveAffine>(
             y_new.mul_assign(&lambda);
             y_new.sub_assign(&x0_x1_y0.2);
 
-            let p = G::from_xy_unchecked(x_new, y_new);
-            b.push(p);
+            b.push((x_new, y_new));
         }
 
 
@@ -429,7 +424,7 @@ fn reduce<G: CurveAffine>(
         scratch_x0_x1_y0.truncate(0);
     }
 
-    let final_size = total_len(&*buckets);
+    let final_size = total_len::<G>(&*buckets);
 
     assert!(initial_size >= final_size, "initial size is {}, final is {}", initial_size, final_size);
 
