@@ -34,6 +34,10 @@ impl Worker {
         0u32
     }
 
+    pub fn num_cpus(&self) -> u32 {
+        1u32
+    }
+
     pub fn compute<F, T, E>(
         &self, f: F
     ) -> WorkerFuture<T, E>

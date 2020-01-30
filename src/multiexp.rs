@@ -27,6 +27,8 @@ use super::SynthesisError;
 
 use cfg_if;
 
+use std::ops::Range;
+
 
 use std::cmp::Ordering;
 
@@ -719,8 +721,8 @@ fn dense_affine_multiexp_inner_by_ref<G>(
 ) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
     where G: CurveAffine
 {
-    let reduction_size = 1 << 14;
-    let reduction_threshold = 1 << 5;
+    let reduction_size = 1 << 16;
+    let reduction_threshold = 1 << 6;
 
     // Perform this region of the multiexp
     let this = {
@@ -734,18 +736,23 @@ fn dense_affine_multiexp_inner_by_ref<G>(
 
             use bit_vec::BitVec;
 
+            let zero_placeholder = G::zero();
+
+            let mut points_strage_scratch = vec![zero_placeholder; reduction_size];
+
             let mut chains_bitvec = BitVec::from_elem(num_buckets, false);
-            let mut previous_chain_elem: Vec<[G::Base; 2]> = vec![[G::Base::zero(), G::Base::zero()]; num_buckets];
+            let mut previous_chain_elem: Vec<&G> = vec![&zero_placeholder; num_buckets];
 
             // bucket, (x2, x1, y2, y1)
-            let mut accumulator: Vec<(usize, [G::Base; 4])> = Vec::with_capacity(reduction_size);
+            let mut accumulator: Vec<(usize, PointPairIndex<G>)> = Vec::with_capacity(reduction_size);
 
             let mut initial_schedule_scratch: Vec<usize> = vec![0; num_buckets];
             let mut this_round_schedule_scratch: Vec<usize> = vec![0; num_buckets];
             let mut next_round_schedule_scratch: Vec<usize> = vec![0; num_buckets];
 
-            let mut scratch_prod: Vec<G::Base> = Vec::with_capacity(reduction_size/2);
-            let mut scratch_x_diff: Vec<G::Base> = Vec::with_capacity(reduction_size/2);
+            let mut scratch_prod: Vec<G::Base> = Vec::with_capacity(reduction_size);
+            let mut scratch_x_diff: Vec<G::Base> = Vec::with_capacity(reduction_size);
+            let mut scratch_final_reduction: Vec<Range<usize>> = Vec::with_capacity(reduction_threshold);
 
             // Create buckets to place remainders s mod 2^c,
             // it will be 2^c - 1 buckets (no bucket for zeroes)
@@ -763,12 +770,10 @@ fn dense_affine_multiexp_inner_by_ref<G>(
                         if chains_bitvec.get(0).unwrap() {
                             chains_bitvec.set(0, false);
                             let tmp = previous_chain_elem[0];
-                            let (x, y) = base.into_xy_unchecked();
-                            accumulator.push((0, [x, tmp[0], y, tmp[1]]));
+                            accumulator.push((0, PointPairIndex::Reference([base, tmp])));
                         } else {
                             chains_bitvec.set(0, true);
-                            let (x, y) = base.into_xy_unchecked();
-                            previous_chain_elem[0] = [x, y];
+                            previous_chain_elem[0] = base;
                         }
                     } 
                 } else {
@@ -786,18 +791,16 @@ fn dense_affine_multiexp_inner_by_ref<G>(
                         if chains_bitvec.get(bucket_index).unwrap() {
                             chains_bitvec.set(bucket_index, false);
                             let tmp = previous_chain_elem[bucket_index];
-                            let (x, y) = base.into_xy_unchecked();
-                            accumulator.push((bucket_index, [x, tmp[0], y, tmp[1]]));
+                            accumulator.push((bucket_index, PointPairIndex::Reference([base, tmp])));
                         } else {
                             chains_bitvec.set(bucket_index, true);
-                            let (x, y) = base.into_xy_unchecked();
-                            previous_chain_elem[bucket_index] = [x, y];
+                            previous_chain_elem[bucket_index] = base;
                         }
                     }
                 }
 
                 if accumulator.len() >= reduction_size {
-                    // println!("Sorting taken {:?}", start.elapsed());
+                    // println!("Placement taken {:?}", start.elapsed());
                     // start = std::time::Instant::now();
                     reduce_by_ref::<G>(
                         &mut accumulator, 
@@ -809,6 +812,8 @@ fn dense_affine_multiexp_inner_by_ref<G>(
                         num_buckets,
                         reduction_threshold,
                         &mut acc,
+                        &mut points_strage_scratch,
+                        &mut scratch_final_reduction,
                     )?;
 
                     // println!("Reduction taken {:?}", start.elapsed());
@@ -826,6 +831,8 @@ fn dense_affine_multiexp_inner_by_ref<G>(
                 num_buckets,
                 reduction_threshold,
                 &mut acc,
+                &mut points_strage_scratch,
+                &mut scratch_final_reduction,
             )?;
 
             // let mut running_sum = G::Projective::zero();
@@ -895,6 +902,11 @@ fn total_len<G: CurveAffine>(buckets: &Vec<Vec<(G::Base, G::Base)>>) -> usize {
     }
 
     result
+}
+
+enum PointPairIndex<'a, G: CurveAffine> {
+    Reference([&'a G; 2]),
+    Index([usize; 2])
 }
 
 fn reduce<G: CurveAffine>(
@@ -1024,8 +1036,8 @@ fn reduce<G: CurveAffine>(
     Ok(final_size)
 }
 
-fn reduce_by_ref<G: CurveAffine>(
-    accumulator: &mut Vec<(usize, [G::Base; 4])>,
+fn reduce_by_ref<'a, G: CurveAffine>(
+    accumulator: &mut Vec<(usize, PointPairIndex<'a, G>)>,
     scratch_pad_x_diff: &mut Vec<G::Base>,
     prod_scratch: &mut Vec<G::Base>,
     initial_schedule_scratch: &mut Vec<usize>,
@@ -1033,15 +1045,13 @@ fn reduce_by_ref<G: CurveAffine>(
     next_round_schedule_scratch: &mut Vec<usize>,
     num_buckets: usize,
     threshold: usize,
-    sum_accumulator: &mut G::Projective
+    sum_accumulator: &mut G::Projective,
+    points_storage: &mut Vec<G>,
+    ranges_scratch: &mut Vec<Range<usize>>,
 ) -> Result<(), SynthesisError> {
 
     let one = <G::Base as Field>::one();
     let mut tmp = one; 
-
-    // let mut accumulator_drain = accumulator.drain(0..accumulator.len());
-
-    // let accumulator_drain_ref = &mut accumulator_drain;
 
     // let start = std::time::Instant::now();
 
@@ -1091,8 +1101,6 @@ fn reduce_by_ref<G: CurveAffine>(
         // let total_sums_to_perform: usize = this_round_schedule_scratch.iter().sum();
 
         if true_sums_to_perform < threshold {
-            let mut subranges = Vec::with_capacity(num_buckets);
-
             let mut shift = 0;
             for (bucket_idx, &bucket_num_pairs) in this_round_schedule_scratch.iter().enumerate() {
                 if bucket_num_pairs == 0 {
@@ -1105,27 +1113,34 @@ fn reduce_by_ref<G: CurveAffine>(
     
                 shift += initial_num_pairs;
 
-                subranges.push(range);
+                ranges_scratch.push(range);
             }
 
+            let drain = ranges_scratch.drain(0..ranges_scratch.len());
             let mut running_sum = G::Projective::zero();
-            for range in subranges.into_iter().rev() {
+            for range in drain.into_iter().rev() {
                 let mut subsum = G::Projective::zero();
-
                 for i in range {
-                    let (_, data) = accumulator[i];
+                    match accumulator[i].1 {
+                        PointPairIndex::Reference([p1, p0]) => {
+                            subsum.add_assign_mixed(&p1);
+                            subsum.add_assign_mixed(&p0);
+                        },
+                        PointPairIndex::Index([idx_1, idx_0]) => {
+                            let (x1, y1) = points_storage[idx_1].into_xy_unchecked();
+                            let (x0, y0) = points_storage[idx_0].into_xy_unchecked();
 
-                    let p = G::from_xy_unchecked(data[0], data[2]);
-                    subsum.add_assign_mixed(&p);
-
-                    let p = G::from_xy_unchecked(data[1], data[3]);
-                    subsum.add_assign_mixed(&p);
+                            subsum.add_assign_mixed(&G::from_xy_unchecked(x1, y1));
+                            subsum.add_assign_mixed(&G::from_xy_unchecked(x0, y0));
+                        }
+                    }
                 }
 
                 running_sum.add_assign(&subsum);
                 sum_accumulator.add_assign(&running_sum);
             }
 
+            ranges_scratch.truncate(0);
             accumulator.truncate(0);
             break;
         }
@@ -1159,9 +1174,23 @@ fn reduce_by_ref<G: CurveAffine>(
             shift += initial_num_pairs;
 
             for i in range {
-                let (_, data) = accumulator[i];
-                let mut x_diff = data[0];
-                x_diff.sub_assign(&data[1]);
+                let (x1, x0) = match accumulator[i].1 {
+                    PointPairIndex::Reference([p1, p0]) => {
+                        let (x1, _) = p1.into_xy_unchecked();
+                        let (x0, _) = p0.into_xy_unchecked();
+
+                        (x1, x0)
+                    },
+                    PointPairIndex::Index([idx_1, idx_0]) => {
+                        let (x1, _) = points_storage[idx_1].into_xy_unchecked();
+                        let (x0, _) = points_storage[idx_0].into_xy_unchecked();
+                        
+                        (x1, x0)
+                    }
+                };
+
+                let mut x_diff = x1;
+                x_diff.sub_assign(&x0);
 
                 tmp.mul_assign(&x_diff);
                 prod_scratch.push(tmp);
@@ -1195,6 +1224,7 @@ fn reduce_by_ref<G: CurveAffine>(
         // let mut summed_pairs = 0;
 
         let mut shift = 0;
+        let mut global_points_storage_index_to_use = 0;
         for (bucket_idx, &bucket_num_pairs) in this_round_schedule_scratch.iter().enumerate() {
             if bucket_num_pairs == 0 {
                 continue
@@ -1228,61 +1258,93 @@ fn reduce_by_ref<G: CurveAffine>(
                 let idx_0 = it.next().unwrap();
                 let idx_1 = it.next().unwrap();
 
-                let sum_0 = {
+                let sum_idx_0 = {
                     let idx = idx_0;
-                    let (bucket, data) = accumulator[idx];
+                    let (x1, y1, x0, y0) = match accumulator[idx].1 {
+                        PointPairIndex::Reference([p1, p0]) => {
+                            let (x1, y1) = p1.into_xy_unchecked();
+                            let (x0, y0) = p0.into_xy_unchecked();
 
-                    debug_assert_eq!(bucket_idx, bucket);
+                            (x1, y1, x0, y0)
+                        },
+                        PointPairIndex::Index([idx_1, idx_0]) => {
+                            let (x1, y1) = points_storage[idx_1].into_xy_unchecked();
+                            let (x0, y0) = points_storage[idx_0].into_xy_unchecked();
+                            
+                            (x1, y1, x0, y0)
+                        }
+                    };
 
-                    let mut x0_plus_x1 = data[0];
-                    x0_plus_x1.add_assign(&data[1]);
+                    // debug_assert_eq!(bucket_idx, bucket);
 
-                    let mut lambda = data[2];
-                    lambda.sub_assign(&data[3]);
+                    let mut x0_plus_x1 = x0;
+                    x0_plus_x1.add_assign(&x1);
+
+                    let mut lambda = y1;
+                    lambda.sub_assign(&y0);
                     lambda.mul_assign(&scratch_pad_x_diff_drain.next().expect("must take an inverse"));
 
                     let mut x_new = lambda;
                     x_new.square();
                     x_new.sub_assign(&x0_plus_x1);
 
-                    let mut y_new = data[0]; // x1
+                    let mut y_new = x1; // x1
                     y_new.sub_assign(&x_new);
                     y_new.mul_assign(&lambda);
-                    y_new.sub_assign(&data[3]);
+                    y_new.sub_assign(&y0);
 
-                    // summed_pairs += 1;
+                    let p = G::from_xy_unchecked(x_new, y_new);
+                    points_storage[global_points_storage_index_to_use] = p;
+                    let ref_to_point = global_points_storage_index_to_use;
+                    global_points_storage_index_to_use += 1;
 
-                    [x_new, y_new]
+                    ref_to_point
                 };
 
-                let sum_1 = {
+                let sum_idx_1 = {
                     let idx = idx_1;
-                    let (bucket, data) = accumulator[idx];
+                    let (x1, y1, x0, y0) = match accumulator[idx].1 {
+                        PointPairIndex::Reference([p1, p0]) => {
+                            let (x1, y1) = p1.into_xy_unchecked();
+                            let (x0, y0) = p0.into_xy_unchecked();
 
-                    debug_assert_eq!(bucket_idx, bucket);
+                            (x1, y1, x0, y0)
+                        },
+                        PointPairIndex::Index([idx_1, idx_0]) => {
+                            let (x1, y1) = points_storage[idx_1].into_xy_unchecked();
+                            let (x0, y0) = points_storage[idx_0].into_xy_unchecked();
+                            
+                            (x1, y1, x0, y0)
+                        }
+                    };
 
-                    let mut x0_plus_x1 = data[0];
-                    x0_plus_x1.add_assign(&data[1]);
+                    // debug_assert_eq!(bucket_idx, bucket);
 
-                    let mut lambda = data[2];
-                    lambda.sub_assign(&data[3]);
-                    lambda.mul_assign(&scratch_pad_x_diff_drain.next().unwrap());
+                    let mut x0_plus_x1 = x0;
+                    x0_plus_x1.add_assign(&x1);
+
+                    let mut lambda = y1;
+                    lambda.sub_assign(&y0);
+                    lambda.mul_assign(&scratch_pad_x_diff_drain.next().expect("must take an inverse"));
 
                     let mut x_new = lambda;
                     x_new.square();
                     x_new.sub_assign(&x0_plus_x1);
 
-                    let mut y_new = data[0]; // x1
+                    let mut y_new = x1; // x1
                     y_new.sub_assign(&x_new);
                     y_new.mul_assign(&lambda);
-                    y_new.sub_assign(&data[3]);
+                    y_new.sub_assign(&y0);
 
-                    // summed_pairs += 1;
+                    let p = G::from_xy_unchecked(x_new, y_new);
+                    points_storage[global_points_storage_index_to_use] = p;
+                    let ref_to_point = global_points_storage_index_to_use;
+                    global_points_storage_index_to_use += 1;
 
-                    [x_new, y_new]
+                    ref_to_point
                 };
 
-                let mut new_pair = (bucket_idx, [sum_1[0], sum_0[0], sum_1[1], sum_0[1]]);
+                let new_pair = (bucket_idx, PointPairIndex::Index([sum_idx_1, sum_idx_0]));
                 // we always write contiguosly into the first available bucket!
                 let write_to = idx_to_write + base_idx_to_write;
                 // println!("Writing bucket {} into {}", bucket_idx, write_to);
@@ -1820,7 +1882,18 @@ pub fn dense_affine_multiexp_by_ref<G>(
     let c = if exponents.len() < 32 {
         3u32
     } else {
-        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+        let log_num_exponents = (f64::from(exponents.len() as u32)).ln().ceil() as u32;
+
+        let mut window_for_one_pass = <G::Engine as ScalarEngine>::Fr::NUM_BITS / pool.num_cpus();
+        if <G::Engine as ScalarEngine>::Fr::NUM_BITS % pool.num_cpus() != 0 {
+            window_for_one_pass += 1;
+        }
+
+        if window_for_one_pass > log_num_exponents {
+            window_for_one_pass / 2
+        } else {
+            window_for_one_pass
+        }
     };
 
     // let c = 15u32;

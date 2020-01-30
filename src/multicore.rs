@@ -46,6 +46,10 @@ impl Worker {
         log2_floor(self.cpus)
     }
 
+    pub fn num_cpus(&self) -> u32 {
+        self.cpus as u32
+    }
+
     pub fn compute<F, T, E>(
         &self, f: F
     ) -> WorkerFuture<T, E>
