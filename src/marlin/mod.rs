@@ -26,3 +26,17 @@ pub struct IndexedSetup<E: Engine> {
     pub b_col_indexes: Vec<usize>,
     pub c_col_indexes: Vec<usize>,
 }
+
+pub struct Proof<E: Engine> {
+    pub opening_on_domain_k_for_beta_3: E::G1Affine,
+    pub a_val_on_beta_3: E::Fr,
+    pub b_val_on_beta_3: E::Fr,
+    pub c_val_on_beta_3: E::Fr,
+    pub a_row_on_beta_3: E::Fr,
+    pub b_row_on_beta_3: E::Fr,
+    pub c_row_on_beta_3: E::Fr,
+    pub a_col_on_beta_3: E::Fr,
+    pub b_col_on_beta_3: E::Fr,
+    pub c_col_on_beta_3: E::Fr,
+    pub f_3_at_beta_3: E::Fr
+}

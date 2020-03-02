@@ -192,19 +192,23 @@ pub(crate) fn eval_unnormalized_bivariate_lagrange_poly_over_diaginal<F: PrimeFi
 }
 
 pub(crate) fn eval_unnormalized_bivariate_lagrange_poly_over_different_inputs<F: PrimeField>(
-    x: F,
+    alpha: F,
     vanishing_poly_size: u64,
     evaluate_on_domain: &Domain<F>, 
     worker: &Worker
 ) -> Vec<F> {
-    let vanishing_at_x = evaluate_vanishing_for_size(&x, vanishing_poly_size);
-    let inv_vanishing_at_x = vanishing_at_x.inverse().ok_or(SynthesisError::DivisionByZero).expect("should not vanish on random x");
+    // (vanishing(X) - vanishing(alpha)) / (x - alpha)
+    // we evaluate it on the domain where vanishing(X) == 0
+    // and make it as 
+    // vanishing(alpha) / (alpha - x)
+    let vanishing_at_alpha = evaluate_vanishing_for_size(&alpha, vanishing_poly_size);
+    let inv_vanishing_at_alpha = vanishing_at_alpha.inverse().ok_or(SynthesisError::DivisionByZero).expect("should not vanish on random x");
     let inverses = materialize_domain_elements(evaluate_on_domain, &worker);
     let mut inverses = Polynomial::from_values(inverses).expect("must fit into the domain");
     inverses.map(&worker, |element| {
-        let mut tmp = x;
+        let mut tmp = alpha;
         tmp.sub_assign(&*element);
-        tmp.mul_assign(&inv_vanishing_at_x);
+        tmp.mul_assign(&inv_vanishing_at_alpha);
 
         *element = tmp;
     });
@@ -567,7 +571,11 @@ pub fn generate_parameters<E, C>(
     })
 }
 
-fn evaluate_bivariate_lagrange_at_point<F: PrimeField>(x: F, y: F, vanishing_domain_size: u64) -> Result<F, SynthesisError> {
+pub fn evaluate_bivariate_lagrange_at_point<F: PrimeField>(
+    x: F, 
+    y: F, 
+    vanishing_domain_size: u64
+) -> Result<F, SynthesisError> {
     if x == y {
         return evaluate_bivariate_lagrange_at_diagonal_point(x, vanishing_domain_size);
     }
@@ -587,7 +595,7 @@ fn evaluate_bivariate_lagrange_at_point<F: PrimeField>(x: F, y: F, vanishing_dom
     Ok(num)
 } 
 
-fn evaluate_bivariate_lagrange_at_diagonal_point<F: PrimeField>(x: F, vanishing_domain_size: u64) -> Result<F, SynthesisError> {
+pub fn evaluate_bivariate_lagrange_at_diagonal_point<F: PrimeField>(x: F, vanishing_domain_size: u64) -> Result<F, SynthesisError> {
     let mut repr = F::Repr::default();
     repr.as_mut()[0] = vanishing_domain_size;
     let size_as_fe = F::from_repr(repr).expect("must convert domain size into field element");

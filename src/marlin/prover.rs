@@ -38,6 +38,7 @@ use crate::plonk::polynomials::*;
 use crate::plonk::domains::*;
 
 use super::generator::*;
+use super::Proof;
 
 use crate::kate_commitment::*;
 
@@ -282,7 +283,7 @@ impl<E:Engine> PreparedProver<E> {
         let b_commitment = commit_using_values(&b_values_on_h, &crs.crs_values_on_h, &worker)?;
         let c_commitment = commit_using_values(&c_values_on_h, &crs.crs_values_on_h, &worker)?;
 
-        let h_poly_values_on_coset = {
+        let h_poly_values_on_h = {
             elog_verbose!("H size is {}", a_values_on_h.size());
 
             let a_poly = a_values_on_h.clone().ifft(&worker);
@@ -311,7 +312,7 @@ impl<E:Engine> PreparedProver<E> {
         };
 
         println!("Committing h");
-        let h_commitment = commit_using_values(&h_poly_values_on_coset, &crs.crs_values_on_h, &worker)?;
+        let h_commitment = commit_using_values(&h_poly_values_on_h, &crs.crs_values_on_h, &worker)?;
 
         // TODO: later split this up: use witness poly for proving, but commit to the one contatining
         // zeroes instead of inputs
@@ -328,10 +329,18 @@ impl<E:Engine> PreparedProver<E> {
 
         // now start the lincheck
 
+        // define q1(x) = r(alpha, x) * (\ sum_{M} eta_m * z_m(x)) - (\sum_{M} eta_m * r_m(alpha, x)) w(x)
+        // formally this polynomial is of degree 2H
+        // then we define a polynomial sum_q1(x) that is a grand sum of q1(x) (easy to calculate from values)
+        // then we need to show that (q1(x) + sum_q1(x) - sum_q1(x*omega)) / (vanishing_H) == 0
+
         let alpha = E::Fr::from_str("5").unwrap();
-        let eta_a = E::Fr::from_str("7").unwrap();
-        let eta_b = E::Fr::from_str("11").unwrap();
-        let eta_c = E::Fr::from_str("42").unwrap();
+        let eta_a = E::Fr::one();
+        let eta_b = E::Fr::zero();
+        let eta_c = E::Fr::zero();
+        // let eta_a = E::Fr::from_str("7").unwrap();
+        // let eta_b = E::Fr::from_str("11").unwrap();
+        // let eta_c = E::Fr::from_str("42").unwrap();
 
         // We have not committed to witness values and values of application of A/B/C matrixes on witness
 
@@ -398,8 +407,6 @@ impl<E:Engine> PreparedProver<E> {
 
             // M(X, Y) for X = omega^row_index and Y = omega^col_index is equal to the 
             // R1CS matrix M value at (row_index, col_index)
-
-            // first |H| indexes will have non-trivial contributions from R(X, X) and R(alpha, X)
 
             worker.scope(col_indexes.len(), |scope, chunk_size| {
                 for (chunk_id, ((subres, row_chunk), col_chunk)) in subresults.chunks_mut(1)
@@ -481,11 +488,13 @@ impl<E:Engine> PreparedProver<E> {
             &worker
         )?;
 
+        // sum_{m} eta_m * z_m
         let mut r_m_sum = a_values_on_h.clone();
         r_m_sum.scale(&worker, eta_a);
         r_m_sum.add_assign_scaled(&worker, &b_values_on_h, &eta_b);
         r_m_sum.add_assign_scaled(&worker, &c_values_on_h, &eta_c);
 
+        // sum_{m} eta_m * M(alpha, x)
         let mut r_m_alpha_x_sum = r_a_alpha_x.clone();
         r_m_alpha_x_sum.scale(&worker, eta_a);
         r_m_alpha_x_sum.add_assign_scaled(&worker, &r_b_alpha_x, &eta_b);
@@ -493,10 +502,27 @@ impl<E:Engine> PreparedProver<E> {
 
         // r(alpha, X) * \sum (M*witness)(x) * eta_m
 
+        let beta_1 = E::Fr::from_str("137").unwrap();
+
+        let sum_a_b_c_at_beta_1 = r_m_sum.barycentric_evaluate_at(&worker, beta_1)?;
+        let sum_m_at_beta_1 = r_m_alpha_x_sum.barycentric_evaluate_at(&worker, beta_1)?;
+
+        let mut proper_t_0_values_on_2h = r_m_sum.clone().ifft(&worker).lde(&worker, 2).unwrap();
+        let tmp = r_alpha_x_values_over_h.clone().ifft(&worker).lde(&worker, 2).unwrap();
+
+        proper_t_0_values_on_2h.mul_assign(&worker, &tmp);
+        drop(tmp);
+
         let mut t_0 = r_m_sum;
         t_0.mul_assign(&worker, &r_alpha_x_values_over_h);
 
-        // \sum r_m(alpha, X) * eta_m * witness(x)
+        // \sum_{H} r_m(alpha, X) * eta_m * witness(x)
+
+        let mut proper_t_1_values_on_2h = r_m_alpha_x_sum.clone().ifft(&worker).lde(&worker, 2).unwrap();
+        let tmp = witness_values_on_h.clone().ifft(&worker).lde(&worker, 2).unwrap();
+
+        proper_t_1_values_on_2h.mul_assign(&worker, &tmp);
+        drop(tmp);
 
         let mut t_1 = r_m_alpha_x_sum;
         t_1.mul_assign(&worker, &witness_values_on_h);
@@ -505,17 +531,177 @@ impl<E:Engine> PreparedProver<E> {
         // let r_m_alpha_x_sum_over_h = t_1.calculate_sum(&worker)?;
         // assert!(r_m_sum_sum_over_h == r_m_alpha_x_sum_over_h);
 
+        // q1(x) = r(alpha, x) * (\ sum_{M} eta_m * z_m(x)) - (\sum_{M} eta_m * r_m(alpha, x)) w(x)
+
         let mut q_1_poly_values_over_h = t_0;
         q_1_poly_values_over_h.sub_assign(&worker, &t_1);
 
+        let mut proper_q_1_values_on_2h = proper_t_0_values_on_2h;
+        proper_q_1_values_on_2h.sub_assign(&worker, &proper_t_1_values_on_2h);
+
+        fn calculate_grand_sum_over_subdomain_assuming_natural_ordering_with_normalization<F: PrimeField>(
+            values: &Polynomial<F, Values>,
+            worker: &Worker
+        ) -> Result<(F, Polynomial<F, Values>), SynthesisError> {
+            let mut result = vec![F::zero(); values.size() + 2];
+
+            let num_threads = worker.get_num_spawned_threads(values.size());
+            let mut subsums_main = vec![F::zero(); num_threads as usize];
+            let mut subsums_sub = vec![F::zero(); num_threads as usize];
+
+            worker.scope(values.as_ref().len(), |scope, chunk| {
+                for (chunk_idx, (((grand_sum, elements), s_main), s_sub)) in result[2..].chunks_mut(chunk)
+                            .zip(values.as_ref().chunks(chunk))
+                            .zip(subsums_main.chunks_mut(1))
+                            .zip(subsums_sub.chunks_mut(1))
+                            .enumerate() {
+                    scope.spawn(move |_| {
+                        let start_idx = chunk_idx * chunk;
+                        for (i, (g, el)) in grand_sum.iter_mut()
+                                        .zip(elements.iter())
+                                        .enumerate() {
+                            let this_idx = start_idx + i;
+                            if this_idx & 1 == 0 {
+                                s_main[0].add_assign(&el);
+                                *g = s_main[0];
+                            } else {
+                                s_sub[0].add_assign(&el);
+                                *g = s_sub[0];
+                            }
+                        }
+                    });
+                }
+            });
+
+            // subsums are [a+b+c, d+e+f, x+y+z]
+
+            let mut tmp_main = F::zero();
+            for s in subsums_main.iter_mut() {
+                tmp_main.add_assign(&s);
+                *s = tmp_main;
+            }
+
+            let mut tmp_sub = F::zero();
+            for s in subsums_sub.iter_mut() {
+                tmp_sub.add_assign(&s);
+                *s = tmp_sub;
+            }
+
+            // sum over the full domain is the last element
+            let domain_sum_main = subsums_main.pop().expect("has at least one value");
+            let domain_sum_sub = subsums_sub.pop().expect("has at least one value");
+
+            let subdomain_size_as_fe = F::from_str(&format!("{}", values.size()/2)).expect("must be a valid element");
+            let one_over_size = subdomain_size_as_fe.inverse().ok_or(SynthesisError::DivisionByZero)?;
+
+            let mut normalization_on_main = domain_sum_main;
+            normalization_on_main.mul_assign(&one_over_size);
+
+            let mut normalization_on_sub = domain_sum_sub;
+            normalization_on_sub.mul_assign(&one_over_size);
+
+            let chunk_len = worker.get_chunk_size(values.as_ref().len());
+
+            assert_eq!(result.len() - chunk_len - 2, chunk_len * subsums_main.len());
+
+            worker.scope(0, |scope, _| {
+                for (chunk_idx, ((g, s_main), s_sub)) in result[(chunk_len+2)..].chunks_mut(chunk_len)
+                            .zip(subsums_main.chunks(1))
+                            .zip(subsums_sub.chunks(1))
+                            .enumerate() {
+                    scope.spawn(move |_| {
+                        let start_idx = (chunk_idx + 1) * chunk_len;
+                        let c_main = s_main[0];
+                        let c_sub = s_sub[0];
+                        for (i, g) in g.iter_mut().enumerate() {
+                            let this_idx = start_idx + i;
+                            if this_idx & 1 == 0 {
+                                g.add_assign(&c_main);
+                            } else {
+                                g.add_assign(&c_sub);
+                            }
+                            
+                        }
+                    });
+                }
+            });
+
+            let alt_total_sum_sub = result.pop().expect("must pop the last element");
+            let alt_total_sum_main = result.pop().expect("must pop the last element");
+
+            assert_eq!(alt_total_sum_main, domain_sum_main, "sum on main domain must match");
+            assert_eq!(alt_total_sum_sub, domain_sum_sub, "sum on subdomain must match");
+
+            println!("Main sum = {}", domain_sum_main);
+            println!("Sub sum = {}", domain_sum_sub);
+
+            Ok((domain_sum_main, Polynomial::from_values_unpadded(result)?))
+        }
+
+        let (proper_q_1_sum_over_2h, proper_q_1_grand_sum_poly_values_over_2h) = 
+            calculate_grand_sum_over_subdomain_assuming_natural_ordering_with_normalization(
+                &proper_q_1_values_on_2h,
+                &worker
+            )?;
+
+        // let rotated_proper_q_1_grand_sum_poly_values_over_2h = proper_q_1_grand_sum_poly_values_over_2h.clone().rotate(2)?;
+
+        let mut quotient = proper_q_1_values_on_2h.clone().ifft(&worker).coset_fft(&worker);
+        let proper_q_1_grand_sum_poly_values_over_2h_coeffs = proper_q_1_grand_sum_poly_values_over_2h.clone().ifft(&worker);
+
+        let mut proper_q_1_grand_sum_poly_values_over_2h_coeffs_shifted = proper_q_1_grand_sum_poly_values_over_2h_coeffs.clone();
+        proper_q_1_grand_sum_poly_values_over_2h_coeffs_shifted.distribute_powers(&worker, domain_h.generator);
+
+        quotient.add_assign(&worker, &proper_q_1_grand_sum_poly_values_over_2h_coeffs.coset_fft(&worker));
+        quotient.sub_assign(&worker, &proper_q_1_grand_sum_poly_values_over_2h_coeffs_shifted.coset_fft(&worker));
+
+        let domain_2h = Domain::new_for_size((params.domain_h_size*2) as u64)?;
+
+        let mut vanishing_of_degree_h_on_2h = evaluate_vanishing_polynomial_of_degree_on_domain(
+            domain_h.size, 
+            &E::Fr::multiplicative_generator(), 
+            &domain_2h, 
+            &worker
+        )?;
+
+        vanishing_of_degree_h_on_2h.batch_inversion(&worker)?;
+        quotient.mul_assign(&worker, &vanishing_of_degree_h_on_2h);
+
+        drop(vanishing_of_degree_h_on_2h);
+
+        let q_1_quotient_on_h = quotient.icoset_fft(&worker).fft(&worker);
+
+        // let (proper_q_1_sum_over_2h, proper_q_1_grand_sum_poly_values_over_2h) = proper_q_1_values_on_2h.calculate_grand_sum(&worker)?;
+
+        println!("Proper sum = {}", proper_q_1_sum_over_2h);
+        assert!(proper_q_1_sum_over_2h.is_zero());
+
+        let proper_q_1_at_beta_1 = proper_q_1_values_on_2h.barycentric_evaluate_at(&worker, beta_1)?;
+        println!("Proper q_1 at beta 1 = {}", proper_q_1_at_beta_1);
+        // assert!(proper_q_1_sum_over_2h.is_zero());
+        let q_1_at_beta = q_1_poly_values_over_h.barycentric_evaluate_at(&worker, beta_1)?;
+        println!("Hacky q_1 at beta 1 = {}", q_1_at_beta);
+
+        // let (q1_even, q_1_odd) = proper_q_1_values_on_2h.split_into_even_and_odd_assuming_natural_ordering(
+        //     &worker,
+        //     &E::Fr::one()
+        // )?;
+
+        // let (q1_even_sum, q_1_odd_sum) = proper_q_1_grand_sum_poly_values_over_2h.split_into_even_and_odd_assuming_natural_ordering(
+        //     &worker,
+        //     &E::Fr::one()
+        // )?;
+
+        println!("Committing Q1 and it's sumcheck poly");
+
+
+        // this is formally correct polynomial as it coincides with a sum of q_1 on H everywhere
         let (q_1_sum_over_h, q_1_grand_sum_poly_values_over_h) = q_1_poly_values_over_h.calculate_grand_sum(&worker)?;
 
         assert!(q_1_sum_over_h.is_zero());
 
-        println!("Committing Q1 and it's sumcheck poly");
-
-        let q_1_commitment = commit_using_values(&q_1_poly_values_over_h, &crs.crs_values_on_h, &worker)?;
-        let q_1_sum_commitment = commit_using_values(&q_1_grand_sum_poly_values_over_h, &crs.crs_values_on_h, &worker)?;
+        // let q_1_commitment = commit_using_values(&q_1_poly_values_over_h, &crs.crs_values_on_h, &worker)?;
+        // let q_1_sum_commitment = commit_using_values(&q_1_grand_sum_poly_values_over_h, &crs.crs_values_on_h, &worker)?;
 
         // Now we've completed the first part of the lincheck by incorporating alpha into M(X, Y)
 
@@ -551,18 +737,20 @@ impl<E:Engine> PreparedProver<E> {
         let a_at_beta_1 = a_values_on_h.barycentric_evaluate_at(&worker, beta_1)?;
         let b_at_beta_1 = b_values_on_h.barycentric_evaluate_at(&worker, beta_1)?;
         let c_at_beta_1 = c_values_on_h.barycentric_evaluate_at(&worker, beta_1)?;
-        let h_at_beta_1 = h_poly_values_on_coset.barycentric_evaluate_at(&worker, beta_1)?;
+        let h_at_beta_1 = h_poly_values_on_h.barycentric_evaluate_at(&worker, beta_1)?;
 
         let vanishing_at_beta_1 = evaluate_vanishing_for_size(&beta_1, domain_h.size);
 
-        let mut lhs = a_at_beta_1;
-        lhs.mul_assign(&b_at_beta_1);
-        lhs.sub_assign(&c_at_beta_1);
+        {
+            let mut lhs = a_at_beta_1;
+            lhs.mul_assign(&b_at_beta_1);
+            lhs.sub_assign(&c_at_beta_1);
 
-        let mut rhs = h_at_beta_1;
-        rhs.mul_assign(&vanishing_at_beta_1);
+            let mut rhs = h_at_beta_1;
+            rhs.mul_assign(&vanishing_at_beta_1);
 
-        assert!(lhs == rhs, "ab - c == h * z_H");
+            assert!(lhs == rhs, "ab - c == h * z_H");
+        }
 
         // now we need to make q_2 = r(alpha, X) M(X, beta)
 
@@ -591,8 +779,6 @@ impl<E:Engine> PreparedProver<E> {
 
             // M(X, Y) for X = omega^row_index and Y = omega^col_index is equal to the 
             // R1CS matrix M value at (row_index, col_index)
-
-            // first |H| indexes will have non-trivial contributions from R(X, X) and R(alpha, X)
 
             worker.scope(col_indexes.len(), |scope, chunk_size| {
                 for (chunk_id, ((subres, row_chunk), col_chunk)) in subresults.chunks_mut(1)
@@ -672,13 +858,24 @@ impl<E:Engine> PreparedProver<E> {
             &worker
         )?;
 
-        let mut r_m_beta_sum = r_a_x_beta_on_h.clone();
+        let beta_2 = E::Fr::from_str("456").unwrap();    
+
+        let mut r_m_beta_sum = r_a_x_beta_on_h;
         r_m_beta_sum.scale(&worker, eta_a);
         r_m_beta_sum.add_assign_scaled(&worker, &r_b_x_beta_on_h, &eta_b);
         r_m_beta_sum.add_assign_scaled(&worker, &r_c_x_beta_on_h, &eta_c);
 
+        drop(r_b_x_beta_on_h);
+        drop(r_c_x_beta_on_h);
+
+        let r_m_x_beta_1_at_beta_2 = r_m_beta_sum.barycentric_evaluate_at(&worker, beta_2)?;
+        println!("M(beta_2, beta_1) = {}", r_m_x_beta_1_at_beta_2);
+
         let mut q_2_poly_values_on_h = r_m_beta_sum;
         q_2_poly_values_on_h.mul_assign(&worker, &r_alpha_x_values_over_h);
+
+        let r_alpha_beta_2 = r_alpha_x_values_over_h.barycentric_evaluate_at(&worker, beta_2)?;
+        println!("r(alpha, beta_2) = {}", r_alpha_beta_2);
 
         let q_2_sum_value = q_2_poly_values_on_h.calculate_sum(&worker)?;
 
@@ -696,7 +893,7 @@ impl<E:Engine> PreparedProver<E> {
         assert!(tmp.is_zero());
 
         println!("Committing Q2 and it's sumcheck poly");
-        let q_2_commitment = commit_using_values(&q_2_poly_values_on_h, &crs.crs_values_on_h, &worker)?;
+        // let q_2_commitment = commit_using_values(&q_2_poly_values_on_h, &crs.crs_values_on_h, &worker)?;
         let q_2_sum_commitment = commit_using_values(&q_2_grand_sum_over_h, &crs.crs_values_on_h, &worker)?;
 
         // TODO: check if it's better to reduce it to the single poly of degree 6K then to 
@@ -829,6 +1026,7 @@ impl<E:Engine> PreparedProver<E> {
         let q_3_b_by_eta_b_poly_coeffs = f_3_b_values_over_k_by_eta_b.clone().ifft(&worker);
         let q_3_c_by_eta_c_poly_coeffs = f_3_c_values_over_k_by_eta_c.clone().ifft(&worker);
 
+        // those are M(beta_2, beta_1)
         let sigma_3_a = q_3_a_by_eta_a_sum_value;
         let sigma_3_b = q_3_b_by_eta_b_sum_value;
         let sigma_3_c = q_3_c_by_eta_c_sum_value;
@@ -1084,13 +1282,13 @@ impl<E:Engine> PreparedProver<E> {
             }
         });
 
-        // let beta_3 = E::Fr::from_str("12345678890").unwrap();
+        let beta_3 = E::Fr::from_str("12345678890").unwrap();
 
-        // let f_3_well_formedness_baryc_at_beta_3 = f_3_well_formedness_poly_values_over_2k_coset.barycentric_over_coset_evaluate_at(
-        //     &worker,
-        //     beta_3,
-        //     &E::Fr::multiplicative_generator()
-        // )?;
+        let f_3_well_formedness_baryc_at_beta_3 = f_3_well_formedness_poly_values_over_2k_coset.barycentric_over_coset_evaluate_at(
+            &worker,
+            beta_3,
+            &E::Fr::multiplicative_generator()
+        )?;
 
         let (f_3_even_values_on_k, f_3_odd_values_on_k) = f_3_well_formedness_poly_values_over_2k_coset.split_into_even_and_odd_assuming_natural_ordering(
             &worker,
@@ -1104,37 +1302,6 @@ impl<E:Engine> PreparedProver<E> {
 
         elog_verbose!("{} seconds for all the commitments", stopwatch.elapsed());
 
-        // println!("Committing matrix evaluation proof poly");
-        // let f_3_well_formedness_poly_commitment = commit_using_values_on_coset(&f_3_well_formedness_poly_values_over_2k_coset, &crs_values_on_2k_coset, &worker)?;
-
-        // elog_verbose!("{} seconds for all the commitments", stopwatch.elapsed());
-
-
-
-        // let f_3_wellformedness_opening_proof = open_from_values_on_coset(
-        //     &f_3_well_formedness_poly_values_over_2k_coset, 
-        //     E::Fr::multiplicative_generator(), 
-        //     beta_3, 
-        //     f_3_well_formedness_baryc_at_beta_3, 
-        //     &crs_values_on_2k_coset, 
-        //     &worker
-        // )?;
-
-        // let valid = is_valid_opening::<E>(
-        //     f_3_well_formedness_poly_commitment, 
-        //     beta_3,
-        //     f_3_well_formedness_baryc_at_beta_3, 
-        //     f_3_wellformedness_opening_proof, 
-        //     crs_values_on_2k_coset.g2_monomial_bases[1]
-        // );
-
-        // let (f_3_even_values_on_k_on_coset, f_3_odd_values_on_k) = f_3_well_formedness_poly_values_over_2k_coset.split_into_even_and_odd_assuming_natural_ordering(
-        //     &worker,
-        //     &E::Fr::multiplicative_generator()
-        // )?;
-
-        let beta_3 = E::Fr::from_str("12345678890").unwrap();
-
         let mut beta_3_squared = beta_3;
         beta_3_squared.square();
 
@@ -1147,11 +1314,642 @@ impl<E:Engine> PreparedProver<E> {
         let f_3_even_eval = f_3_even_values_on_k.barycentric_evaluate_at(&worker, beta_3_squared_by_coset_factor_squared)?;
         let f_3_odd_eval = f_3_odd_values_on_k.barycentric_evaluate_at(&worker, beta_3_squared_by_coset_factor_squared)?;
 
-        // let mut lhs = f_3_odd_eval;
-        // lhs.mul_assign(&beta_3);
-        // lhs.add_assign(&f_3_even_eval);
+        let mut lhs = f_3_odd_eval;
+        lhs.mul_assign(&beta_3);
+        lhs.add_assign(&f_3_even_eval);
 
-        // assert!(lhs == f_3_well_formedness_baryc_at_beta_3);
+        assert!(lhs == f_3_well_formedness_baryc_at_beta_3);
+
+        // now perform the opening
+
+        // open polynomials on domain K at beta3^2 / g^2 where g is a coset generator
+
+        // q_3_a_by_eta_a_poly_coeffs.as_mut()[0] = E::Fr::zero();
+        // q_3_b_by_eta_b_poly_coeffs.as_mut()[0] = E::Fr::zero();
+        // q_3_c_by_eta_c_poly_coeffs.as_mut()[0] = E::Fr::zero();
+
+        let mut beta_3_by_omega = beta_3;
+        beta_3_by_omega.mul_assign(&domain_k.generator);
+
+        // TODO: Evaluate those that are in a coefficient form faster
+        // let q_3_a_by_eta_a_eval = f_3_a_values_over_k_by_eta_a.barycentric_evaluate_at(&worker, beta_3)?;
+        // let q_3_b_by_eta_b_eval = f_3_b_values_over_k_by_eta_b.barycentric_evaluate_at(&worker, beta_3)?;
+        // let q_3_c_by_eta_c_eval = f_3_c_values_over_k_by_eta_c.barycentric_evaluate_at(&worker, beta_3)?;
+        let q_3_a_by_eta_a_eval = q_3_a_by_eta_a_poly_coeffs.evaluate_at(&worker, beta_3);
+        let q_3_b_by_eta_b_eval = q_3_b_by_eta_b_poly_coeffs.evaluate_at(&worker, beta_3);
+        let q_3_c_by_eta_c_eval = q_3_c_by_eta_c_poly_coeffs.evaluate_at(&worker, beta_3);
+        drop(q_3_a_by_eta_a_poly_coeffs);
+        drop(q_3_b_by_eta_b_poly_coeffs);
+        drop(q_3_c_by_eta_c_poly_coeffs);
+        let q_3_a_by_eta_a_sum_eval = q_3_a_by_eta_a_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_3)?;
+        let q_3_b_by_eta_b_sum_eval = q_3_b_by_eta_b_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_3)?;
+        let q_3_c_by_eta_c_sum_eval = q_3_c_by_eta_c_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_3)?;
+        let q_3_a_by_eta_a_sum_eval_shifted = q_3_a_by_eta_a_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_3_by_omega)?;
+        let q_3_b_by_eta_b_sum_eval_shifted = q_3_b_by_eta_b_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_3_by_omega)?;
+        let q_3_c_by_eta_c_sum_eval_shifted = q_3_c_by_eta_c_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_3_by_omega)?;
+
+        let val_a_eval = params.a_matrix_poly.evaluate_at(&worker, beta_3);
+        let val_b_eval = params.b_matrix_poly.evaluate_at(&worker, beta_3);
+        let val_c_eval = params.c_matrix_poly.evaluate_at(&worker, beta_3);
+
+        let row_a_eval = params.a_row_poly.evaluate_at(&worker, beta_3);
+        let row_b_eval = params.b_row_poly.evaluate_at(&worker, beta_3);
+        let row_c_eval = params.c_row_poly.evaluate_at(&worker, beta_3);
+
+        let col_a_eval = params.a_col_poly.evaluate_at(&worker, beta_3);
+        let col_b_eval = params.b_col_poly.evaluate_at(&worker, beta_3);
+        let col_c_eval = params.c_col_poly.evaluate_at(&worker, beta_3);
+
+        let polys_for_opening_for_domain_k_at_beta_3_by_gen = vec![
+            f_3_even_values_on_k,
+            f_3_odd_values_on_k,
+        ];
+
+        let values_for_opening_for_domain_k_at_beta_3_by_gen = vec![
+            f_3_even_eval,
+            f_3_odd_eval,
+        ];
+
+        let challenge_1 = E::Fr::from_str("99999").unwrap();
+
+        let (mut aggregation_on_k, next_challenge) = perform_batched_divisor_for_opening::<E>(
+            polys_for_opening_for_domain_k_at_beta_3_by_gen,
+            beta_3_squared_by_coset_factor_squared,
+            &values_for_opening_for_domain_k_at_beta_3_by_gen,
+            challenge_1,
+            E::Fr::one(),
+            &worker
+        )?;
+
+        let polys_for_opening_for_domain_k_at_beta_3 = vec![
+            precomputations.a_val_over_k.clone(),
+            precomputations.b_val_over_k.clone(),
+            precomputations.c_val_over_k.clone(),
+            precomputations.a_row_over_k.clone(),
+            precomputations.b_row_over_k.clone(),
+            precomputations.c_row_over_k.clone(),
+            precomputations.a_col_over_k.clone(),
+            precomputations.b_col_over_k.clone(),
+            precomputations.c_col_over_k.clone(),
+            f_3_a_values_over_k_by_eta_a,
+            f_3_b_values_over_k_by_eta_b,
+            f_3_c_values_over_k_by_eta_c,
+            q_3_a_by_eta_a_grand_sum_over_k.clone(),
+            q_3_b_by_eta_b_grand_sum_over_k.clone(),
+            q_3_c_by_eta_c_grand_sum_over_k.clone(),
+        ];
+
+        let values_for_opening_for_domain_k_at_beta_3 = vec![
+            val_a_eval,
+            val_b_eval,
+            val_c_eval,
+            row_a_eval,
+            row_b_eval,
+            row_c_eval,
+            col_a_eval,
+            col_b_eval,
+            col_c_eval,
+            q_3_a_by_eta_a_eval,
+            q_3_b_by_eta_b_eval,
+            q_3_c_by_eta_c_eval,
+            q_3_a_by_eta_a_sum_eval,
+            q_3_b_by_eta_b_sum_eval,
+            q_3_c_by_eta_c_sum_eval,
+        ];
+
+        let (aggregation_at_beta_3, next_challenge) = perform_batched_divisor_for_opening::<E>(
+            polys_for_opening_for_domain_k_at_beta_3,
+            beta_3,
+            &values_for_opening_for_domain_k_at_beta_3,
+            challenge_1,
+            next_challenge,
+            &worker
+        )?;
+
+        aggregation_on_k.add_assign(&worker, &aggregation_at_beta_3);
+        drop(aggregation_at_beta_3);
+
+        let polys_for_opening_for_domain_k_at_beta_3_by_omega = vec![
+            q_3_a_by_eta_a_grand_sum_over_k,
+            q_3_b_by_eta_b_grand_sum_over_k,
+            q_3_c_by_eta_c_grand_sum_over_k,
+        ];
+
+        let values_for_opening_for_domain_k_at_beta_3_by_omega = vec![
+            q_3_a_by_eta_a_sum_eval_shifted,
+            q_3_b_by_eta_b_sum_eval_shifted,
+            q_3_c_by_eta_c_sum_eval_shifted,
+        ];
+
+        let (aggregation_at_beta_3_by_omega, _) = perform_batched_divisor_for_opening::<E>(
+            polys_for_opening_for_domain_k_at_beta_3_by_omega,
+            beta_3_by_omega,
+            &values_for_opening_for_domain_k_at_beta_3_by_omega,
+            challenge_1,
+            next_challenge,
+            &worker
+        )?;
+
+        aggregation_on_k.add_assign(&worker, &aggregation_at_beta_3_by_omega);
+        drop(aggregation_at_beta_3_by_omega);
+
+        let proof_on_k = commit_using_values(
+            &aggregation_on_k,
+            &crs.crs_values_on_k, 
+            &worker
+        )?;
+
+
+        // TODO: add aggregate here to compute for openings of individual 
+        // f_3_a_values_over_k_by_eta_a,
+        // f_3_b_values_over_k_by_eta_b,
+        // f_3_c_values_over_k_by_eta_c,
+        // q_3_a_by_eta_a_eval,
+        // q_3_b_by_eta_b_eval,
+        // q_3_c_by_eta_c_eval,
+
+        // Open everything on beta_2 (on domain H)
+
+        // Since we are opening not the polynomial, but it's content with zero coefficient - set constant terms
+
+        // q_3_a_by_eta_a_poly_coeffs.as_mut()[0] = E::Fr::zero();
+        // q_3_b_by_eta_b_poly_coeffs.as_mut()[0] = E::Fr::zero();
+        // q_3_c_by_eta_c_poly_coeffs.as_mut()[0] = E::Fr::zero();
+
+        // TODO: Evaluate those that are in a coefficient form faster
+        // let q_3_a_by_eta_a_eval = f_3_a_values_over_k_by_eta_a.barycentric_evaluate_at(&worker, beta_3)?;
+        // let q_3_b_by_eta_a_eval = f_3_b_values_over_k_by_eta_b.barycentric_evaluate_at(&worker, beta_3)?;
+        // let q_3_c_by_eta_a_eval = f_3_c_values_over_k_by_eta_c.barycentric_evaluate_at(&worker, beta_3)?;
+        // let q_3_a_by_eta_a_eval = q_3_a_by_eta_a_poly_coeffs.evaluate_at(&worker, beta_2);
+        // let q_3_b_by_eta_a_eval = q_3_b_by_eta_b_poly_coeffs.evaluate_at(&worker, beta_2);
+        // let q_3_c_by_eta_a_eval = q_3_c_by_eta_c_poly_coeffs.evaluate_at(&worker, beta_2);
+        // let q_3_a_by_eta_a_sum_eval = q_3_a_by_eta_a_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_2)?;
+        // let q_3_b_by_eta_b_sum_eval = q_3_b_by_eta_b_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_2)?;
+        // let q_3_c_by_eta_c_sum_eval = q_3_c_by_eta_c_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_2)?;
+        // let q_3_a_by_eta_a_sum_eval_shifted = q_3_a_by_eta_a_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_2_by_omega)?;
+        // let q_3_b_by_eta_b_sum_eval_shifted = q_3_b_by_eta_b_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_2_by_omega)?;
+        // let q_3_c_by_eta_c_sum_eval_shifted = q_3_c_by_eta_c_grand_sum_over_k.barycentric_evaluate_at(&worker, beta_2_by_omega)?;
+
+
+        // let challenge_2 = E::Fr::from_str("999991234").unwrap();
+
+        // let polys_for_opening_for_domain_k_at_beta_3 = vec![
+        //     f_3_a_values_over_k_by_eta_a,
+        //     f_3_b_values_over_k_by_eta_b,
+        //     f_3_c_values_over_k_by_eta_c,
+        //     // q_3_a_by_eta_a_grand_sum_over_k.clone(),
+        //     // q_3_b_by_eta_b_grand_sum_over_k.clone(),
+        //     // q_3_c_by_eta_c_grand_sum_over_k.clone(),
+        // ];
+
+        // let values_for_opening_for_domain_k_at_beta_3 = vec![
+        //     q_3_a_by_eta_a_eval,
+        //     q_3_b_by_eta_a_eval,
+        //     q_3_c_by_eta_a_eval,
+        //     // q_3_a_by_eta_a_sum_eval,
+        //     // q_3_b_by_eta_b_sum_eval,
+        //     // q_3_c_by_eta_c_sum_eval,
+        // ];
+
+        // let proof_for_f_3_grand_sums_at_beta_3 = perform_batch_opening_from_values(
+        //     polys_for_opening_for_domain_k_at_beta_3,
+        //     &crs.crs_values_on_k,
+        //     beta_3,
+        //     &polys_for_opening_for_domain_k_at_beta_3,
+        //     challenge_2,
+        //     &worker
+        // )?;
+
+        // let challenge_3 = E::Fr::from_str("99999").unwrap();
+
+        // let polys_for_opening_for_domain_k_at_beta_2_by_omega = vec![
+        //     q_3_a_by_eta_a_grand_sum_over_k,
+        //     q_3_b_by_eta_b_grand_sum_over_k,
+        //     q_3_c_by_eta_c_grand_sum_over_k,
+        // ];
+
+        // let values_for_opening_for_domain_k_at_beta_2_by_omega = vec![
+        //     q_3_a_by_eta_a_sum_eval_shifted,
+        //     q_3_b_by_eta_b_sum_eval_shifted,
+        //     q_3_c_by_eta_c_sum_eval_shifted,
+        // ];
+
+        // let proof_for_f_3_grand_sums_at_beta_2_by_omega = perform_batch_opening_from_values(
+        //     polys_for_opening_for_domain_k_at_beta_2_by_omega,
+        //     &crs.crs_values_on_k,
+        //     beta_2_by_omega,
+        //     &values_for_opening_for_domain_k_at_beta_2_by_omega,
+        //     challenge_3,
+        //     &worker
+        // )?;
+
+        // open everything else on beta_2 (domain H)
+
+        let mut beta_2_by_omega = beta_2;
+        beta_2_by_omega.mul_assign(&domain_h.generator);
+
+        let challenge_2 = E::Fr::from_str("9999999").unwrap();
+
+        // polynomial q_2 DOES HAVE it's constant term set to zero, so we need to add a constant term here
+        // at the evaluation step!
+        let mut q_2_eval_at_beta_2 = q_2_poly_values_on_h.barycentric_evaluate_at(&worker, beta_2)?;
+        let mut sigma_2_over_size_of_h = one_over_h_size;
+        sigma_2_over_size_of_h.mul_assign(&sigma_2);
+        q_2_eval_at_beta_2.add_assign(&sigma_2_over_size_of_h);
+
+        let q_2_sum_eval_at_beta_2 = q_2_grand_sum_over_h.barycentric_evaluate_at(&worker, beta_2)?;
+        let q_2_sum_eval_at_beta_2_shifted = q_2_grand_sum_over_h.barycentric_evaluate_at(&worker, beta_2_by_omega)?;
+
+        let polys_for_opening_for_domain_h_at_beta_2 = vec![
+            q_2_poly_values_on_h,
+            q_2_grand_sum_over_h.clone(),
+        ];
+
+        let values_for_opening_for_domain_h_at_beta_2 = vec![
+            q_2_eval_at_beta_2,
+            q_2_sum_eval_at_beta_2,
+        ];
+
+        let (mut aggregation_on_h, next_challenge) = perform_batched_divisor_for_opening::<E>(
+            polys_for_opening_for_domain_h_at_beta_2,
+            beta_2,
+            &values_for_opening_for_domain_h_at_beta_2,
+            challenge_2,
+            E::Fr::one(),
+            &worker
+        )?;
+
+        let polys_for_opening_for_domain_h_at_beta_2_by_omega = vec![
+            q_2_grand_sum_over_h,
+        ];
+
+        let values_for_opening_for_domain_h_at_beta_2_by_omega = vec![
+            q_2_sum_eval_at_beta_2_shifted,
+        ];
+
+        let (aggregation_at_beta_2_by_omega, next_challenge) = perform_batched_divisor_for_opening::<E>(
+            polys_for_opening_for_domain_h_at_beta_2_by_omega,
+            beta_2_by_omega,
+            &values_for_opening_for_domain_h_at_beta_2_by_omega,
+            challenge_2,
+            next_challenge,
+            &worker
+        )?;
+
+
+        aggregation_on_h.add_assign(&worker, &aggregation_at_beta_2_by_omega);
+        drop(aggregation_at_beta_2_by_omega);
+
+        // add everything else on beta_1 (domain H)
+
+        let mut beta_1_by_omega = beta_1;
+        beta_1_by_omega.mul_assign(&domain_h.generator);
+
+        // let q_1_eval_at_beta_1 = q_1_poly_values_over_h.barycentric_evaluate_at(&worker, beta_1)?;
+        // let q_1_sum_eval_at_beta_1 = q_1_grand_sum_poly_values_over_h.barycentric_evaluate_at(&worker, beta_1)?;
+        // let q_1_sum_eval_at_beta_1_shifted = q_1_grand_sum_poly_values_over_h.barycentric_evaluate_at(&worker, beta_1_by_omega)?;
+
+        let q_1_eval_at_beta_1 = proper_q_1_values_on_2h.barycentric_evaluate_at(&worker, beta_1)?;
+        let q_1_sum_eval_at_beta_1 = proper_q_1_grand_sum_poly_values_over_2h.barycentric_evaluate_at(&worker, beta_1)?;
+        let q_1_sum_eval_at_beta_1_shifted = proper_q_1_grand_sum_poly_values_over_2h.barycentric_evaluate_at(&worker, beta_1_by_omega)?;
+        let w_at_beta_1 = witness_values_on_h.barycentric_evaluate_at(&worker, beta_1)?;
+        let q_1_quotient_at_beta_1 = q_1_quotient_on_h.barycentric_evaluate_at(&worker, beta_1)?;
+
+        let polys_for_opening_for_domain_h_at_beta_1 = vec![
+            a_values_on_h,
+            b_values_on_h,
+            c_values_on_h,
+            h_poly_values_on_h,
+            witness_values_on_h,
+            // q_1_poly_values_over_h,
+            // q_1_grand_sum_poly_values_over_h.clone(),
+        ];
+
+        let values_for_opening_for_domain_h_at_beta_1 = vec![
+            a_at_beta_1,
+            b_at_beta_1,
+            c_at_beta_1,
+            h_at_beta_1,
+            w_at_beta_1,
+            // q_1_eval_at_beta_1,
+            // q_1_sum_eval_at_beta_1
+        ];
+
+        let (aggregation_at_beta_1, next_challenge) = perform_batched_divisor_for_opening::<E>(
+            polys_for_opening_for_domain_h_at_beta_1,
+            beta_1,
+            &values_for_opening_for_domain_h_at_beta_1,
+            challenge_2,
+            next_challenge,
+            &worker
+        )?;
+
+        aggregation_on_h.add_assign(&worker, &aggregation_at_beta_1);
+        drop(aggregation_at_beta_1);
+
+        // let polys_for_opening_for_domain_h_at_beta_1_by_omega = vec![
+        //     q_1_grand_sum_poly_values_over_h,
+        // ];
+
+        // let values_for_opening_for_domain_h_at_beta_1_by_omega = vec![
+        //     q_1_sum_eval_at_beta_1_shifted
+        // ];
+
+        // let (aggregation_at_beta_1_by_omega, _) = perform_batched_divisor_for_opening::<E>(
+        //     polys_for_opening_for_domain_h_at_beta_1_by_omega,
+        //     beta_1_by_omega,
+        //     &values_for_opening_for_domain_h_at_beta_1_by_omega,
+        //     challenge_2,
+        //     next_challenge,
+        //     &worker
+        // )?;
+
+        // aggregation_on_h.add_assign(&worker, &aggregation_at_beta_1_by_omega);
+        // drop(aggregation_at_beta_1_by_omega);
+
+        // this is an opening for everything on H
+
+        let proof_on_h = commit_using_values(
+            &aggregation_on_h,
+            &crs.crs_values_on_h, 
+            &worker
+        )?;
+
+        // fun time - do the checks
+
+        fn compute_from_even_and_odd<F: PrimeField>(
+            even: F,
+            odd: F,
+            at: F,
+        ) -> F {
+            let mut res = odd;
+            res.mul_assign(&at);
+            res.add_assign(&even);
+
+            res
+        }
+
+        // first check f3 wellformedness
+        {
+            // vanishing(beta_1) * vanishing(beta_2) * val_m(z) - (beta_2 - row_m(z))(beta_1 - col_m(z)) q_3_m(z) = wellformedness(z)*vanishing(z)
+
+            let vanishing_at_beta_3 = evaluate_vanishing_for_size(&beta_3, domain_k.size);
+
+            let f_3_at_beta_3 = compute_from_even_and_odd(f_3_even_eval, f_3_odd_eval, beta_3);
+
+            assert_eq!(f_3_well_formedness_baryc_at_beta_3, f_3_at_beta_3, "f_3 is reconstructed properly");
+
+            let val_a_at_beta_3 = val_a_eval;
+            let val_b_at_beta_3 = val_b_eval;
+            let val_c_at_beta_3 = val_c_eval;
+
+            let row_a_at_beta_3 = row_a_eval;
+            let row_b_at_beta_3 = row_b_eval;
+            let row_c_at_beta_3 = row_c_eval;
+
+            let col_a_at_beta_3 = col_a_eval;
+            let col_b_at_beta_3 = col_b_eval;
+            let col_c_at_beta_3 = col_c_eval;
+
+            let mut lhs = E::Fr::zero();
+            let mut linearization_challenge = E::Fr::one();
+
+            let mut tmp = vanishing_on_beta_1_by_vanishing_on_beta_2;
+            tmp.mul_assign(&val_a_at_beta_3);
+            tmp.mul_assign(&eta_a);
+            
+            let mut t_row = beta_2;
+            t_row.sub_assign(&row_a_at_beta_3);
+
+            let mut t_col = beta_1;
+            t_col.sub_assign(&col_a_at_beta_3);
+
+            t_row.mul_assign(&t_col);
+            t_row.mul_assign(&q_3_a_by_eta_a_eval);
+            tmp.sub_assign(&t_row);
+            tmp.mul_assign(&linearization_challenge);
+
+            lhs.add_assign(&tmp);
+
+            linearization_challenge.mul_assign(&rational_check_linearization_challenge);
+
+            let mut tmp = vanishing_on_beta_1_by_vanishing_on_beta_2;
+            tmp.mul_assign(&val_b_at_beta_3);
+            tmp.mul_assign(&eta_b);
+            
+            let mut t_row = beta_2;
+            t_row.sub_assign(&row_b_at_beta_3);
+
+            let mut t_col = beta_1;
+            t_col.sub_assign(&col_b_at_beta_3);
+
+            t_row.mul_assign(&t_col);
+            t_row.mul_assign(&q_3_b_by_eta_b_eval);
+            tmp.sub_assign(&t_row);
+            tmp.mul_assign(&linearization_challenge);
+
+            lhs.add_assign(&tmp);
+
+            linearization_challenge.mul_assign(&rational_check_linearization_challenge);
+
+            let mut tmp = vanishing_on_beta_1_by_vanishing_on_beta_2;
+            tmp.mul_assign(&val_c_at_beta_3);
+            tmp.mul_assign(&eta_c);
+            
+            let mut t_row = beta_2;
+            t_row.sub_assign(&row_c_at_beta_3);
+
+            let mut t_col = beta_1;
+            t_col.sub_assign(&col_c_at_beta_3);
+
+            t_row.mul_assign(&t_col);
+            t_row.mul_assign(&q_3_c_by_eta_c_eval);
+            tmp.sub_assign(&t_row);
+            tmp.mul_assign(&linearization_challenge);
+
+            lhs.add_assign(&tmp);
+
+            let mut rhs = vanishing_at_beta_3;
+            rhs.mul_assign(&f_3_at_beta_3);
+
+            assert_eq!(lhs, rhs, "f_3 wellformedness check");
+
+            // sumchecks for q_3_m polys
+            
+            let mut sigma_3_a_over_size_of_k = one_over_k;
+            sigma_3_a_over_size_of_k.mul_assign(&sigma_3_a);
+
+            let mut lhs = q_3_a_by_eta_a_eval;
+            lhs.sub_assign(&q_3_a_by_eta_a_sum_eval_shifted);
+            lhs.add_assign(&q_3_a_by_eta_a_sum_eval);
+            lhs.sub_assign(&sigma_3_a_over_size_of_k);
+
+            let rhs = E::Fr::zero();
+
+            assert_eq!(lhs, rhs, "q_3_a sumcheck");
+
+            let mut sigma_3_b_over_size_of_k = one_over_k;
+            sigma_3_b_over_size_of_k.mul_assign(&sigma_3_b);
+
+            let mut lhs = q_3_b_by_eta_b_eval;
+            lhs.sub_assign(&q_3_b_by_eta_b_sum_eval_shifted);
+            lhs.add_assign(&q_3_b_by_eta_b_sum_eval);
+            lhs.sub_assign(&sigma_3_b_over_size_of_k);
+
+            let rhs = E::Fr::zero();
+
+            assert_eq!(lhs, rhs, "q_3_b sumcheck");
+
+            let mut sigma_3_c_over_size_of_k = one_over_k;
+            sigma_3_c_over_size_of_k.mul_assign(&sigma_3_c);
+
+            let mut lhs = q_3_c_by_eta_c_eval;
+            lhs.sub_assign(&q_3_c_by_eta_c_sum_eval_shifted);
+            lhs.add_assign(&q_3_c_by_eta_c_sum_eval);
+            lhs.sub_assign(&sigma_3_c_over_size_of_k);
+
+            let rhs = E::Fr::zero();
+
+            assert_eq!(lhs, rhs, "q_3_c sumcheck");
+        }
+
+        // sumcheck for q_2
+
+        {
+            // r(alpha, beta_2) * sigma_3 = sigma_2
+            let r_alpha_beta_2 = evaluate_bivariate_lagrange_at_point(
+                alpha,
+                beta_2,
+                domain_h.size
+            )?;
+
+            println!("r(alpha, beta_2) = {}", r_alpha_beta_2);
+
+            // sigma_3_m = eta_m * M(beta_2, beta_1);
+
+            // q_2(beta_2) = r(alpha, beta_2) * \sum_{m} M(beta_2, beta_1)
+
+            // so we do a sumcheck of q_2(beta_2) - q_2_sum(beta_2 * omega) - q_2_sum(beta_2) - sigma_2/|H| = 0
+
+            println!("Sigma_3_a = {}", sigma_3_a);
+            println!("Sigma_3_b = {}", sigma_3_b);
+            println!("Sigma_3_c = {}", sigma_3_c);
+
+            // reconstruct sigma_2 from the q_3 chunks
+            let mut sigma_3_reconstructed = E::Fr::zero();
+            // these contain eta_m already
+            sigma_3_reconstructed.add_assign(&sigma_3_a);
+            sigma_3_reconstructed.add_assign(&sigma_3_b);
+            sigma_3_reconstructed.add_assign(&sigma_3_c);
+
+            let mut q_2_at_beta_reconstructed = r_alpha_beta_2;
+            q_2_at_beta_reconstructed.mul_assign(&sigma_3_reconstructed);
+
+            let mut tmp_1 = q_2_at_beta_reconstructed.inverse().unwrap();
+            tmp_1.mul_assign(&q_2_eval_at_beta_2);
+
+            println!("tmp 1 = {}", tmp_1);
+
+            let mut tmp_2 = q_2_eval_at_beta_2.inverse().unwrap();
+            tmp_2.mul_assign(&q_2_at_beta_reconstructed);
+
+            println!("tmp 2 = {}", tmp_2);
+
+            let mut tmp_3 = r_m_x_beta_1_at_beta_2;
+            tmp_3.sub_assign(&sigma_3_a);
+            println!("tmp 3 = {}", tmp_3);
+
+            println!("Sigma_2 = {}", sigma_2);
+
+            // assert_eq!(q_2_eval_at_beta_2, q_2_at_beta_reconstructed, "q_2(beta_2) reconstruction");
+
+            let mut sigma_2_over_size_of_h = one_over_h_size;
+            sigma_2_over_size_of_h.mul_assign(&sigma_2);
+
+            let mut lhs = q_2_eval_at_beta_2;
+            lhs.sub_assign(&q_2_sum_eval_at_beta_2_shifted);
+            lhs.add_assign(&q_2_sum_eval_at_beta_2);
+            lhs.sub_assign(&sigma_2_over_size_of_h);
+
+            let rhs = E::Fr::zero();
+
+            assert_eq!(lhs, rhs, "q_2 sumcheck");
+        }
+
+        // sumcheck for q_1
+
+        {
+            // reconstruct value of r(alpha, beta_1) * \sum_{m} z_m(beta_1)  - (sum{m} M(beta_1, alpha)) * w(beta_1) = q_1(beta_1)
+
+            let r_alpha_beta_1 = evaluate_bivariate_lagrange_at_point(
+                alpha,
+                beta_1,
+                domain_h.size
+            )?;
+
+            let mut lhs = sum_a_b_c_at_beta_1;
+            lhs.mul_assign(&r_alpha_beta_1);
+
+            let mut rhs = sum_m_at_beta_1;
+            rhs.mul_assign(&w_at_beta_1);
+
+            let mut reconstructed_q_1_at_beta_1 = lhs;
+            reconstructed_q_1_at_beta_1.sub_assign(&rhs);
+
+            assert_eq!(reconstructed_q_1_at_beta_1, q_1_eval_at_beta_1, "lincheck");
+
+            let mut reconstructed_q_1_at_beta_1 = E::Fr::zero();
+
+            let mut tmp = a_at_beta_1;
+            tmp.mul_assign(&eta_a);
+            reconstructed_q_1_at_beta_1.add_assign(&tmp);
+
+            let mut tmp = b_at_beta_1;
+            tmp.mul_assign(&eta_b);
+            reconstructed_q_1_at_beta_1.add_assign(&tmp);
+
+            let mut tmp = c_at_beta_1;
+            tmp.mul_assign(&eta_c);
+            reconstructed_q_1_at_beta_1.add_assign(&tmp);
+
+            reconstructed_q_1_at_beta_1.mul_assign(&r_alpha_beta_1);
+
+            let mut tmp = sigma_2;
+            tmp.mul_assign(&w_at_beta_1);
+            reconstructed_q_1_at_beta_1.sub_assign(&tmp);
+
+            // assert_eq!(reconstructed_q_1_at_beta_1, q_1_eval_at_beta_1, "q_1 at beta_1 reconstruciton");
+
+            // let mut lhs = q_1_eval_at_beta_1;
+            // lhs.sub_assign(&q_1_sum_eval_at_beta_1_shifted);
+            // lhs.add_assign(&q_1_sum_eval_at_beta_1);
+
+            // let rhs = E::Fr::zero();
+
+            // assert_eq!(lhs, rhs, "q_1 sumcheck");
+
+            let mut lhs = q_1_eval_at_beta_1;
+            lhs.sub_assign(&q_1_sum_eval_at_beta_1_shifted);
+            lhs.add_assign(&q_1_sum_eval_at_beta_1);
+
+            let mut rhs = q_1_quotient_at_beta_1;
+            rhs.mul_assign(&vanishing_at_beta_1);
+
+            assert_eq!(lhs, rhs, "q_1 sumcheck");
+        }
+
+        // last check: a*b - c = v_H * h
+
+        {
+            let mut lhs = a_at_beta_1;
+            lhs.mul_assign(&b_at_beta_1);
+            lhs.sub_assign(&c_at_beta_1);
+
+            let mut rhs = h_at_beta_1;
+            rhs.mul_assign(&vanishing_at_beta_1);
+    
+            assert!(lhs == rhs, "ab - c == h * z_H");
+        }
 
         // assert!(valid, "f_3 wellformedness");
 
@@ -1293,7 +2091,6 @@ impl<E:Engine> PreparedProver<E> {
     }
 }
 
-
 impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
     type Root = Self;
 
@@ -1386,26 +2183,107 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssignment<E> {
 pub fn create_proof<E, C>(
     circuit: C,
     params: &IndexedSetup<E>,
+    bases: &PrecomputedBases<E>,
 ) -> Result<(), SynthesisError>
     where E: Engine, C: Circuit<E>
 {
     let worker = Worker::new();
-    let bases = PrecomputedBases::new_42_for_index(&params, &worker);
+    println!("Start making precomputations");
     let precomputations = IndexPrecomputations::new(&params, &worker).expect("must precompute");
+    println!("Done making precomputations");
     let prover = prepare_prover(circuit)?;
 
     prover.create_proof(params, &bases, &precomputations)
 }
 
 pub fn test_over_engine_and_circuit<E: Engine, C: Circuit<E> + Clone>(
-    circuit: C
+    circuit: C,
 ) {
     let params = generate_parameters(circuit.clone()).unwrap();
+    let worker = Worker::new();
+
+    let bases = PrecomputedBases::<E>::new_42_for_index(&params, &worker);
 
     println!("Params domain H size = {}", params.domain_h_size);
     println!("Params domain K size = {}", params.domain_k_size);
 
-    let _ = create_proof(circuit, &params).unwrap();
+    let _ = create_proof(circuit, &params, &bases).unwrap();
+}
+
+pub fn test_over_engine_and_circuit_with_proving_key<E: Engine, C: Circuit<E> + Clone>(
+    circuit: C,
+    base_path: String
+) {
+    let params = generate_parameters(circuit.clone()).unwrap();
+
+    let bases = read_test_keys::<E>(base_path);
+
+    println!("Params domain H size = {}", params.domain_h_size);
+    println!("Params domain K size = {}", params.domain_k_size);
+
+    let _ = create_proof(circuit, &params, &bases).unwrap();
+}
+
+pub fn serialize_bases<E: Engine, P: AsRef<std::path::Path>>(
+    bases: &PrecomputedBases<E>,
+    h_file_path: P,
+    k_file_path: P
+) -> std::io::Result<()> {
+    // let mut h_writer = std::fs::File::open(h_file_path)?;
+    // let mut k_writer = std::fs::File::open(k_file_path)?;
+
+    let mut h_writer = std::fs::File::create(h_file_path)?;
+    let mut k_writer = std::fs::File::create(k_file_path)?;
+
+    bases.crs_values_on_h.write(&mut h_writer)?;
+    bases.crs_values_on_k.write(&mut k_writer)?;
+
+    Ok(())
+}
+
+pub fn deserialize_bases<E: Engine, P: AsRef<std::path::Path>>(
+    h_file_path: P,
+    k_file_path: P
+) -> Result<PrecomputedBases<E>, SynthesisError> {
+    let mut h_reader = std::fs::File::open(h_file_path)?;
+    let mut k_reader = std::fs::File::open(k_file_path)?;
+
+    let h_values = Crs::<E, CrsForLagrangeForm>::read(&mut h_reader)?;
+    let k_values = Crs::<E, CrsForLagrangeForm>::read(&mut k_reader)?;
+
+    let new = PrecomputedBases::<E>{
+        crs_values_on_h: h_values,
+        crs_values_on_k: k_values,
+    };
+
+    Ok(new)
+}
+
+pub fn create_test_keys<E: Engine, C: Circuit<E> + Clone>(
+    circuit: C,
+    base_file_name: String
+) {
+    let params = generate_parameters(circuit.clone()).unwrap();
+
+    let path_h = format!("{}_h.key", base_file_name);
+    let path_k = format!("{}_k.key", base_file_name);
+
+    let worker = Worker::new();
+
+    let bases = PrecomputedBases::new_42_for_index(&params, &worker);
+
+    serialize_bases(&bases, &path_h, &path_k).expect("must serialize the bases");
+}
+
+pub fn read_test_keys<E: Engine>(
+    base_file_name: String
+) -> PrecomputedBases<E> {
+    let path_h = format!("{}_h.key", base_file_name);
+    let path_k = format!("{}_k.key", base_file_name);
+
+    let bases = deserialize_bases::<E, _>(&path_h, &path_k).expect("must read the bases");
+
+    bases
 }
 
 #[cfg(test)]
@@ -1441,4 +2319,6 @@ mod test {
 
         test_over_engine_and_circuit(c);
     }
+
+
 }
