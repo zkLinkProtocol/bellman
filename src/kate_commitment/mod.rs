@@ -24,6 +24,71 @@ pub struct Crs<E: Engine, T: CrsType> {
     _marker: std::marker::PhantomData<T>
 }
 
+use std::io::{Read, Write};
+use crate::byteorder::ReadBytesExt;
+use crate::byteorder::WriteBytesExt;
+use crate::byteorder::BigEndian;
+
+impl<E: Engine, T: CrsType> Crs<E, T> {
+    pub fn write<W: Write>(
+        &self,
+        mut writer: W
+    ) -> std::io::Result<()>
+    {
+        writer.write_u64::<BigEndian>(self.g1_bases.len() as u64)?;
+        for g in &self.g1_bases[..] {
+            writer.write_all(g.into_uncompressed().as_ref())?;
+        }
+
+        writer.write_u64::<BigEndian>(self.g2_monomial_bases.len() as u64)?;
+        for g in &self.g2_monomial_bases[..] {
+            writer.write_all(g.into_uncompressed().as_ref())?;
+        }
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(
+        mut reader: R
+    ) -> std::io::Result<Self>
+    {
+        use crate::pairing::EncodedPoint;
+
+        let mut g1_repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+        let mut g2_repr = <E::G2Affine as CurveAffine>::Uncompressed::empty();
+
+        let num_g1 = reader.read_u64::<BigEndian>()?;
+
+        let mut g1_bases = Vec::with_capacity(num_g1 as usize);
+
+        for _ in 0..num_g1 {  
+            reader.read_exact(g1_repr.as_mut())?;
+            let p = g1_repr.into_affine().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            g1_bases.push(p);
+        }
+
+        let num_g2 = reader.read_u64::<BigEndian>()?;
+        assert!(num_g2 == 2u64);
+
+        let mut g2_bases = Vec::with_capacity(num_g2 as usize);
+
+        for _ in 0..num_g2 {  
+            reader.read_exact(g2_repr.as_mut())?;
+            let p = g2_repr.into_affine().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            g2_bases.push(p);
+        }
+
+        let new = Self {
+            g1_bases: Arc::new(g1_bases),
+            g2_monomial_bases: Arc::new(g2_bases),
+        
+            _marker: std::marker::PhantomData
+        };
+
+        Ok(new) 
+    }  
+}
+
 impl<E: Engine> Crs<E, CrsForMonomialForm> {
     pub fn dummy_crs(size: usize) -> Self {
         assert!(size.is_power_of_two());
@@ -367,6 +432,76 @@ pub fn open_from_values_on_coset<E: Engine>(
     Ok(opening_proof)
 }
 
+pub fn perform_batched_divisor_for_opening<E: Engine>(
+    mut polynomials: Vec<Polynomial<E::Fr, Values>>,
+    open_at: E::Fr,
+    opening_values: &[E::Fr],
+    challenge: E::Fr,
+    challenge_start: E::Fr,
+    worker: &Worker
+) -> Result<(Polynomial<E::Fr, Values>, E::Fr), SynthesisError> {
+    assert!(polynomials.len() == opening_values.len(), "different number of polynomials and opening values");
+    // assert!(polynomials.len() > 1, "should aggregate only two or more polynomials");
+
+    let size = polynomials[0].size();
+    assert!(size.is_power_of_two());
+
+    let common_divisor = vec![E::Fr::one(); size];
+
+    let mut common_divisor = Polynomial::from_values(common_divisor)?;
+    common_divisor.distribute_powers(&worker, common_divisor.omega);
+    common_divisor.sub_constant(&worker, &open_at);
+    common_divisor.batch_inversion(&worker)?;
+
+    for (p, v) in polynomials.iter_mut().zip(opening_values.iter()) {
+        assert!(p.size() == size);
+        p.sub_constant(&worker, v);
+    }
+
+    let rest: Vec<_> = polynomials.drain(1..).collect();
+
+    let mut aggregation = polynomials.pop().expect("one polynomial left");
+    if challenge_start != E::Fr::one() {
+        aggregation.scale(&worker, challenge);
+    }
+
+    let mut this_challenge = challenge_start;
+    this_challenge.mul_assign(&challenge);
+
+    for other in rest.into_iter() {
+        aggregation.add_assign_scaled(&worker, &other, &this_challenge);
+        this_challenge.mul_assign(&challenge);
+    }
+
+    aggregation.mul_assign(&worker, &common_divisor);
+    drop(common_divisor);
+
+    // return next challenge and aggregation
+    Ok((aggregation, this_challenge))
+}
+
+pub fn perform_batch_opening_from_values<E: Engine>(
+    polynomials: Vec<Polynomial<E::Fr, Values>>,
+    crs: &Crs::<E, CrsForLagrangeForm>,
+    open_at: E::Fr,
+    opening_values: &[E::Fr],
+    challenge: E::Fr,
+    worker: &Worker
+) -> Result<E::G1Affine, SynthesisError> {
+    let (aggregation, _) = perform_batched_divisor_for_opening::<E>(
+        polynomials,
+        open_at,
+        opening_values,
+        challenge,
+        E::Fr::one(),
+        &worker
+    )?;
+
+    let opening_proof = commit_using_values(&aggregation, &crs, &worker)?;
+
+    Ok(opening_proof)
+}
+
 pub fn is_valid_opening<E: Engine>(
     commitment: E::G1Affine,
     z: E::Fr,
@@ -394,6 +529,57 @@ pub fn is_valid_opening<E: Engine>(
         &E::miller_loop(
             &[
                 (&pair_with_1_part.into_affine().prepare(), &E::G2Affine::one().prepare()),
+                (&pair_with_x_part.prepare(), &g2_by_x.prepare()),
+            ]
+    ));
+    
+    if let Some(res) = result {
+        return res == E::Fqk::one();
+    }
+    
+    false
+}
+
+pub fn is_valid_multiopening<E: Engine>(
+    commitments: &[E::G1Affine],
+    z: E::Fr,
+    opening_values: &[E::Fr],
+    opening_proof: E::G1Affine,
+    challenge: E::Fr,
+    g2_by_x: E::G2Affine
+) -> bool {
+    assert!(commitments.len() == opening_values.len());
+    // \sum_{i} alpha^i (f(x) - f(z))/(x - z) = op(x)
+
+    // \sum_{i} alpha^i (f(x) - f(z)) - op(x) * (x - z) = 0
+    // e(\sum_{i} alpha^i (f(x) - f(z)) + z*op(x), 1) = e(op(x), x)
+    // e(\sum_{i} alpha^i (f(x) - f(z)) + z*op(x), 1) * e(-op(x), x) == 1 // e(0, 0)
+
+    let mut aggregation = E::G1::zero();
+    
+    let mut this_challenge = E::Fr::one();
+    // later change for efficiency
+    for (c, v) in commitments.iter().zip(opening_values.iter()) {
+        let mut pair_with_1_part = c.into_projective();
+        let gen_by_opening_value = E::G1Affine::one().mul(v.into_repr());
+        pair_with_1_part.sub_assign(&gen_by_opening_value);
+        
+        pair_with_1_part = pair_with_1_part.into_affine().mul(this_challenge.into_repr());
+
+        this_challenge.mul_assign(&challenge);
+    }
+
+    let proof_by_z = opening_proof.mul(z.into_repr());
+
+    aggregation.add_assign(&proof_by_z);
+
+    let mut pair_with_x_part = opening_proof;
+    pair_with_x_part.negate();
+
+    let result = E::final_exponentiation(
+        &E::miller_loop(
+            &[
+                (&aggregation.into_affine().prepare(), &E::G2Affine::one().prepare()),
                 (&pair_with_x_part.prepare(), &g2_by_x.prepare()),
             ]
     ));

@@ -47,7 +47,7 @@ const MIMC_ROUNDS: usize = 1000000;
 #[test]
 fn test_bench_marlin_prover() {
     use bellman_ce::pairing::bn256::{Bn256};
-    use bellman_ce::marlin::prover::test_over_engine_and_circuit;
+    use bellman_ce::marlin::prover::test_over_engine_and_circuit_with_proving_key;
     {
         // This may not be cryptographically safe, use
         // `OsRng` (for example) in production software.
@@ -67,7 +67,35 @@ fn test_bench_marlin_prover() {
             constants: &constants
         };
 
-        test_over_engine_and_circuit::<Bn256, _>(circuit);
+        test_over_engine_and_circuit_with_proving_key::<Bn256, _>(circuit, format!("./marlin_mimc_{}", MIMC_ROUNDS));
+    }
+}
+
+#[cfg(feature = "marlin")]
+#[test]
+fn test_create_marlin_proving_key() {
+    use bellman_ce::pairing::bn256::{Bn256};
+    use bellman_ce::marlin::prover::create_test_keys;
+    {
+        // This may not be cryptographically safe, use
+        // `OsRng` (for example) in production software.
+        let rng = &mut thread_rng();
+
+        // Generate the MiMC round constants
+        let constants = (0..MIMC_ROUNDS).map(|_| rng.gen()).collect::<Vec<_>>();
+
+        let xl = rng.gen();
+        let xr = rng.gen();
+
+        // Create an instance of our circuit (with the
+        // witness)
+        let circuit = MiMCDemo {
+            xl: Some(xl),
+            xr: Some(xr),
+            constants: &constants
+        };
+
+        create_test_keys::<Bn256, _>(circuit, format!("./marlin_mimc_{}", MIMC_ROUNDS));
     }
 }
 

@@ -99,6 +99,10 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
 
     pub fn scale(&mut self, worker: &Worker, g: F)
     {
+        if g == F::one() {
+            return;
+        }
+
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for v in self.coeffs.chunks_mut(chunk) {
                 scope.spawn(move |_| {
@@ -1410,6 +1414,16 @@ impl<F: PrimeField> Polynomial<F, Values> {
                 });
             }
         });
+    }
+
+    pub fn rotate(mut self, by: usize) -> Result<Polynomial<F, Values>, SynthesisError>{
+        let mut values: Vec<_> = self.coeffs.drain(by..).collect();
+
+        for c in self.coeffs.into_iter() {
+            values.push(c);
+        }
+
+        Polynomial::from_values(values)
     }
 
     pub fn barycentric_evaluate_at(&self, worker: &Worker, g: F) -> Result<F, SynthesisError> {
