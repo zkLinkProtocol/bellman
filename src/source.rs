@@ -100,7 +100,7 @@ impl<'a> QueryDensity for &'a FullDensity {
 
 #[derive(Clone)]
 pub struct DensityTracker {
-    bv: BitVec,
+    pub(crate) bv: BitVec,
     total_density: usize
 }
 
@@ -128,6 +128,12 @@ impl DensityTracker {
         self.bv.push(false);
     }
 
+    pub fn pad(&mut self, to_size: usize) {
+        assert!(to_size >= self.bv.len());
+        let padding = to_size - self.bv.len();
+        self.bv.extend(BitVec::from_elem(padding, false));
+    }
+
     pub fn inc(&mut self, idx: usize) {
         if !self.bv.get(idx).unwrap() {
             self.bv.set(idx, true);
@@ -137,5 +143,36 @@ impl DensityTracker {
 
     pub fn get_total_density(&self) -> usize {
         self.total_density
+    }
+}
+
+#[derive(Clone)]
+pub struct DensityTrackerersChain {
+    pub(crate) tracker_0: DensityTracker,
+    pub(crate) tracker_1: DensityTracker,
+    total_density: usize
+}
+
+impl DensityTrackerersChain {
+    pub fn new(tracker_0: DensityTracker, tracker_1: DensityTracker) -> Self {
+        let total_density = tracker_0.total_density + tracker_1.total_density;
+
+        Self {
+            tracker_0,
+            tracker_1,
+            total_density
+        }
+    }
+}
+
+impl<'a> QueryDensity for &'a DensityTrackerersChain {
+    type Iter = std::iter::Chain<bit_vec::Iter<'a>, bit_vec::Iter<'a>>;
+
+    fn iter(self) -> Self::Iter {
+        self.tracker_0.bv.iter().chain(&self.tracker_1.bv)
+    }
+
+    fn get_query_size(self) -> Option<usize> {
+        Some(self.tracker_0.bv.len() + self.tracker_1.bv.len())
     }
 }

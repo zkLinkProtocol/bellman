@@ -399,10 +399,9 @@ mod test {
         use std::time::Instant;
         use crate::multicore::*;
         use crate::plonk::commitments::transparent::utils::*;
-        use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas};
+        use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas, OmegasInvBitreversed};
         use crate::plonk::commitments::transparent::fri::coset_combining_fri::FriPrecomputations;
         use crate::plonk::commitments::transparent::fri::coset_combining_fri::fri::*;
-        use crate::plonk::commitments::transparent::fri::coset_combining_fri::precomputation::OmegasInvBitreversed;
         use crate::plonk::commitments::transcript::*;
 
         const SIZE: usize = 1024;
@@ -451,10 +450,9 @@ mod test {
         use std::time::Instant;
         use crate::multicore::*;
         use crate::plonk::commitments::transparent::utils::*;
-        use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas};
+        use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas, OmegasInvBitreversed};
         use crate::plonk::commitments::transparent::fri::coset_combining_fri::FriPrecomputations;
         use crate::plonk::commitments::transparent::fri::coset_combining_fri::fri::*;
-        use crate::plonk::commitments::transparent::fri::coset_combining_fri::precomputation::OmegasInvBitreversed;
         use crate::plonk::commitments::transcript::*;
 
         const SIZE: usize = 1024;
