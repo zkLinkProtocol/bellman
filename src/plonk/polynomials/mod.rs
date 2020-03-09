@@ -67,6 +67,16 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     pub fn bitreverse_enumeration(&mut self, worker: &Worker) {
         let total_len = self.coeffs.len();
         let log_n = self.exp as usize;
+        if total_len <= worker.cpus {
+            for j in 0..total_len {
+                let rj = cooley_tukey_ntt::bitreverse(j, log_n);
+                if j < rj {
+                    self.coeffs.swap(j, rj);
+                }  
+            }
+
+            return;
+        }
 
         let r = &mut self.coeffs[..] as *mut [F];
 
@@ -1185,6 +1195,22 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         });
     }
 
+    pub fn sub_assign_scaled(&mut self, worker: &Worker, other: &Polynomial<F, Coefficients>, scaling: &F) {
+        assert!(self.coeffs.len() >= other.coeffs.len());
+
+        worker.scope(other.coeffs.len(), |scope, chunk| {
+            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+                scope.spawn(move |_| {
+                    for (a, b) in a.iter_mut().zip(b.iter()) {
+                        let mut tmp = *b;
+                        tmp.mul_assign(&scaling);
+                        a.sub_assign(&tmp);
+                    }
+                });
+            }
+        });
+    }
+
     pub fn evaluate_at(&self, worker: &Worker, g: F) -> F {
         let num_threads = worker.get_num_spawned_threads(self.coeffs.len());
         let mut subvalues = vec![F::zero(); num_threads];
@@ -1708,11 +1734,14 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut result = vec![F::zero(); self.coeffs.len() + 1];
         result[0] = F::one();
 
-        let num_threads = worker.get_num_spawned_threads(self.coeffs.len());
+        let work_chunk = &mut result[1..];
+        assert!(work_chunk.len() == self.coeffs.len());
+
+        let num_threads = worker.get_num_spawned_threads(work_chunk.len());
         let mut subproducts = vec![F::one(); num_threads as usize];
 
-        worker.scope(self.coeffs.len(), |scope, chunk| {
-            for ((g, c), s) in result[1..].chunks_mut(chunk)
+        worker.scope(work_chunk.len(), |scope, chunk| {
+            for ((g, c), s) in work_chunk.chunks_mut(chunk)
                         .zip(self.coeffs.chunks(chunk))
                         .zip(subproducts.chunks_mut(1)) {
                 scope.spawn(move |_| {
@@ -1736,10 +1765,10 @@ impl<F: PrimeField> Polynomial<F, Values> {
             *s = tmp;
         }
 
-        let first_chunk_len = worker.get_chunk_size(self.coeffs.len());
+        let first_chunk_len = worker.get_chunk_size(work_chunk.len());
 
-        worker.scope(result[(first_chunk_len+1)..].len(), |scope, chunk| {
-            for (g, s) in result[(first_chunk_len+1)..].chunks_mut(chunk)
+        worker.scope(work_chunk[first_chunk_len..].len(), |scope, chunk| {
+            for (g, s) in work_chunk[first_chunk_len..].chunks_mut(chunk)
                         .zip(subproducts.chunks(1)) {
                 scope.spawn(move |_| {
                     for g in g.iter_mut() {
@@ -1916,6 +1945,22 @@ impl<F: PrimeField> Polynomial<F, Values> {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.sub_assign(&b);
+                    }
+                });
+            }
+        });
+    }
+
+    pub fn sub_assign_scaled(&mut self, worker: &Worker, other: &Polynomial<F, Values>, scaling: &F) {
+        assert_eq!(self.coeffs.len(), other.coeffs.len());
+
+        worker.scope(other.coeffs.len(), |scope, chunk| {
+            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+                scope.spawn(move |_| {
+                    for (a, b) in a.iter_mut().zip(b.iter()) {
+                        let mut tmp = *b;
+                        tmp.mul_assign(&scaling);
+                        a.sub_assign(&tmp);
                     }
                 });
             }

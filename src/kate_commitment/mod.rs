@@ -323,6 +323,59 @@ pub fn commit_using_values<E: Engine>(
     Ok(res.into_affine())
 }
 
+pub fn commit_using_raw_values<E: Engine>(
+    values: &[E::Fr],
+    crs: &Crs<E, CrsForLagrangeForm>,
+    worker: &Worker
+) -> Result<E::G1Affine, SynthesisError> {
+    assert_eq!(values.len().next_power_of_two(), crs.g1_bases.len());
+    println!("Committing raw values over domain");
+    let scalars_repr = elements_into_representations::<E>(
+        &worker,
+        &values
+    )?;
+
+    let res = multiexp::dense_multiexp::<E::G1Affine>(
+        &worker,
+        &crs.g1_bases[0..values.len()],
+        &scalars_repr
+    )?;
+
+    Ok(res.into_affine())
+}
+
+use crate::source::QueryDensity;
+
+pub fn commit_using_values_with_density<E: Engine, D, Q> (
+    values: &[E::Fr],
+    density: D,
+    crs: &Crs<E, CrsForLagrangeForm>,
+    worker: &Worker
+) -> Result<E::G1Affine, SynthesisError> 
+    where for<'a> &'a Q: QueryDensity,
+        D: Send + Sync + 'static + Clone + AsRef<Q>
+{
+    use futures::Future;
+
+    println!("Committing values over domain with density");
+    // assert_eq!(values.len(), crs.g1_bases.len());
+    let scalars_repr = elements_into_representations::<E>(
+        &worker,
+        &values
+    )?;
+
+    // scalars_repr.resize(crs.g1_bases.len(), <E::Fr as PrimeField>::Repr::default());
+
+    let res = multiexp::multiexp(
+        &worker, 
+        (crs.g1_bases.clone(), 0), 
+        density, 
+        Arc::new(scalars_repr)
+    ).wait()?;
+
+    Ok(res.into_affine())
+}
+
 pub fn commit_using_values_on_coset<E: Engine>(
     poly: &Polynomial<E::Fr, Values>,
     crs: &Crs<E, CrsForLagrangeFormOnCoset>,
@@ -564,7 +617,8 @@ pub fn is_valid_multiopening<E: Engine>(
         let gen_by_opening_value = E::G1Affine::one().mul(v.into_repr());
         pair_with_1_part.sub_assign(&gen_by_opening_value);
         
-        pair_with_1_part = pair_with_1_part.into_affine().mul(this_challenge.into_repr());
+        pair_with_1_part.mul_assign(this_challenge.into_repr());
+        aggregation.add_assign(&pair_with_1_part);
 
         this_challenge.mul_assign(&challenge);
     }
@@ -591,7 +645,7 @@ pub fn is_valid_multiopening<E: Engine>(
     false
 }
 
-fn divide_single<E: Engine>(
+pub(crate) fn divide_single<E: Engine>(
     poly: &[E::Fr],
     opening_point: E::Fr,
 ) -> Vec<E::Fr> {

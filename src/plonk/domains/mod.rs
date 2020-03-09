@@ -1,5 +1,6 @@
 use crate::pairing::ff::PrimeField;
 use crate::SynthesisError;
+use crate::worker::Worker;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Domain<F: PrimeField> {
@@ -60,4 +61,28 @@ impl<F: PrimeField> Domain<F> {
 
         (next_index, next_size)
     }
+}
+
+pub(crate) fn materialize_domain_elements_with_natural_enumeration<F: PrimeField>(
+    domain: &Domain<F>, 
+    worker: &Worker
+) -> Vec<F> {
+    let mut values = vec![F::zero(); domain.size as usize];
+    let generator = domain.generator;
+
+    worker.scope(values.len(), |scope, chunk| {
+        for (i, values) in values.chunks_mut(chunk).enumerate()
+        {
+            scope.spawn(move |_| {
+                let mut current_power = generator.pow(&[(i*chunk) as u64]);
+
+                for p in values {
+                    *p = current_power;
+                    current_power.mul_assign(&generator);
+                }
+            });
+        }
+    });
+
+    values
 }

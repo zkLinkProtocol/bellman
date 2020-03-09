@@ -2,6 +2,7 @@ use blake2s_simd::{Params, State};
 use crate::pairing::ff::{PrimeField, PrimeFieldRepr};
 
 pub mod prng;
+pub mod keccak_transcript;
 
 lazy_static! {
     static ref TRANSCRIPT_BLAKE2S_PARAMS: State = {
@@ -24,6 +25,7 @@ pub trait Transcript<F: PrimeField>: Prng<F> + Sized + Clone + 'static {
     fn commit_bytes(&mut self, bytes: &[u8]);
     fn commit_field_element(&mut self, element: &F);
     fn get_challenge_bytes(&mut self) -> Vec<u8>;
+    fn commit_fe<FF: PrimeField>(&mut self, element: &FF);
 }
 
 #[derive(Clone)]
@@ -125,5 +127,13 @@ impl<F: PrimeField> Transcript<F> for Blake2sTranscript<F> {
         // println!("Outputting {:?}", value);
 
         Vec::from(&value[..])
+    }
+
+    fn commit_fe<FF: PrimeField>(&mut self, element: &FF) {
+        let repr = element.into_repr();
+        let mut bytes: Vec<u8> = vec![0u8; Self::REPR_SIZE];
+        repr.write_be(&mut bytes[..]).expect("should write");
+        
+        self.state.update(&bytes[..]);
     }
 }
