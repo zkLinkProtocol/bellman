@@ -28,6 +28,15 @@ use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
 use crate::byteorder::BigEndian;
 
+impl<E: Engine, T: CrsType> PartialEq for Crs<E, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.g1_bases == other.g1_bases 
+        && self.g2_monomial_bases == other.g2_monomial_bases
+    }
+}
+
+impl<E: Engine, T: CrsType> Eq for Crs<E, T> { }
+
 impl<E: Engine, T: CrsType> Crs<E, T> {
     pub fn write<W: Write>(
         &self,
@@ -1020,6 +1029,18 @@ mod test {
     #[test]
     fn test_open_ignition_setup() {
         make_crs_from_ignition_transcript("/Users/alexvlasov/Downloads/setup").unwrap();
+    }
+
+    #[test]
+    fn test_crs_serialization() {
+        let worker = Worker::new();
+        let mut buffer = Vec::with_capacity(1<<28);
+        let crs = Crs::<Bn256, CrsForMonomialForm>::crs_42(1024, &worker);
+        crs.write(&mut buffer).expect("must serialize CRS");
+
+        let new = Crs::<Bn256, CrsForMonomialForm>::read(&buffer[..]).expect("must deserialize CRS");
+
+        assert!(new == crs);
     }
 }
 
