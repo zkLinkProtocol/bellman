@@ -756,10 +756,6 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
         }
 
         if i == 0 {
-            // skip first point (irrelevant for us)
-            // let mut tmp = [0u8; 128];
-            // reader.read_exact(&mut tmp).expect("must skip 64 bytes of first G2 point");
-
             // read G2
             {
                 for k in 0..4 {
@@ -835,76 +831,6 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
             // read G2
             let mut tmp = [0u8; 128];
             reader.read_exact(&mut tmp).expect("must skip 128 bytes of irrelevant G2 point");
-
-            // for k in 0..4 {
-            //     fq_repr.as_mut()[k] = reader.read_u64::<BigEndian>().expect("must read u64");
-            // }
-
-            // let x_c0 = Fq::from_repr(fq_repr).expect("must be valid field element encoding");
-
-            // for k in 0..4 {
-            //     fq_repr.as_mut()[k] = reader.read_u64::<BigEndian>().expect("must read u64");
-            // }
-
-            // let x_c1 = Fq::from_repr(fq_repr).expect("must be valid field element encoding");
-
-            // for k in 0..4 {
-            //     fq_repr.as_mut()[k] = reader.read_u64::<BigEndian>().expect("must read u64");
-            // }
-
-            // let y_c0 = Fq::from_repr(fq_repr).expect("must be valid field element encoding");
-
-            // for k in 0..4 {
-            //     fq_repr.as_mut()[k] = reader.read_u64::<BigEndian>().expect("must read u64");
-            // }
-
-            // let y_c1 = Fq::from_repr(fq_repr).expect("must be valid field element encoding");
-
-            // let x = Fq2 {
-            //     c0: x_c0,
-            //     c1: x_c1
-            // };
-
-            // let y = Fq2 {
-            //     c0: y_c0,
-            //     c1: y_c1
-            // };
-
-            // {
-            //     let mut lhs = y;
-            //     lhs.square();
-
-            //     let mut rhs = x;
-            //     rhs.square();
-            //     rhs.mul_assign(&x);
-            //     rhs.add_assign(&b_coeff_fq2);
-
-            //     assert!(lhs == rhs);
-            // }
-
-            // let g2 = <Bn256 as Engine>::G2Affine::from_xy_unchecked(x, y);
-
-            // g2_bases.push(g2);
-
-            // // sanity check by using pairing
-            // {        
-            //     // check e(g1, g2^x) == e(g1^{x}, g2)
-            //     let valid = Bn256::final_exponentiation(
-            //         &Bn256::miller_loop(
-            //             &[
-            //                 (&g1_bases[0].prepare(), &g2_bases[1].prepare())
-            //             ]
-            //         )
-            //     ).unwrap() == Bn256::final_exponentiation(
-            //         &Bn256::miller_loop(
-            //             &[
-            //                 (&g1_bases[1].prepare(), &g2_bases[0].prepare())
-            //             ]
-            //         )
-            //     ).unwrap();
-        
-            //     assert!(valid);
-            // }
         }
 
         // read to end 
