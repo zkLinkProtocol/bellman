@@ -174,24 +174,26 @@ impl TranspilationVariant {
 
 pub fn read_transpilation_hints<R: Read>(
     mut reader: R
-) -> std::io::Result<Vec<TranspilationVariant>> {
+) -> std::io::Result<Vec<(usize, TranspilationVariant)>> {
     let num_hints = reader.read_u64::<BigEndian>()?;
     let mut hints = Vec::with_capacity(num_hints as usize);
 
     for _ in 0..num_hints {
+        let idx = reader.read_u64::<BigEndian>()?;
         let hint = TranspilationVariant::read(&mut reader)?;
-        hints.push(hint);
+        hints.push((idx as usize, hint));
     }
 
     Ok(hints)
 }
 
 pub fn write_transpilation_hints<W: Write>(
-    hints: &Vec<TranspilationVariant>,
+    hints: &Vec<(usize, TranspilationVariant)>,
     mut writer: W
 ) -> std::io::Result<()> {
     writer.write_u64::<BigEndian>(hints.len() as u64)?;
-    for h in hints.iter() {
+    for (idx, h) in hints.iter() {
+        writer.write_u64::<BigEndian>(*idx as u64)?;
         h.write(&mut writer)?;
     }
 
