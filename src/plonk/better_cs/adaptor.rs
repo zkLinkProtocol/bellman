@@ -329,7 +329,7 @@ fn evaluate_over_plonk_variables<E: Engine, P: PlonkConstraintSystemParams<E>, C
     //     final_value.mul_assign(&multiplier);
     // }
 
-    final_value.sub_assign(&free_term_constant);
+    final_value.add_assign(&free_term_constant);
 
     Ok(final_value)
 }
@@ -353,7 +353,7 @@ fn evaluate_over_plonk_variables_and_coeffs<E: Engine, P: PlonkConstraintSystemP
     //     final_value.mul_assign(&multiplier);
     // }
 
-    final_value.sub_assign(&free_term_constant);
+    final_value.add_assign(&free_term_constant);
 
     Ok(final_value)
 }
@@ -365,7 +365,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
     free_term_constant: E::Fr,
     collapse_into_single_variable: bool,
     scratch_space: &mut TranspilationScratchSpace<E>,
-) -> (Option<PlonkVariable>, E::Fr, TranspilationVariant) {
+) -> Result<(Option<PlonkVariable>, E::Fr, TranspilationVariant), SynthesisError> {
     assert!(P::CAN_ACCESS_NEXT_TRACE_STEP, "Transliper only works for proof systems with access to next step");
 
     assert!(scratch_space.scratch_space_for_vars.len() == 0);
@@ -387,7 +387,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 // we try to make a multiplication gate
                 let (var, coeff) = lc.0[0];
 
-                return (Some(convert_variable(var)), coeff, TranspilationVariant::LeaveAsSingleVariable);
+                return Ok((Some(convert_variable(var)), coeff, TranspilationVariant::LeaveAsSingleVariable));
             }
         } 
     }
@@ -411,7 +411,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
         let may_be_new_value = evaluate_lc::<E, P, CS>(&*cs, &lc, free_term_constant);
         let new_var = cs.alloc(|| {
             may_be_new_value
-        }).expect("must allocate a new variable to collapse LC");
+        })?; // .expect("must allocate a new variable to collapse LC");
 
         Some(new_var)
     } else {
@@ -475,7 +475,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
             false, 
             &*scratch_space.scratch_space_for_vars, 
             &*scratch_space.scratch_space_for_coeffs
-        ).expect("must make a gate to form an LC");
+        )?; // .expect("must make a gate to form an LC when transpiling into a single gate");
 
         scratch_space.clear();
 
@@ -483,7 +483,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 
         let hint = TranspilationVariant::IntoSingleAdditionGate;
 
-        return (final_variable, one_fr, hint);
+        return Ok((final_variable, one_fr, hint));
     } else {
         // we can take:
         // - STATE_WIDTH variables to form the first gate and place their sum into the last wire of the next gate
@@ -515,6 +515,8 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 }
             }
 
+            // for a P::STATE_WIDTH variables we make a corresponding LC
+            // ~ a + b + c + d + constant. That will be equal to d_next
             let may_be_new_intermediate_value = evaluate_over_plonk_variables_and_coeffs::<E, P, CS>(
                 &*cs,
                 &*scratch_space.scratch_space_for_vars,
@@ -526,20 +528,20 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 
             let new_intermediate_var = cs.alloc(|| {
                 may_be_new_intermediate_value
-            }).expect("must allocate a new intermediate variable to collapse LC");
+            })?; //.expect("must allocate a new intermediate variable to collapse LC");
 
             // no multiplication coefficient,
             // but -1 to link to the next trace step
-            scratch_space.scratch_space_for_coeffs.push(zero_fr);
-            scratch_space.scratch_space_for_coeffs.push(free_term_constant);
-            scratch_space.scratch_space_for_coeffs.push(minus_one_fr);
+            scratch_space.scratch_space_for_coeffs.push(zero_fr); // no multiplication
+            scratch_space.scratch_space_for_coeffs.push(free_term_constant); // add constant
+            scratch_space.scratch_space_for_coeffs.push(minus_one_fr); // -1 for a d_next
 
             allocate_into_cs(
                 cs, 
                 true, 
                 &*scratch_space.scratch_space_for_vars, 
                 &*scratch_space.scratch_space_for_coeffs
-            ).expect("must make a gate to form an LC");
+            )?; // .expect("must make a gate to form an first gate when transpiling LC");
 
             // cs.new_gate((a_var, b_var, c_var), [c0, c1, c2, zero_fr, free_term_constant, minus_one_fr]).expect("must make a gate to form an LC");
 
@@ -582,12 +584,12 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 &*cs,
                 &*scratch_space.scratch_space_for_vars,
                 &*scratch_space.scratch_space_for_coeffs, 
-                free_term_constant
+                zero_fr
             );
 
             let new_intermediate_var = cs.alloc(|| {
                 may_be_new_intermediate_value
-            }).expect("must allocate a new intermediate variable to collapse LC");
+            })?; // .expect("must allocate a new intermediate variable to collapse LC");
 
             // no multiplication coefficient and no constant now,
             // but -1 to link to the next trace step
@@ -600,7 +602,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 true, 
                 &*scratch_space.scratch_space_for_vars, 
                 &*scratch_space.scratch_space_for_coeffs
-            ).expect("must make a gate to form an LC");
+            )?; //.expect("must make an intermediate gate to transpile a LC");
 
             // cs.new_gate(
             //     (a_var, b_var, c_var), 
@@ -614,9 +616,9 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 
         // final step - we just make a single gate, last one
         {
-            scratch_space.scratch_space_for_vars.resize(P::STATE_WIDTH, cs.get_dummy_variable());
-            scratch_space.scratch_space_for_booleans.resize(P::STATE_WIDTH, false);
-            scratch_space.scratch_space_for_coeffs.resize(P::STATE_WIDTH, zero_fr);
+            scratch_space.scratch_space_for_vars.resize(P::STATE_WIDTH-1, cs.get_dummy_variable());
+            scratch_space.scratch_space_for_booleans.resize(P::STATE_WIDTH-1, false);
+            scratch_space.scratch_space_for_coeffs.resize(P::STATE_WIDTH-1, zero_fr);
     
             // we can consume and never have leftovers
     
@@ -627,11 +629,13 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                     scratch_space.scratch_space_for_coeffs[idx] = coeff;
                     scratch_space.scratch_space_for_vars[idx] = convert_variable(var);
                     idx += 1;
-                    if idx == P::STATE_WIDTH {
-                        break;
-                    }
                 }
             }
+
+            assert!(idx < P::STATE_WIDTH);
+            // append d_next
+            scratch_space.scratch_space_for_vars.push(next_step_var_in_chain);
+            scratch_space.scratch_space_for_coeffs.push(one_fr);
 
             // no multiplication coefficient, no constant, no next step
             scratch_space.scratch_space_for_coeffs.push(zero_fr);
@@ -643,7 +647,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 false, 
                 &*scratch_space.scratch_space_for_vars, 
                 &*scratch_space.scratch_space_for_coeffs
-            ).expect("must make a final gate to form an LC");
+            )?; //.expect("must make a final gate to form an LC");
 
             scratch_space.clear();
         }
@@ -652,7 +656,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 
         let hint = TranspilationVariant::IntoMultipleAdditionGates;
 
-        return (final_variable, one_fr, hint);   
+        return Ok((final_variable, one_fr, hint));   
     }
 }
 
@@ -713,6 +717,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, P> f
         _this_step_coeffs: P::ThisTraceStepCoefficients,
         _next_step_coeffs: P::NextTraceStepCoefficients
     ) -> Result<(), SynthesisError> {
+        // Transpiler does NOT allocate any gates himself
         Ok(())
     }
 
@@ -751,6 +756,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, 
         _this_step_coeffs: P::ThisTraceStepCoefficients,
         _next_step_coeffs: P::NextTraceStepCoefficients
     ) -> Result<(), SynthesisError> {
+        // Transpiler does NOT allocate any gates himself
         Ok(())
     }
 
@@ -875,7 +881,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     free_constant_term,
                     false,
                     &mut space
-                );
+                ).expect("must allocate LCs as gates for constraint like c0 * LC = c1");
 
                 self.transpilation_scratch_space = Some(space);
 
@@ -919,7 +925,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     a_constant_term,
                     true,
                     &mut space
-                );
+                ).expect("must allocate A LC as gates for constraint like LC * LC = c1");
 
                 let (_new_b_var, _, hint_b) = enforce_lc_as_gates(
                     self,
@@ -928,7 +934,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     b_constant_term,
                     true,
                     &mut space
-                );
+                ).expect("must allocate B LC as gates for constraint like LC * LC = c1");
 
                 self.transpilation_scratch_space = Some(space);
 
@@ -972,7 +978,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                         zero_fr,
                         false,
                         &mut space
-                    );
+                    ).expect("must allocate LCs as gates for constraint like 0 = LC_C");
 
                     self.transpilation_scratch_space = Some(space);
 
@@ -1017,7 +1023,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     free_constant_term,
                     false,
                     &mut space
-                );
+                ).expect("must allocate LCs as gates for constraint like c0 * LC = LC");
 
                 self.transpilation_scratch_space = Some(space);
 
@@ -1047,7 +1053,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     free_constant_term,
                     false,
                     &mut space
-                );
+                ).expect("must allocate LCs as gates for constraint like c0 * c1 = LC");
 
                 self.transpilation_scratch_space = Some(space);
 
@@ -1090,7 +1096,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     a_constant_term,
                     true,
                     &mut space
-                );
+                ).expect("must allocate A LC as gates for constraint like LC * LC = LC");
                 let (_new_b_var, _, hint_b) = enforce_lc_as_gates(
                     self,
                     b_lc,
@@ -1098,7 +1104,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     b_constant_term,
                     true,
                     &mut space
-                );
+                ).expect("must allocate B LC as gates for constraint like LC * LC = LC");
                 let (_new_c_var, _, hint_c) = enforce_lc_as_gates(
                     self,
                     c_lc,
@@ -1106,7 +1112,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     c_constant_term,
                     true,
                     &mut space
-                );
+                ).expect("must allocate C LC as gates for constraint like LC * LC = LC");
 
                 self.transpilation_scratch_space = Some(space);
 
@@ -1777,11 +1783,9 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                             a_constant_term,
                             true,
                             &mut space
-                        );
+                        ).expect("must allocate A variable to transpile A LC for multiplication gate");
 
                         assert!(a_coeff == one_fr);
-
-                        // q_m.mul_assign(&a_coeff);
 
                         assert!(_variant == hint);
 
@@ -1807,11 +1811,9 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                             b_constant_term,
                             true,
                             &mut space
-                        );
+                        ).expect("must allocate B variable to transpile B LC for multiplication gate");
 
                         assert!(b_coeff == one_fr);
-
-                        // q_m.mul_assign(&b_coeff);
 
                         assert!(_variant == hint);
 
@@ -1837,11 +1839,9 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                             c_constant_term,
                             true,
                             &mut space
-                        );
+                        ).expect("must allocate C variable to transpile C LC for multiplication gate");
 
                         assert!(c_coeff == one_fr);
-
-                        // q_c.mul_assign(&c_coeff);
 
                         assert!(_variant == hint);
 
@@ -1892,8 +1892,8 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                     // ); //.expect("must make a multiplication gate with C being constant");
 
                     // if t.is_err() {
-                    //     // let ann: String = _ann().into();
-                    //     // println!("Enforcing {}", ann);
+                    //     let ann: String = _ann().into();
+                    //     println!("Enforcing {}", ann);
                     //     println!("Hint = {:?}", _hint);
                     //     panic!("Unsatisfied multiplication gate with C being constant");
                     // }
@@ -1917,6 +1917,13 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                     space.scratch_space_for_vars[1] = b_var;
                     space.scratch_space_for_vars[2] = c_var;
 
+                    allocate_into_cs(
+                        self.cs,
+                        false, 
+                        &*space.scratch_space_for_vars,
+                        &*space.scratch_space_for_coeffs
+                    ).expect("must make a plain multiplication gate");
+
 
                     // let t = self.cs.new_gate(
                     //     (a_var, b_var, c_var), 
@@ -1924,8 +1931,8 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                     // ); //.expect("must make a multiplication gate");
 
                     // if t.is_err() {
-                    //     // let ann: String = _ann().into();
-                    //     // println!("Enforcing {}", ann);
+                    //     let ann: String = _ann().into();
+                    //     println!("Enforcing {}", ann);
                     //     println!("A constant term = {}", a_constant_term);
                     //     println!("B constant term = {}", b_constant_term);
                     //     println!("C constant term = {}", c_constant_term);
@@ -1978,7 +1985,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                         free_constant_term,
                         false,
                         &mut space
-                    );
+                    ).expect("must allocate variable to transpile LC == 0 gate");
 
                     assert!(hint == _variant);
                 } else {
@@ -2006,6 +2013,11 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                 unreachable!()
             },
             TranspilationVariant::MergeLinearCombinations(merge_variant, merge_hint) => {
+                // let ann: String = _ann().into();
+                // if ann.contains("unpacking constraint") {
+                //     println!("{}", ann);
+                // }
+
                 let multiplier = if a_is_constant {
                     a_constant_term
                 } else if b_is_constant {
@@ -2013,8 +2025,6 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                 } else {
                     unreachable!()
                 };
-
-                // assert!(coeff == one_fr);
 
                 let mut free_constant_term;
 
@@ -2076,7 +2086,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                             free_constant_term,
                             false,
                             &mut space
-                        );
+                        ).expect("must allocate gates to transpile merging of LCs");
 
                         assert!(_coeff == one_fr);
 
