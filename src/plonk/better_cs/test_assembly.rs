@@ -21,6 +21,8 @@ pub struct TestAssembly<E: Engine, P: PlonkConstraintSystemParams<E>> {
 
     is_finalized: bool,
 
+    next_step_leftover_from_previous_gate: Option<(E::Fr, P::NextTraceStepCoefficients)>,
+
     _marker: std::marker::PhantomData<P>
 }
 
@@ -66,7 +68,25 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> ConstraintSystem<E, P> for Te
         this_step_coeffs: P::ThisTraceStepCoefficients,
         next_step_coeffs: P::NextTraceStepCoefficients
     ) -> Result<(), SynthesisError> {
-        // check that gate is satisfied
+        // check that leftover of this gate is satisfied
+
+        if let Some((value_leftover, coeffs)) = self.next_step_leftover_from_previous_gate.take() {
+            let mut leftover = value_leftover;
+            for (&var, coeff) in variables.as_ref().iter().rev()
+                            .zip(coeffs.as_ref().iter()) 
+            {
+                let mut value = self.get_value(var)?;
+                value.mul_assign(&coeff);
+
+                leftover.add_assign(&value);
+            }
+
+            if leftover.is_zero() == false {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+        }
+
+        // now check for THIS gate
 
         let mut gate_value = E::Fr::zero();
 
@@ -85,26 +105,37 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> ConstraintSystem<E, P> for Te
         // multiplication
         let mut q_m = *(this_step_coeffs_iter.next().unwrap());
         q_m.mul_assign(&self.get_value(variables.as_ref()[0])?);
-        q_m.mul_assign(&self.get_value(variables.as_ref()[0])?);
+        q_m.mul_assign(&self.get_value(variables.as_ref()[1])?);
         gate_value.add_assign(&q_m);
 
         // constant
         gate_value.add_assign(this_step_coeffs_iter.next().unwrap());
 
         assert!(next_step_coeffs.as_ref().len() <= 1);
+        if next_step_coeffs.as_ref().len() != 0 {
+            assert!(P::CAN_ACCESS_NEXT_TRACE_STEP == true);
+            if next_step_coeffs.as_ref()[0].is_zero() == false {
+                self.next_step_leftover_from_previous_gate = Some((gate_value, next_step_coeffs));
+            }
+            // assert!(self.next_step_vars.is_some());
+            // let next_step_vars = self.next_step_vars.take().expect("must have some next step variables")
+            // for (&var, coeff) in variables.as_ref().iter().rev()
+            //                 .zip(next_step_coeffs.as_ref().iter()) 
+            // {
+            //     let mut value = self.get_value(var)?;
+            //     value.mul_assign(&coeff);
 
-        for (&var, coeff) in variables.as_ref().iter().rev()
-                            .zip(next_step_coeffs.as_ref().iter()) 
-        {
-            let mut value = self.get_value(var)?;
-            value.mul_assign(&coeff);
-
-            gate_value.add_assign(&value);
+            //     gate_value.add_assign(&value);
+            // }
+        } else {
+            if gate_value.is_zero() == false {
+                return Err(SynthesisError::Unsatisfiable);
+            }
         }
 
-        if gate_value.is_zero() == false {
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        
+
+        
         
         self.n += 1;
 
@@ -152,6 +183,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> TestAssembly<E, P> {
 
             is_finalized: false,
 
+            next_step_leftover_from_previous_gate: None,
+
             _marker: std::marker::PhantomData
         };
 
@@ -173,6 +206,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> TestAssembly<E, P> {
 
             is_finalized: false,
 
+            next_step_leftover_from_previous_gate: None,
+
             _marker: std::marker::PhantomData
         };
 
@@ -182,6 +217,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> TestAssembly<E, P> {
     // return variable that is not in a constraint formally, but has some value
     fn dummy_variable(&self) -> Variable {
         Variable(Index::Aux(0))
+    }
+
+    pub fn is_well_formed(&self) -> bool {
+        // check that last gate does not chain further!
+        self.next_step_leftover_from_previous_gate.is_none()
     }
 
     // pub fn is_satisfied(&self, in_a_middle: bool) -> bool {
