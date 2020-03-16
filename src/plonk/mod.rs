@@ -51,6 +51,27 @@ pub fn is_satisfied<E: Engine, C: crate::Circuit<E>>(
     adapted_curcuit.synthesize(&mut assembly)
 }
 
+pub fn is_satisfied_using_one_shot_check<E: Engine, C: crate::Circuit<E>>(
+    circuit: C,
+    hints: &Vec<(usize, TranspilationVariant)>
+) -> Result<(), SynthesisError> {
+    use crate::plonk::better_cs::cs::Circuit;
+
+    let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
+
+    let mut assembly = self::better_cs::one_shot_test_assembly::OneShotTestAssembly::new();
+
+    adapted_curcuit.synthesize(&mut assembly)?;
+
+    let valid = assembly.is_satisfied(false);
+
+    if valid {
+        return Ok(());
+    } else {
+        return Err(SynthesisError::Unsatisfiable);
+    }
+}
+
 pub fn setup<E: Engine, C: crate::Circuit<E>>(
     circuit: C,
     hints: &Vec<(usize, TranspilationVariant)>
