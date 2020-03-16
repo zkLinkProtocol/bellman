@@ -74,31 +74,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> ConstraintSystem<E, P> for Pr
 
         let input_var = Variable(Index::Input(index));
 
-        self.n += 1; // there is an implicit gate to constraint the input
+        // there is an implicit gate to constraint the input
+        // and it's handled during the proving 
+        self.n += 1; 
 
         Ok(input_var)
 
     }
-
-    // // allocate an abstract gate
-    // fn new_gate(&mut self, 
-    //     variables: P::StateVariables, 
-    //     _this_step_coeffs: P::ThisTraceStepCoefficients,
-    //     _next_step_coeffs: P::NextTraceStepCoefficients
-    // ) -> Result<(), SynthesisError>
-    // {
-    //     for (idx, &v) in variables.as_ref().iter().enumerate() {
-    //         self.aux_densities[idx].add_element();
-    //         let val = self.get_value(v)?;
-    //         if val.is_zero() == false {
-    //             self.aux_densities[idx].inc(self.n);
-    //         }
-    //         self.wire_assignments[idx].push(val);
-    //     }
-    //     self.n += 1;
-
-    //     Ok(())
-    // }
 
     // allocate an abstract gate
     fn new_gate(&mut self, 
@@ -1054,6 +1036,30 @@ mod test {
                 [zero]
             )?;
 
+            // 2d - c == 0
+
+            cs.new_gate(
+                [d, c, dummy, dummy], 
+                [two, negative_one, zero, zero, zero, zero],
+                [zero]
+            )?;
+
+            // make a gate that affects next step
+
+            // 10a + 10b - c - (something in d on next step) == 0, then
+            // d + 0 + 0 - d = 0
+
+            cs.new_gate(
+                [a, b, c, dummy], 
+                [ten, ten, negative_one, zero, zero, zero],
+                [negative_one]
+            )?;
+
+            cs.new_gate(
+                [d, dummy, dummy, d], 
+                [one, zero, zero, negative_one, zero, zero],
+                [zero]
+            )?;
 
             Ok(())
         }

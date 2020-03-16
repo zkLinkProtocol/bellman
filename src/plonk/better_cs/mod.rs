@@ -5,6 +5,7 @@ pub mod generator;
 pub mod keys;
 pub mod prover;
 pub mod verifier;
+pub mod one_shot_test_assembly;
 
 mod utils;
 

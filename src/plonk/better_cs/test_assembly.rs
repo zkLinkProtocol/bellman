@@ -56,7 +56,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> ConstraintSystem<E, P> for Te
 
         let input_var = Variable(Index::Input(index));
 
-        // println!("Allocated input Input({}) with value {}", index, value);
+        self.n += 1;
 
         Ok(input_var)
 

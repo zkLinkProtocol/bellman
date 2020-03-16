@@ -12,48 +12,6 @@ use super::cs::*;
 use super::keys::SetupPolynomials;
 use super::utils::{make_non_residues};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Gate3<F: PrimeField> {
-    variables: [Variable; 3],
-    coefficients: [F; 6],
-}
-
-impl<F: PrimeField> Gate3<F> {
-    const NUM_VARIABLES: usize = 3;
-    const NUM_COEFFICIENTS: usize = Self::NUM_VARIABLES * 2;
-
-    pub fn new_gate(
-        variables: [Variable; 3], 
-        coeffs: [F; 6]
-    ) -> Self {
-        Self {
-            variables: variables,
-            coefficients: coeffs
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Gate4<F: PrimeField> {
-    variables: [Variable; 3],
-    coefficients: [F; 6],
-}
-
-impl<F: PrimeField> Gate4<F> {
-    const NUM_VARIABLES: usize = 3;
-    const NUM_COEFFICIENTS: usize = Self::NUM_VARIABLES * 2;
-
-    pub fn new_gate(
-        variables: [Variable; 3], 
-        coeffs: [F; 6]
-    ) -> Self {
-        Self {
-            variables: variables,
-            coefficients: coeffs
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct GeneratorAssembly<E: Engine, P: PlonkConstraintSystemParams<E>> {
     m: usize,
