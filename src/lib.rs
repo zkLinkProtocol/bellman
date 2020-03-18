@@ -44,6 +44,7 @@ pub mod kate_commitment;
 mod group;
 mod source;
 mod multiexp;
+mod prefetch;
 
 #[cfg(test)]
 mod tests;

@@ -189,25 +189,17 @@ impl<E: Engine> GeneratorAssembly4WithNextStep<E> {
         let mut q_d_next = vec![E::Fr::zero(); total_num_gates];
 
         // expect a small number of inputs
-        for (((((((gate, q_a), q_b), q_c), q_d), q_m), q_const), q_d_next) in self.input_gates.iter()
+        for (gate, q_a) in self.input_gates.iter()
                                             .zip(q_a.iter_mut())
-                                            .zip(q_b.iter_mut())
-                                            .zip(q_c.iter_mut())
-                                            .zip(q_d.iter_mut())
-                                            .zip(q_m.iter_mut())
-                                            .zip(q_const.iter_mut())
-                                            .zip(q_d_next.iter_mut())
         {
+            let mut tmp = gate.1[0];
+            tmp.negate();
+            // -a + const = 0, where const will come from verifier
+            assert_eq!(tmp, E::Fr::one());
             *q_a = gate.1[0];
-            *q_b = gate.1[1];
-            *q_c = gate.1[2];
-            *q_d = gate.1[3];
-            *q_m = gate.1[4];
-            *q_const = gate.1[5];
-
-            *q_d_next = gate.2[0];
         }
 
+        // now fill the aux gates
 
         let num_input_gates = self.input_gates.len();
         let q_a_aux = &mut q_a[num_input_gates..];
@@ -280,18 +272,21 @@ impl<E: Engine> GeneratorAssembly4WithNextStep<E> {
         // gate_idx is zero-enumerated here
         for (gate_idx, (vars, _, _)) in self.input_gates.iter().chain(&self.aux_gates).enumerate()
         {
-            for (var_index, v) in vars.iter().enumerate() {
+            for (var_index_in_gate, v) in vars.iter().enumerate() {
                 match v {
                     Variable(Index::Aux(0)) => {
                         // Dummy variables do not participate in the permutation
                     },
+                    Variable(Index::Input(0)) => {
+                        unreachable!("There must be no input with index 0");
+                    },
                     Variable(Index::Input(index)) => {
-                        let i = *index;
-                        partitions[i].push((var_index, gate_idx+1));
+                        let i = *index; // inputs are [1, num_inputs]
+                        partitions[i].push((var_index_in_gate, gate_idx+1));
                     },
                     Variable(Index::Aux(index)) => {
-                        let i = index + num_inputs;
-                        partitions[i].push((var_index, gate_idx+1));
+                        let i = index + num_inputs; // aux are [num_inputs + 1, ..]
+                        partitions[i].push((var_index_in_gate, gate_idx+1));
                     },
                 }
             }
@@ -342,6 +337,12 @@ impl<E: Engine> GeneratorAssembly4WithNextStep<E> {
         for (i, partition) in partitions.into_iter().enumerate().skip(1) {
             // copy-permutation should have a cycle around the partition
 
+            // we do not need to permute over partitions of length 1,
+            // as this variable only happends in one place
+            if partition.len() == 1 {
+                continue;
+            }
+
             let permutation = rotate(partition.clone());
             permutations[i] = permutation.clone();
 
@@ -354,8 +355,13 @@ impl<E: Engine> GeneratorAssembly4WithNextStep<E> {
                 // (column_idx, trace_step_idx)
                 let new_zero_enumerated = new.1 - 1;
                 let mut new_value = domain_elements[new_zero_enumerated];
+
+                // we have shuffled the values, so we need to determine FROM
+                // which of k_i * {1, omega, ...} cosets we take a value
+                // for a permutation polynomial
                 new_value.mul_assign(&non_residues[new.0]);
 
+                // check to what witness polynomial the variable belongs
                 let place_into = match original.0 {
                     0 => {
                         sigma_1.as_mut()

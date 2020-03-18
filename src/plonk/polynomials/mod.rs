@@ -1734,13 +1734,18 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut result = vec![F::zero(); self.coeffs.len() + 1];
         result[0] = F::one();
 
+        // let not_shifted_product = self.calculate_grand_product(&worker)?;
+        // result[1..].copy_from_slice(&not_shifted_product.into_coeffs()[..]);
+
+        // Polynomial::from_values_unpadded(result)
+
         let work_chunk = &mut result[1..];
         assert!(work_chunk.len() == self.coeffs.len());
 
-        let num_threads = worker.get_num_spawned_threads(work_chunk.len());
+        let num_threads = worker.get_num_spawned_threads(self.coeffs.len());
         let mut subproducts = vec![F::one(); num_threads as usize];
 
-        worker.scope(work_chunk.len(), |scope, chunk| {
+        worker.scope(self.coeffs.len(), |scope, chunk| {
             for ((g, c), s) in work_chunk.chunks_mut(chunk)
                         .zip(self.coeffs.chunks(chunk))
                         .zip(subproducts.chunks_mut(1)) {
@@ -1765,10 +1770,10 @@ impl<F: PrimeField> Polynomial<F, Values> {
             *s = tmp;
         }
 
-        let first_chunk_len = worker.get_chunk_size(work_chunk.len());
+        let chunk_len = worker.get_chunk_size(self.coeffs.len());
 
-        worker.scope(work_chunk[first_chunk_len..].len(), |scope, chunk| {
-            for (g, s) in work_chunk[first_chunk_len..].chunks_mut(chunk)
+        worker.scope(0, |scope, _| {
+            for (g, s) in work_chunk[chunk_len..].chunks_mut(chunk_len)
                         .zip(subproducts.chunks(1)) {
                 scope.spawn(move |_| {
                     for g in g.iter_mut() {
@@ -2166,6 +2171,10 @@ impl<F: PartialTwoBitReductionField> Polynomial<F, Values> {
         precomputed_omegas: &P,
         coset_generator: &F
     ) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
+        if self.coeffs.len() <= worker.cpus * 4 {
+            return Ok(self.ifft(&worker));
+        }
+
         let mut coeffs: Vec<_> = self.coeffs;
         let exp = self.exp;
         cooley_tukey_ntt::partial_reduction::best_ct_ntt_partial_reduction(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
@@ -2203,10 +2212,13 @@ impl<F: PrimeField> Polynomial<F, Values> {
         precomputed_omegas: &P,
         coset_generator: &F
     ) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
+        if self.coeffs.len() <= worker.cpus * 4 {
+            return Ok(self.ifft(&worker));
+        }
+
         let mut coeffs: Vec<_> = self.coeffs;
         let exp = self.exp;
         cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
-
         let mut this = Polynomial::from_coeffs(coeffs)?;
         
         this.bitreverse_enumeration(&worker);
@@ -2339,5 +2351,74 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         });
 
         Polynomial::from_values(result)
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_shifted_grand_product() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+    
+        let samples: usize = 1 << 20;
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+    
+        let v = (0..samples).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+
+        let mut manual = vec![];
+        manual.push(Fr::one());
+
+        let mut tmp = Fr::one();
+
+        for v in v.iter() {
+            tmp.mul_assign(&v);
+            manual.push(tmp);
+        }
+
+        let as_poly = Polynomial::from_values(v).unwrap();
+        let worker = Worker::new();
+        let as_poly = as_poly.calculate_shifted_grand_product(&worker).unwrap();
+        let as_poly = as_poly.into_coeffs();
+        for idx in 0..manual.len() {
+            assert_eq!(manual[idx], as_poly[idx], "failed at idx = {}", idx);
+        }
+    }
+
+    #[test]
+    fn test_grand_product() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+    
+        let samples: usize = 1 << 20;
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+    
+        let v = (0..samples).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+
+        let mut manual = vec![];
+
+        let mut tmp = Fr::one();
+
+        for v in v.iter() {
+            tmp.mul_assign(&v);
+            manual.push(tmp);
+        }
+
+        let as_poly = Polynomial::from_values(v).unwrap();
+        let worker = Worker::new();
+        let as_poly = as_poly.calculate_grand_product(&worker).unwrap();
+        let as_poly = as_poly.into_coeffs();
+        for idx in 0..manual.len() {
+            assert_eq!(manual[idx], as_poly[idx], "failed at idx = {}", idx);
+        }
     }
 }
