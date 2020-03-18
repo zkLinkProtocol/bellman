@@ -27,6 +27,7 @@ use crate::multicore::Worker;
 use crate::kate_commitment::*;
 use self::better_cs::cs::{PlonkCsWidth4WithNextStepParams, PlonkConstraintSystemParams};
 use crate::plonk::commitments::transcript::*;
+use crate::plonk::fft::cooley_tukey_ntt::*;
 
 pub fn transpile<E: Engine, C: crate::Circuit<E>>(circuit: C) -> Result<Vec<(usize, TranspilationVariant)>, SynthesisError> {
     let mut transpiler = Transpiler::<E, PlonkCsWidth4WithNextStepParams>::new();
@@ -126,7 +127,6 @@ pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     crs_lagrange_basis: &Crs<E, CrsForLagrangeForm>
 ) -> Result<Proof<E, PlonkCsWidth4WithNextStepParams>, SynthesisError> {
     use crate::plonk::better_cs::cs::Circuit;
-    use crate::plonk::fft::cooley_tukey_ntt::*;
 
     let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
 
@@ -145,6 +145,8 @@ pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(size.next_power_of_two());
     let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(size.next_power_of_two());
 
+    use std::time::Instant;
+    let now = Instant::now();
     let proof = assembly.prove::<T, _, _>(
         &worker,
         &setup,
@@ -154,6 +156,58 @@ pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
         &omegas_bitreversed,
         &omegas_inv_bitreversed,
     )?;
+
+    println!("Proving taken {:?}", now.elapsed());
+
+    Ok(proof)
+}
+
+
+pub fn prove_from_recomputations<
+    E: Engine, 
+    C: crate::Circuit<E>, 
+    T: Transcript<E::Fr>,
+    CP: CTPrecomputations<E::Fr>,
+    CPI: CTPrecomputations<E::Fr>,
+>(
+    circuit: C,
+    hints: &Vec<(usize, TranspilationVariant)>,
+    setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
+    setup_precomputations: &SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams>,
+    omegas_bitreversed: &CP,
+    omegas_inv_bitreversed: &CPI,
+    csr_mon_basis: &Crs<E, CrsForMonomialForm>,
+    crs_lagrange_basis: &Crs<E, CrsForLagrangeForm>
+) -> Result<Proof<E, PlonkCsWidth4WithNextStepParams>, SynthesisError> {
+    use crate::plonk::better_cs::cs::Circuit;
+
+    let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
+
+    let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
+
+    adapted_curcuit.synthesize(&mut assembly)?;
+    assembly.finalize();
+
+    let size = setup.n.next_power_of_two();
+
+    assert_eq!(omegas_bitreversed.domain_size(), size);
+    assert_eq!(omegas_inv_bitreversed.domain_size(), size);
+
+    let worker = Worker::new();
+
+    use std::time::Instant;
+    let now = Instant::now();
+    let proof = assembly.prove::<T, _, _>(
+        &worker,
+        &setup,
+        &setup_precomputations,
+        &crs_lagrange_basis,
+        &csr_mon_basis,
+        omegas_bitreversed,
+        omegas_inv_bitreversed,
+    )?;
+
+    println!("Proving taken {:?}", now.elapsed());
 
     Ok(proof)
 }

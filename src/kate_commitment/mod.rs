@@ -181,6 +181,21 @@ impl<E: Engine> Crs<E, CrsForMonomialForm> {
 }
 
 impl<E: Engine> Crs<E, CrsForLagrangeForm> {
+    // Completely invalid, only for testing purposes
+    pub fn dummy_crs(size: usize) -> Self {
+        assert!(size.is_power_of_two());
+
+        let g1 = vec![E::G1Affine::one(); size];
+        let g2 = vec![E::G2Affine::one(); 2];
+
+        Self {
+            g1_bases: Arc::new(g1),
+            g2_monomial_bases: Arc::new(g2),
+        
+            _marker: std::marker::PhantomData
+        }
+    }
+    
     pub fn crs_42(size: usize, worker: &Worker) -> Self {
         let tmp = Crs::<E, CrsForMonomialForm>::crs_42(size, &worker);
 
@@ -225,6 +240,21 @@ impl<E: Engine> Crs<E, CrsForLagrangeForm> {
 }
 
 impl<E: Engine> Crs<E, CrsForLagrangeFormOnCoset> {
+    // Completely invalid, only for testing purposes
+    pub fn dummy_crs(size: usize) -> Self {
+        assert!(size.is_power_of_two());
+
+        let g1 = vec![E::G1Affine::one(); size];
+        let g2 = vec![E::G2Affine::one(); 2];
+
+        Self {
+            g1_bases: Arc::new(g1),
+            g2_monomial_bases: Arc::new(g2),
+        
+            _marker: std::marker::PhantomData
+        }
+    }
+
     pub fn crs_42(size: usize, worker: &Worker) -> Self {
         let tmp = Crs::<E, CrsForMonomialForm>::crs_42(size, &worker);
 
@@ -1028,7 +1058,52 @@ mod test {
 
     #[test]
     fn test_open_ignition_setup() {
-        make_crs_from_ignition_transcript("/Users/alexvlasov/Downloads/setup").unwrap();
+        let large_setup = make_crs_from_ignition_transcript("/Users/alexvlasov/Downloads/setup").unwrap();
+        let base_path = std::path::Path::new("/Users/alexvlasov/Downloads/setup/processed");
+    
+        for n in 20..=26 {
+            let full_path = base_path.join(&format!("setup_2^{}.key", n));
+            println!("Opening {}", full_path.to_string_lossy());
+            let file = std::fs::File::create(full_path).unwrap();
+
+            let size = 1 << n;
+
+            let truncated_key = Crs::<Bn256, CrsForMonomialForm> {
+                g1_bases: Arc::new(large_setup.g1_bases[..size].to_vec()),
+                g2_monomial_bases: large_setup.g2_monomial_bases.clone(),
+            
+                _marker: std::marker::PhantomData
+            };
+
+            let mut writer = std::io::BufWriter::with_capacity(1 << 24, file);
+            truncated_key.write(&mut writer).unwrap();
+        }
+    }
+
+    #[test]
+    fn transform_ignition_setup() {
+        let base_path = std::path::Path::new("/Users/alexvlasov/Downloads/setup/processed");
+
+        let worker = crate::worker::Worker::new();
+    
+        for n in 20..=26 {
+            let full_path = base_path.join(&format!("setup_2^{}.key", n));
+            println!("Opening {}", full_path.to_string_lossy());
+            let file = std::fs::File::open(full_path).unwrap();
+            let mut reader = std::io::BufReader::with_capacity(1 << 24, file);
+            let monomial_form = Crs::<Bn256, CrsForMonomialForm>::read(&mut reader).unwrap();
+
+            let size = 1 << n;
+
+            let lagrange = Crs::<Bn256, CrsForLagrangeForm>::from_powers(&monomial_form, size, &worker);
+
+            let full_path = base_path.join(&format!("setup_2^{}_lagrange.key", n));
+            println!("Opening {}", full_path.to_string_lossy());
+            let file = std::fs::File::create(full_path).unwrap();
+            let mut writer = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            lagrange.write(&mut writer).unwrap();
+        }
     }
 
     #[test]

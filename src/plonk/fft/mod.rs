@@ -2,7 +2,7 @@ pub(crate) mod fft;
 pub(crate) mod lde;
 pub(crate) mod radix_4;
 pub(crate) mod with_precomputation;
-pub(crate) mod cooley_tukey_ntt;
+pub mod cooley_tukey_ntt;
 
 use cfg_if;
 

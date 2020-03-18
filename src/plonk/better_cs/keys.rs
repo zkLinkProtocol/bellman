@@ -206,6 +206,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputatio
 
         let required_domain_size = setup.selector_polynomials[0].size();
 
+        assert!(required_domain_size.is_power_of_two());
         let coset_generator = E::Fr::multiplicative_generator();
 
         // let coset_generator = E::Fr::one();
@@ -244,27 +245,30 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputatio
 
             let as_values = p.clone().fft(&worker);
             let mut as_values = as_values.into_coeffs();
-            as_values.pop().unwrap();
+            as_values.pop().expect("must shorted permutation polynomial values by one");
 
             let p = Polynomial::from_values_unpadded(as_values)?;
 
             new.permutation_polynomials_values_of_size_n_minus_one.push(p);
         }
         
-
         let mut vanishing_poly_inverse_bitreversed = evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
-            required_domain_size.next_power_of_two() as u64, 
+            required_domain_size as u64, 
             &E::Fr::multiplicative_generator(),
-            (required_domain_size.next_power_of_two() * LDE_FACTOR) as u64,
+            (required_domain_size * LDE_FACTOR) as u64,
             &worker, 
         )?;
         vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
         vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker);
 
+        assert_eq!(vanishing_poly_inverse_bitreversed.size(), required_domain_size * LDE_FACTOR);
+
         // evaluate polynomial X on the coset
         let mut x_poly = Polynomial::from_values(vec![coset_generator; vanishing_poly_inverse_bitreversed.size()])?;
         x_poly.distribute_powers(&worker, x_poly.omega);
         x_poly.bitreverse_enumeration(&worker);
+
+        assert_eq!(x_poly.size(), required_domain_size * LDE_FACTOR);
 
         new.inverse_divisor_on_coset_of_size_4n_bitreversed = vanishing_poly_inverse_bitreversed;
         new.x_on_coset_of_size_4n_bitreversed = x_poly;
