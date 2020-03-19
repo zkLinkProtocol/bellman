@@ -345,6 +345,7 @@ pub struct VerificationKey<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub selector_commitments: Vec<E::G1Affine>,
     pub next_step_selector_commitments: Vec<E::G1Affine>,
     pub permutation_commitments: Vec<E::G1Affine>,
+    pub non_residues: Vec<E::Fr>,
 
     pub g2_elements: [E::G2Affine; 2],
 
@@ -369,6 +370,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             selector_commitments: vec![],
             next_step_selector_commitments: vec![],
             permutation_commitments: vec![],
+            non_residues: vec![],
 
             g2_elements: [crs.g2_monomial_bases[0], crs.g2_monomial_bases[1]],
         
@@ -390,8 +392,133 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             new.permutation_commitments.push(commitment);
         }
 
+        let domain = Domain::<E::Fr>::new_for_size(setup.n.next_power_of_two() as u64)?;
+        new.non_residues.extend(super::utils::make_non_residues(P::STATE_WIDTH - 1, &domain));
+
         Ok(new)
     }
+
+    pub fn write<W: Write>(
+        &self,
+        mut writer: W
+    ) -> std::io::Result<()>
+    {
+        use crate::pairing::CurveAffine;
+
+        writer.write_u64::<BigEndian>(self.n as u64)?;
+        writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
+
+        writer.write_u64::<BigEndian>(self.selector_commitments.len() as u64)?;
+        for p in self.selector_commitments.iter() {
+            writer.write_all(p.into_uncompressed().as_ref())?;
+        }
+
+        writer.write_u64::<BigEndian>(self.next_step_selector_commitments.len() as u64)?;
+        for p in self.next_step_selector_commitments.iter() {
+            writer.write_all(p.into_uncompressed().as_ref())?;
+        }
+
+        writer.write_u64::<BigEndian>(self.permutation_commitments.len() as u64)?;
+        for p in self.permutation_commitments.iter() {
+            writer.write_all(p.into_uncompressed().as_ref())?;
+        }
+
+        writer.write_u64::<BigEndian>(self.non_residues.len() as u64)?;
+        for p in self.non_residues.iter() {
+            write_fr(p, &mut writer)?;
+        }
+
+        writer.write_all(self.g2_elements[0].into_uncompressed().as_ref())?;
+        writer.write_all(self.g2_elements[1].into_uncompressed().as_ref())?;
+        
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(
+        mut reader: R
+    ) -> std::io::Result<Self>
+    {
+        use crate::pairing::CurveAffine;
+        use crate::pairing::EncodedPoint;
+
+        let n = reader.read_u64::<BigEndian>()?;
+        let num_inputs = reader.read_u64::<BigEndian>()?;
+
+        let read_g1 = |reader: &mut R| -> std::io::Result<E::G1Affine> {
+            let mut repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+            reader.read_exact(repr.as_mut())?;
+
+            let e = repr.into_affine()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                
+            Ok(e)
+        };
+
+        let read_g2_not_zero = |reader: &mut R| -> std::io::Result<E::G2Affine> {
+            let mut repr = <E::G2Affine as CurveAffine>::Uncompressed::empty();
+            reader.read_exact(repr.as_mut())?;
+
+            let e = repr
+            .into_affine()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            .and_then(|e| if e.is_zero() {
+                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "point at infinity"))?
+            } else {
+                Ok(e)
+            });
+
+            e
+        };
+
+        let num_selectors = reader.read_u64::<BigEndian>()?;
+        let mut selectors = Vec::with_capacity(num_selectors as usize);
+        for _ in 0..num_selectors {
+            let p = read_g1(&mut reader)?;
+            selectors.push(p);
+        }
+
+        let num_next_step_selectors = reader.read_u64::<BigEndian>()?;
+        let mut next_step_selectors = Vec::with_capacity(num_next_step_selectors as usize);
+        for _ in 0..num_selectors {
+            let p = read_g1(&mut reader)?;
+            next_step_selectors.push(p);
+        }
+
+        let num_permutation_polys = reader.read_u64::<BigEndian>()?;
+        let mut permutation_polys = Vec::with_capacity(num_permutation_polys as usize);
+        for _ in 0..num_selectors {
+            let p = read_g1(&mut reader)?;
+            permutation_polys.push(p);
+        }
+
+        let num_non_residues = reader.read_u64::<BigEndian>()?;
+        let mut non_residues = Vec::with_capacity(num_non_residues as usize);
+        for _ in 0..num_non_residues {
+            let p = read_fr(&mut reader)?;
+            non_residues.push(p);
+        }
+
+        let g2_points = [
+            read_g2_not_zero(&mut reader)?,
+            read_g2_not_zero(&mut reader)?
+        ];
+
+        let new = Self{
+            n: n as usize,
+            num_inputs: num_inputs as usize,
+            selector_commitments: selectors,
+            next_step_selector_commitments: next_step_selectors,
+            permutation_commitments: permutation_polys,
+            non_residues: non_residues,
+
+            g2_elements: g2_points,
+        
+            _marker: std::marker::PhantomData
+        };
+
+        Ok(new)
+    }  
 }
 
 
