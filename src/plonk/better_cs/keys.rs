@@ -480,14 +480,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
 
         let num_next_step_selectors = reader.read_u64::<BigEndian>()?;
         let mut next_step_selectors = Vec::with_capacity(num_next_step_selectors as usize);
-        for _ in 0..num_selectors {
+        for _ in 0..num_next_step_selectors {
             let p = read_g1(&mut reader)?;
             next_step_selectors.push(p);
         }
 
         let num_permutation_polys = reader.read_u64::<BigEndian>()?;
         let mut permutation_polys = Vec::with_capacity(num_permutation_polys as usize);
-        for _ in 0..num_selectors {
+        for _ in 0..num_permutation_polys {
             let p = read_g1(&mut reader)?;
             permutation_polys.push(p);
         }

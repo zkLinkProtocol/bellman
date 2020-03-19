@@ -58,7 +58,6 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
     // Commit wire values
     for w in proof.wire_commitments.iter() {
         commit_point_as_xy::<E, _>(&mut transcript, &w);
-        // transcript.commit_bytes(w.into_uncompressed().as_ref());
     }
 
     let beta = transcript.get_challenge();
@@ -67,15 +66,11 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
     // commit grand product
     commit_point_as_xy::<E, _>(&mut transcript, &proof.grand_product_commitment);
 
-    // transcript.commit_bytes(proof.grand_product_commitment.into_uncompressed().as_ref());
-
     let alpha = transcript.get_challenge();
 
     // Commit parts of the quotient polynomial
     for w in proof.quotient_poly_commitments.iter() {
         commit_point_as_xy::<E, _>(&mut transcript, &w);
-
-        // transcript.commit_bytes(w.into_uncompressed().as_ref());
     }
 
     let z = transcript.get_challenge();
@@ -96,15 +91,10 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
         transcript.commit_field_element(el);
     }
 
-    // println!("{}", transcript.get_challenge());
-
     transcript.commit_field_element(&proof.quotient_polynomial_at_z);
-
-    // println!("{}", transcript.get_challenge());
 
     transcript.commit_field_element(&proof.linearization_polynomial_at_z);
 
-    // println!("{}", transcript.get_challenge());
 
     // do the actual check for relationship at z
 
@@ -166,6 +156,10 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
     }
 
     let v = transcript.get_challenge();
+
+    commit_point_as_xy::<E, _>(&mut transcript, &proof.opening_at_z_proof);
+
+    commit_point_as_xy::<E, _>(&mut transcript, &proof.opening_at_z_omega_proof);
 
     let u = transcript.get_challenge();
 
