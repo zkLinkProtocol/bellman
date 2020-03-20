@@ -409,13 +409,13 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
     if lc.0.len() == 1 {
         if free_term_constant.is_zero() {
             // this linear combination contains only one variable and no constant
-            // term, so we just leave it as is
+            // term, so we just leave it as is, 
+            // but ONLY if we just need to collapse LC into a variable
+            if collapse_into_single_variable {
+                let (var, coeff) = lc.0[0];
 
-            // if collapse_into_single_variable {
-            let (var, coeff) = lc.0[0];
-
-            return Ok((Some(convert_variable(var)), coeff, LcTransformationVariant::IsSingleVariable));
-            // }
+                return Ok((Some(convert_variable(var)), coeff, LcTransformationVariant::IsSingleVariable));
+            }
         } 
     }
 
