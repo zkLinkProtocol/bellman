@@ -115,7 +115,7 @@ impl<E: Engine> TranspilationScratchSpace<E> {
 }
 
 // These are transpilation options over A * B - C = 0 constraint
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TranspilationVariant {
     IntoQuadraticGate,
     IntoAdditionGate(LcTransformationVariant),
