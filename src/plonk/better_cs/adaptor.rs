@@ -92,24 +92,6 @@ impl LcTransformationVariant {
     }
 }
 
-// impl std::fmt::Debug for LcTransformationVariant {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             LcTransformationVariant::IsSingleVariable => {
-//                 writeln!(f, "LC is just a single variable")?;
-//             },
-//             LcTransformationVariant::IntoSingleGate => {
-//                 writeln!(f, "LC fits into the single gate")?;
-//             },
-//             LcTransformationVariant::IntoMultipleAdditionGates => {
-//                 writeln!(f, "LC requires multiple gates")?;
-//             },
-//         }
-
-//         Ok(())
-//     }
-// }
-
 struct TranspilationScratchSpace<E: Engine> {
     scratch_space_for_vars: Vec<PlonkVariable>,
     scratch_space_for_coeffs: Vec<E::Fr>,
@@ -135,11 +117,9 @@ impl<E: Engine> TranspilationScratchSpace<E> {
 // These are transpilation options over A * B - C = 0 constraint
 #[derive(Clone, PartialEq, Eq)]
 pub enum TranspilationVariant {
-    // LeaveAsSingleVariable,
     IntoQuadraticGate,
-    MergeLinearCombinations(MergeLcVariant, LcTransformationVariant),
-    // IsConstant, 
     IntoAdditionGate(LcTransformationVariant),
+    MergeLinearCombinations(MergeLcVariant, LcTransformationVariant),
     IntoMultiplicationGate((LcTransformationVariant, LcTransformationVariant, LcTransformationVariant))
 }
 
@@ -151,13 +131,10 @@ use crate::byteorder::BigEndian;
 impl TranspilationVariant {
     pub fn into_u8(&self) -> u8 {
         match self {
-            TranspilationVariant::IntoAdditionGate(_) => 1u8,
-            TranspilationVariant::IntoQuadraticGate => 2u8,
-            // TranspilationVariant::IntoSingleAdditionGate => 3u8,
-            // TranspilationVariant::IntoMultipleAdditionGates => 4u8,
-            TranspilationVariant::MergeLinearCombinations(_, _) => 5u8,
-            // TranspilationVariant::IsConstant => 6u8,
-            TranspilationVariant::IntoMultiplicationGate(_) => 7u8,
+            TranspilationVariant::IntoQuadraticGate => 1u8,
+            TranspilationVariant::IntoAdditionGate(_) => 2u8,
+            TranspilationVariant::MergeLinearCombinations(_, _) => 3u8,
+            TranspilationVariant::IntoMultiplicationGate(_) => 4u8,
         }
     }
 
@@ -169,8 +146,11 @@ impl TranspilationVariant {
         let prefix = self.into_u8();
         writer.write_u8(prefix)?;
         match self {
+            TranspilationVariant::IntoAdditionGate(subhint) => {
+                let subhint = subhint.into_u8();
+                writer.write_u8(subhint)?;
+            }
             TranspilationVariant::MergeLinearCombinations(variant, subhint) => {
-                // let subhint = subhint.as_ref();
                 let variant = variant.into_u8();
                 writer.write_u8(variant)?;
 
@@ -178,7 +158,6 @@ impl TranspilationVariant {
                 writer.write_u8(subhint)?;
             },
             TranspilationVariant::IntoMultiplicationGate(hints) => {
-                // let (h_a, h_b, h_c) = hints.as_ref();
                 let (h_a, h_b, h_c) = hints;
                 writer.write_u8(h_a.into_u8())?;
                 writer.write_u8(h_b.into_u8())?;
@@ -198,22 +177,19 @@ impl TranspilationVariant {
         let prefix = reader.read_u8()?;
 
         match prefix {
-            1u8 => {
+            1u8 => {return Ok(TranspilationVariant::IntoQuadraticGate); },
+            2u8 => {
                 let subhint = LcTransformationVariant::from_u8(reader.read_u8()?)?;
                 
                 return Ok(TranspilationVariant::IntoAdditionGate(subhint));
             },
-            2u8 => {return Ok(TranspilationVariant::IntoQuadraticGate); },
-            // 3u8 => {return Ok(TranspilationVariant::IntoSingleAdditionGate); },
-            // 4u8 => {return Ok(TranspilationVariant::IntoMultipleAdditionGates); },
-            5u8 => {
+            3u8 => {
                 let variant = MergeLcVariant::from_u8(reader.read_u8()?)?;
                 let subhint = LcTransformationVariant::from_u8(reader.read_u8()?)?;
                 
                 return Ok(TranspilationVariant::MergeLinearCombinations(variant, subhint));
             },
-            // 6u8 => {return Ok(TranspilationVariant::IsConstant); },
-            7u8 => {
+            4u8 => {
                 let subhint_a = LcTransformationVariant::from_u8(reader.read_u8()?)?;
                 let subhint_b = LcTransformationVariant::from_u8(reader.read_u8()?)?;
                 let subhint_c = LcTransformationVariant::from_u8(reader.read_u8()?)?;
@@ -261,18 +237,15 @@ pub fn write_transpilation_hints<W: Write>(
 impl std::fmt::Debug for TranspilationVariant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TranspilationVariant::IntoAdditionGate(_) => {
-                writeln!(f, "Variant: make an addition gate")?;
-            },
             TranspilationVariant::IntoQuadraticGate => {
                 writeln!(f, "Variant: into quadratic gate")?;
+            },
+            TranspilationVariant::IntoAdditionGate(_) => {
+                writeln!(f, "Variant: make an addition gate")?;
             },
             TranspilationVariant::MergeLinearCombinations(merge_type, _) => {
                 writeln!(f, "Variant: merge linear combinations as {:?}", merge_type)?;
             },
-            // TranspilationVariant::IsConstant => {
-                // writeln!(f, "Variant: into constant factor")?;
-            // },
             TranspilationVariant::IntoMultiplicationGate(b) => {
                 writeln!(f, "Variant: into combinatoric multiplication gate")?;
                 writeln!(f, "A: {:?}", b.0)?;
@@ -435,12 +408,14 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 
     if lc.0.len() == 1 {
         if free_term_constant.is_zero() {
-            if collapse_into_single_variable {
-                // we try to make a multiplication gate
-                let (var, coeff) = lc.0[0];
+            // this linear combination contains only one variable and no constant
+            // term, so we just leave it as is
 
-                return Ok((Some(convert_variable(var)), coeff, LcTransformationVariant::IsSingleVariable));
-            }
+            // if collapse_into_single_variable {
+            let (var, coeff) = lc.0[0];
+
+            return Ok((Some(convert_variable(var)), coeff, LcTransformationVariant::IsSingleVariable));
+            // }
         } 
     }
 
@@ -459,11 +434,15 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
         }
     }
 
+    // if we need to collaplse an LC into a single variable for 
+    // future use we allocate it and then subtract it from linear combination
+    // to have an enforcement LC == 0 in all the cases
+
     let final_variable = if collapse_into_single_variable {
         let may_be_new_value = evaluate_lc::<E, P, CS>(&*cs, &lc, free_term_constant);
         let new_var = cs.alloc(|| {
             may_be_new_value
-        })?; // .expect("must allocate a new variable to collapse LC");
+        })?;
 
         Some(new_var)
     } else {
@@ -477,12 +456,14 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
     let num_terms = lc.0.len();
 
     // we have two options: 
-    // - fit everything into a single gate (in case of 3 terms in the linear combination)
+    // - fit everything into a single gate (in case of number terms in the linear combination
+    // smaller than a width of the state)
     // - make a required number of extra variables and chain it
     
     if num_terms <= P::STATE_WIDTH {
         // we can just make a single gate
 
+        // fill the gate with nothing first and replace after
         scratch_space.scratch_space_for_vars.resize(P::STATE_WIDTH, cs.get_dummy_variable());
         scratch_space.scratch_space_for_booleans.resize(P::STATE_WIDTH, false);
         scratch_space.scratch_space_for_coeffs.resize(P::STATE_WIDTH, zero_fr);
@@ -490,7 +471,6 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
         let it = lc.0.into_iter();
 
         // we can consume and never have leftovers
-
         let mut idx = 0;
         for (var, coeff) in it {
             if scratch_space.scratch_space_for_booleans[idx] == false {
@@ -500,21 +480,6 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 idx += 1;
             }
         }
-
-        // if multiplier == E::Fr::zero() {
-        //     assert!(free_term_constant == E::Fr::zero());
-        //     unreachable!();
-        //     // it's a constraint 0 * LC = 0
-        // } else {
-        //     //scale
-        //     if multiplier != one_fr {
-        //         a_coeff.mul_assign(&multiplier);
-        //         a_coeff.mul_assign(&multiplier);
-        //         a_coeff.mul_assign(&multiplier);
-        //     }
-        // }
-
-        // free_term_constant.negate();
 
         // add multiplication coefficient, constant and next step one
 
@@ -527,11 +492,9 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
             false, 
             &*scratch_space.scratch_space_for_vars, 
             &*scratch_space.scratch_space_for_coeffs
-        )?; // .expect("must make a gate to form an LC when transpiling into a single gate");
+        )?;
 
         scratch_space.clear();
-
-        // cs.new_gate((a_var, b_var, c_var), [a_coeff, b_coeff, c_coeff, zero_fr, free_term_constant, zero_fr]).expect("must make a gate to form an LC");
 
         let hint = LcTransformationVariant::IntoSingleGate;
 
@@ -576,14 +539,13 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 free_term_constant
             );
 
-            // we manually allocate the new vairable
-
+            // we manually allocate the new variable
             let new_intermediate_var = cs.alloc(|| {
                 may_be_new_intermediate_value
-            })?; //.expect("must allocate a new intermediate variable to collapse LC");
+            })?;
 
             // no multiplication coefficient,
-            // but -1 to link to the next trace step
+            // but -1 to link to the next trace step (we enforce == 0)
             scratch_space.scratch_space_for_coeffs.push(zero_fr); // no multiplication
             scratch_space.scratch_space_for_coeffs.push(free_term_constant); // add constant
             scratch_space.scratch_space_for_coeffs.push(minus_one_fr); // -1 for a d_next
@@ -593,9 +555,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 true, 
                 &*scratch_space.scratch_space_for_vars, 
                 &*scratch_space.scratch_space_for_coeffs
-            )?; // .expect("must make a gate to form an first gate when transpiling LC");
-
-            // cs.new_gate((a_var, b_var, c_var), [c0, c1, c2, zero_fr, free_term_constant, minus_one_fr]).expect("must make a gate to form an LC");
+            )?;
 
             scratch_space.clear();
 
@@ -641,7 +601,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 
             let new_intermediate_var = cs.alloc(|| {
                 may_be_new_intermediate_value
-            })?; // .expect("must allocate a new intermediate variable to collapse LC");
+            })?;
 
             // no multiplication coefficient and no constant now,
             // but -1 to link to the next trace step
@@ -654,12 +614,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 true, 
                 &*scratch_space.scratch_space_for_vars, 
                 &*scratch_space.scratch_space_for_coeffs
-            )?; //.expect("must make an intermediate gate to transpile a LC");
-
-            // cs.new_gate(
-            //     (a_var, b_var, c_var), 
-            //     [a_coeff, b_coeff, one_fr, zero_fr, zero_fr, minus_one_fr]
-            // ).expect("must make a gate to form an LC");
+            )?;
 
             scratch_space.clear();
 
@@ -699,7 +654,7 @@ fn enforce_lc_as_gates<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
                 false, 
                 &*scratch_space.scratch_space_for_vars, 
                 &*scratch_space.scratch_space_for_coeffs
-            )?; //.expect("must make a final gate to form an LC");
+            )?;
 
             scratch_space.clear();
         }
@@ -1005,8 +960,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
             },
             (true, false, false) | (false, true, false) => {
-                // LC * 1 = LC
-                // println!("C * LC = LC");
+                // sometihng like LC * const = LC
+                // so we can merge them into one long linear combination
                 let multiplier = if a_is_constant {
                     a_constant_term
                 } else if b_is_constant {
@@ -1096,8 +1051,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
             },
             (true, true, false) => {
-                // println!("C * C = LC");
+                // const * const = LC
                 // A and B are some constants
+                // also strange one, but we cover all the options exhaustively
                 let mut free_constant_term = a_constant_term;
                 free_constant_term.mul_assign(&b_constant_term);
 
@@ -1124,7 +1080,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
             },
             (false, false, false) => {
-                // println!("LC * LC = LC");
+                // LC * LC = LC
                 // potentially it can still be quadratic
                 let (is_quadratic_gate, _coeffs) = is_quadratic_gate::<E, Self>(
                     &a_lc, 
