@@ -2307,8 +2307,8 @@ fn transpile_xor_using_new_adaptor() {
 
     assert!(is_valid);
 
-    println!("Verification key = {:?}", verification_key);
-    println!("Proof = {:?}", proof);
+    // println!("Verification key = {:?}", verification_key);
+    // println!("Proof = {:?}", proof);
 
     let mut key_writer = std::io::BufWriter::with_capacity(
         1<<24, 
