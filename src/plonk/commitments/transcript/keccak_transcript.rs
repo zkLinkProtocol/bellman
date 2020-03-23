@@ -1,12 +1,14 @@
 use tiny_keccak::Keccak;
 use crate::pairing::ff::{PrimeField, PrimeFieldRepr};
+use crate::byteorder::{ByteOrder, BigEndian};
 
 use super::*;
 
 #[derive(Clone)]
 pub struct RollingKeccakTranscript<F: PrimeField> {
-    state: Keccak,
-    fresh: bool,
+    state_part_0: [u8; 32],
+    state_part_1: [u8; 32],
+    challenge_counter: u32,
     _marker: std::marker::PhantomData<F>
 }
 
@@ -14,20 +16,44 @@ impl<F: PrimeField> RollingKeccakTranscript<F> {
     const SHAVE_BITS: u32 = 256 - F::CAPACITY;
     // const REPR_SIZE: usize = std::mem::size_of::<F::Repr>();
     const REPR_SIZE: usize = (((F::NUM_BITS as usize)/ 64) + 1) * 8;
+    const DST_0_TAG: u32 = 0;
+    const DST_1_TAG: u32 = 1;
+    const CHALLENGE_DST_TAG: u32 = 2;
 
-    fn roll_update(&mut self, bytes: &[u8]) -> [u8; 32] {
-        if self.fresh {
-            self.fresh = false;
-            self.state.update(&bytes);
+    fn update(&mut self, bytes: &[u8]){
 
-            return [0; 32];
-        }
-        let mut value: [u8; 32] = [0; 32];
-        let old_state = std::mem::replace(&mut self.state, Keccak::new_keccak256());
-        old_state.finalize(&mut value);
+        let mut input = vec![0u8; bytes.len() + 32 + 4];
+        BigEndian::write_u32(&mut input[0..4], Self::DST_0_TAG);
+        input[4..36].copy_from_slice(&self.state_part_0[..]);
+        input[36..].copy_from_slice(bytes);
 
-        self.state.update(&value);
-        self.state.update(&bytes);
+        let mut hasher = Keccak::new_keccak256();
+        hasher.update(&input);
+        hasher.finalize(&mut self.state_part_0);
+
+        let mut input = vec![0u8; bytes.len() + 32 + 4];
+        BigEndian::write_u32(&mut input[0..4], Self::DST_1_TAG);
+        input[4..36].copy_from_slice(&self.state_part_1[..]);
+        input[36..].copy_from_slice(bytes);
+
+        let mut hasher = Keccak::new_keccak256();
+        hasher.update(&input);
+        hasher.finalize(&mut self.state_part_1);
+    }
+
+    fn query(&mut self) -> [u8; 32] {
+        let mut input = vec![0u8; 4 + 32 + 32 + 4];
+        BigEndian::write_u32(&mut input[0..4], Self::CHALLENGE_DST_TAG);
+        input[4..36].copy_from_slice(&self.state_part_0[..]);
+        input[36..68].copy_from_slice(&self.state_part_0[..]);
+        BigEndian::write_u32(&mut input[68..72], self.challenge_counter);
+
+        let mut value = [0u8; 32];
+        let mut hasher = Keccak::new_keccak256();
+        hasher.update(&input);
+        hasher.finalize(&mut value);
+
+        self.challenge_counter += 1;
 
         value
     }
@@ -38,10 +64,10 @@ impl<F: PrimeField> Prng<F> for RollingKeccakTranscript<F> {
 
     fn new() -> Self {
         assert!(F::NUM_BITS < 256);
-        let state = Keccak::new_keccak256();
         Self {
-            state,
-            fresh: true,
+            state_part_0: [0u8; 32],
+            state_part_1: [0u8; 32],
+            challenge_counter: 0,
             _marker: std::marker::PhantomData
         }
     }
@@ -51,7 +77,7 @@ impl<F: PrimeField> Prng<F> for RollingKeccakTranscript<F> {
     }
 
     fn get_challenge(&mut self) -> F {
-        let value = self.roll_update(&[]);
+        let value = self.query();
 
         // let mut value: [u8; 32] = [0; 32];
         // self.state.finalize(&mut value);
@@ -76,7 +102,7 @@ impl<F: PrimeField> Transcript<F> for RollingKeccakTranscript<F> {
     fn commit_bytes(&mut self, bytes: &[u8]) {
         // println!("Committing bytes {:?}", bytes);
         // self.state.update(&bytes);
-        self.roll_update(&bytes);
+        self.update(&bytes);
     }
 
     fn commit_field_element(&mut self, element: &F) {
@@ -86,11 +112,11 @@ impl<F: PrimeField> Transcript<F> for RollingKeccakTranscript<F> {
         repr.write_be(&mut bytes[..]).expect("should write");
         
         // self.state.update(&bytes[..]);
-        self.roll_update(&bytes);
+        self.update(&bytes);
     }
 
     fn get_challenge_bytes(&mut self) -> Vec<u8> {
-        let value = self.roll_update(&[]);
+        let value = self.query();
         // let value = *(self.state.finalize().as_array());
         // self.state.update(&value[..]);
 
@@ -103,6 +129,6 @@ impl<F: PrimeField> Transcript<F> for RollingKeccakTranscript<F> {
         let repr = element.into_repr();
         let mut bytes: Vec<u8> = vec![0u8; Self::REPR_SIZE];
         repr.write_be(&mut bytes[..]).expect("should write");
-        self.roll_update(&bytes);
+        self.update(&bytes);
     }
 }
