@@ -336,6 +336,152 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             _marker: std::marker::PhantomData
         }
     }
+
+    pub fn write<W: Write>(
+        &self,
+        mut writer: W
+    ) -> std::io::Result<()>
+    {
+        use crate::pairing::CurveAffine;
+
+        writer.write_u64::<BigEndian>(self.n as u64)?;
+        writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
+
+        writer.write_u64::<BigEndian>(self.input_values.len() as u64)?;
+        for p in self.input_values.iter() {
+            write_fr(p, &mut writer)?;
+        }
+
+        writer.write_u64::<BigEndian>(self.wire_commitments.len() as u64)?;
+        for p in self.wire_commitments.iter() {
+            writer.write_all(p.into_uncompressed().as_ref())?;
+        }
+
+        writer.write_all(self.grand_product_commitment.into_uncompressed().as_ref())?;
+
+        writer.write_u64::<BigEndian>(self.quotient_poly_commitments.len() as u64)?;
+        for p in self.quotient_poly_commitments.iter() {
+            writer.write_all(p.into_uncompressed().as_ref())?;
+        }
+
+        writer.write_u64::<BigEndian>(self.wire_values_at_z.len() as u64)?;
+        for p in self.wire_values_at_z.iter() {
+            write_fr(p, &mut writer)?;
+        }
+
+        writer.write_u64::<BigEndian>(self.wire_values_at_z_omega.len() as u64)?;
+        for p in self.wire_values_at_z_omega.iter() {
+            write_fr(p, &mut writer)?;
+        }
+
+        write_fr(&self.grand_product_at_z_omega, &mut writer)?;
+        write_fr(&self.quotient_polynomial_at_z, &mut writer)?;
+        write_fr(&self.linearization_polynomial_at_z, &mut writer)?;
+
+        writer.write_u64::<BigEndian>(self.permutation_polynomials_at_z.len() as u64)?;
+        for p in self.permutation_polynomials_at_z.iter() {
+            write_fr(p, &mut writer)?;
+        }
+
+        writer.write_all(self.opening_at_z_proof.into_uncompressed().as_ref())?;
+        writer.write_all(self.opening_at_z_omega_proof.into_uncompressed().as_ref())?;
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(
+        mut reader: R
+    ) -> std::io::Result<Self>
+    {
+        use crate::pairing::CurveAffine;
+        use crate::pairing::EncodedPoint;
+
+        let n = reader.read_u64::<BigEndian>()?;
+        let num_inputs = reader.read_u64::<BigEndian>()?;
+
+        let read_g1 = |reader: &mut R| -> std::io::Result<E::G1Affine> {
+            let mut repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
+            reader.read_exact(repr.as_mut())?;
+
+            let e = repr.into_affine()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                
+            Ok(e)
+        };
+
+        let mut inputs = Vec::with_capacity(num_inputs as usize);
+        for _ in 0..num_inputs {
+            let p = read_fr(&mut reader)?;
+            inputs.push(p);
+        }
+
+        let num_wire_commitments = reader.read_u64::<BigEndian>()?;
+        let mut write_commitments = Vec::with_capacity(num_wire_commitments as usize);
+        for _ in 0..num_wire_commitments {
+            let p = read_g1(&mut reader)?;
+            write_commitments.push(p);
+        }
+
+        let grand_product_commitment = read_g1(&mut reader)?;
+
+        let num_quotient_commitments = reader.read_u64::<BigEndian>()?;
+        let mut quotient_poly_commitments = Vec::with_capacity(num_quotient_commitments as usize);
+        for _ in 0..num_quotient_commitments {
+            let p = read_g1(&mut reader)?;
+            quotient_poly_commitments.push(p);
+        }
+
+
+        let num_wire_values_at_z = reader.read_u64::<BigEndian>()?;
+        let mut wire_values_at_z = Vec::with_capacity(num_wire_values_at_z as usize);
+        for _ in 0..num_wire_values_at_z {
+            let p = read_fr(&mut reader)?;
+            wire_values_at_z.push(p);
+        }
+
+        let num_wire_values_at_z_omega = reader.read_u64::<BigEndian>()?;
+        let mut wire_values_at_z_omega = Vec::with_capacity(num_wire_values_at_z_omega as usize);
+        for _ in 0..num_wire_values_at_z_omega {
+            let p = read_fr(&mut reader)?;
+            wire_values_at_z_omega.push(p);
+        }
+
+        let grand_product_at_z_omega = read_fr(&mut reader)?;
+        let quotient_polynomial_at_z = read_fr(&mut reader)?;
+        let linearization_polynomial_at_z = read_fr(&mut reader)?;
+
+        let num_perm_at_z = reader.read_u64::<BigEndian>()?;
+        let mut permutation_polynomials_at_z = Vec::with_capacity(num_perm_at_z as usize);
+        for _ in 0..num_perm_at_z {
+            let p = read_fr(&mut reader)?;
+            permutation_polynomials_at_z.push(p);
+        }
+
+        let opening_at_z_proof = read_g1(&mut reader)?;
+        let opening_at_z_omega_proof = read_g1(&mut reader)?;
+
+        let new = Self {
+            num_inputs: num_inputs as usize,
+            n: n as usize,
+            input_values: inputs,
+            wire_commitments: write_commitments,
+            grand_product_commitment: grand_product_commitment,
+            quotient_poly_commitments: quotient_poly_commitments,
+            wire_values_at_z: wire_values_at_z,
+            wire_values_at_z_omega: wire_values_at_z_omega,
+            grand_product_at_z_omega,
+            quotient_polynomial_at_z,
+            linearization_polynomial_at_z,
+            permutation_polynomials_at_z: permutation_polynomials_at_z,
+
+            opening_at_z_proof: opening_at_z_proof,
+            opening_at_z_omega_proof: opening_at_z_omega_proof,
+
+            _marker: std::marker::PhantomData
+        };
+
+        Ok(new)
+    }  
 }
 
 #[derive(Clone, Debug)]

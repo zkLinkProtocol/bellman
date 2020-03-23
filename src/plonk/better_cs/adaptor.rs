@@ -2309,4 +2309,16 @@ fn transpile_xor_using_new_adaptor() {
 
     println!("Verification key = {:?}", verification_key);
     println!("Proof = {:?}", proof);
+
+    let mut key_writer = std::io::BufWriter::with_capacity(
+        1<<24, 
+        std::fs::File::create("./xor_vk.key").unwrap()
+    );
+    verification_key.write(&mut key_writer).unwrap();
+
+    let mut proof_writer = std::io::BufWriter::with_capacity(
+        1<<24, 
+        std::fs::File::create("./xor_proof.proof").unwrap()
+    );
+    proof.write(&mut proof_writer).unwrap();
 }
