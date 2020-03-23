@@ -21,7 +21,6 @@ impl<F: PrimeField> RollingKeccakTranscript<F> {
     const CHALLENGE_DST_TAG: u32 = 2;
 
     fn update(&mut self, bytes: &[u8]){
-
         let mut input = vec![0u8; bytes.len() + 32 + 4];
         BigEndian::write_u32(&mut input[0..4], Self::DST_0_TAG);
         input[4..36].copy_from_slice(&self.state_part_0[..]);
@@ -45,15 +44,15 @@ impl<F: PrimeField> RollingKeccakTranscript<F> {
         let mut input = vec![0u8; 4 + 32 + 32 + 4];
         BigEndian::write_u32(&mut input[0..4], Self::CHALLENGE_DST_TAG);
         input[4..36].copy_from_slice(&self.state_part_0[..]);
-        input[36..68].copy_from_slice(&self.state_part_0[..]);
+        input[36..68].copy_from_slice(&self.state_part_1[..]);
         BigEndian::write_u32(&mut input[68..72], self.challenge_counter);
+
+        self.challenge_counter += 1;
 
         let mut value = [0u8; 32];
         let mut hasher = Keccak::new_keccak256();
         hasher.update(&input);
         hasher.finalize(&mut value);
-
-        self.challenge_counter += 1;
 
         value
     }

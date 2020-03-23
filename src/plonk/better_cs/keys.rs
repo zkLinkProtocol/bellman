@@ -354,6 +354,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             write_fr(p, &mut writer)?;
         }
 
+        assert_eq!(self.wire_commitments.len(), P::STATE_WIDTH);
         writer.write_u64::<BigEndian>(self.wire_commitments.len() as u64)?;
         for p in self.wire_commitments.iter() {
             writer.write_all(p.into_uncompressed().as_ref())?;
@@ -418,10 +419,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
         }
 
         let num_wire_commitments = reader.read_u64::<BigEndian>()?;
-        let mut write_commitments = Vec::with_capacity(num_wire_commitments as usize);
+        let mut wire_commitments = Vec::with_capacity(num_wire_commitments as usize);
         for _ in 0..num_wire_commitments {
             let p = read_g1(&mut reader)?;
-            write_commitments.push(p);
+            wire_commitments.push(p);
         }
 
         let grand_product_commitment = read_g1(&mut reader)?;
@@ -432,7 +433,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             let p = read_g1(&mut reader)?;
             quotient_poly_commitments.push(p);
         }
-
 
         let num_wire_values_at_z = reader.read_u64::<BigEndian>()?;
         let mut wire_values_at_z = Vec::with_capacity(num_wire_values_at_z as usize);
@@ -466,7 +466,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             num_inputs: num_inputs as usize,
             n: n as usize,
             input_values: inputs,
-            wire_commitments: write_commitments,
+            wire_commitments: wire_commitments,
             grand_product_commitment: grand_product_commitment,
             quotient_poly_commitments: quotient_poly_commitments,
             wire_values_at_z: wire_values_at_z,
