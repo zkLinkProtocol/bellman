@@ -344,10 +344,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
     {
         use crate::pairing::CurveAffine;
 
+        assert_eq!(self.num_inputs, self.input_values.len());
+
         writer.write_u64::<BigEndian>(self.n as u64)?;
         writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
 
-        writer.write_u64::<BigEndian>(self.input_values.len() as u64)?;
+        // writer.write_u64::<BigEndian>(self.input_values.len() as u64)?;
         for p in self.input_values.iter() {
             write_fr(p, &mut writer)?;
         }
