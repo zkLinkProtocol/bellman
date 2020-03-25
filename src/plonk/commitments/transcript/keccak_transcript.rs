@@ -21,19 +21,23 @@ impl<F: PrimeField> RollingKeccakTranscript<F> {
     const CHALLENGE_DST_TAG: u32 = 2;
 
     fn update(&mut self, bytes: &[u8]){
-        let mut input = vec![0u8; bytes.len() + 32 + 4];
+        let old_state_0 = self.state_part_0;
+
+        let mut input = vec![0u8; bytes.len() + 32 + 32 + 4];
         BigEndian::write_u32(&mut input[0..4], Self::DST_0_TAG);
-        input[4..36].copy_from_slice(&self.state_part_0[..]);
-        input[36..].copy_from_slice(bytes);
+        input[4..36].copy_from_slice(&old_state_0[..]);
+        input[36..68].copy_from_slice(&self.state_part_1[..]);
+        input[68..].copy_from_slice(bytes);
 
         let mut hasher = Keccak::new_keccak256();
         hasher.update(&input);
         hasher.finalize(&mut self.state_part_0);
 
-        let mut input = vec![0u8; bytes.len() + 32 + 4];
+        let mut input = vec![0u8; bytes.len() + 32 + 32 + 4];
         BigEndian::write_u32(&mut input[0..4], Self::DST_1_TAG);
-        input[4..36].copy_from_slice(&self.state_part_1[..]);
-        input[36..].copy_from_slice(bytes);
+        input[4..36].copy_from_slice(&old_state_0[..]);
+        input[36..68].copy_from_slice(&self.state_part_1[..]);
+        input[68..].copy_from_slice(bytes);
 
         let mut hasher = Keccak::new_keccak256();
         hasher.update(&input);

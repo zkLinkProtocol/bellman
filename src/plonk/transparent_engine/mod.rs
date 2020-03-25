@@ -407,6 +407,92 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_bench_ct_proth_fft() {
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use super::proth::Fr as Fr;
+        use crate::plonk::polynomials::*;
+        use std::time::Instant;
+        use crate::multicore::*;
+        use crate::plonk::commitments::transparent::utils::*;
+        use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas, best_ct_ntt};
+        use crate::plonk::fft::fft::best_fft;
+        use crate::plonk::domains::Domain;
+
+        // let poly_sizes = vec![1_000_000, 2_000_000];
+        let poly_sizes = vec![1_000_000];
+
+        // let poly_sizes = vec![2];
+
+        let worker = Worker::new();
+
+        for poly_size in poly_sizes.into_iter() {
+            let poly_size = poly_size as usize;
+            let poly_size = poly_size.next_power_of_two();
+
+            let _res1 = {
+                let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+                let mut coeffs = (0..poly_size).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+                let log_n = log2_floor(coeffs.len());
+                let domain = Domain::new_for_size(coeffs.len() as u64).unwrap();
+
+                let start = Instant::now();
+                best_fft(&mut coeffs, &worker, &domain.generator, log_n, Some(8));
+                println!("FFT for size {} taken {:?}", poly_size, start.elapsed());
+
+                coeffs
+            };
+
+            let (input, output) = {
+                let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+                let mut coeffs = (0..poly_size).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+                let input = coeffs.clone();
+                let log_n = log2_floor(coeffs.len());
+                let precomp = BitReversedOmegas::<Fr>::new_for_domain_size(coeffs.len());
+
+                let start = Instant::now();
+                best_ct_ntt(&mut coeffs, &worker, log_n, Some(8), &precomp);
+                println!("CT FFT for size {} taken {:?}", poly_size, start.elapsed());
+
+                (input, coeffs)
+            };
+
+            let mut writer = std::io::BufWriter::with_capacity(
+                1<<24, 
+                std::fs::File::create("./fft_test_input.data").unwrap()  
+            );
+
+            use crate::pairing::ff::{Field, PrimeField};
+            use std::io::Write;
+            use crate::pairing::ff::PrimeFieldRepr;
+
+            let mut scratch = vec![];
+            for el in input.into_iter() {
+                let repr = el.into_raw_repr();
+                repr.write_le(&mut scratch).unwrap();
+                writer.write_all(&scratch).unwrap();
+                scratch.truncate(0);
+            }
+
+            println!("Results");
+            for el in output[0..16].iter() {
+                println!("{}", el.into_raw_repr());
+            }
+
+            let domain = Domain::<Fr>::new_for_size(poly_size as u64).unwrap();
+
+            println!("Omegas");
+
+            assert!(domain.generator.pow(&[1u64<<20]) == Fr::one());
+
+            for i in 0..=20 {
+                let pow = 1u64 << i;
+                println!("Omega^{} = {}", pow, domain.generator.pow(&[pow]).into_raw_repr());
+            }
+
+            println!("Idenity = {}", Fr::one().into_raw_repr());
+        }
+    }
     
 }
 
