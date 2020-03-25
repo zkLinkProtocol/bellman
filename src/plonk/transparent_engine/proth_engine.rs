@@ -1,6 +1,5 @@
 pub use super::proth::Fr;
 
-#[macro_use]
 use super::impl_macro::*;
 
 use super::TransparentEngine;

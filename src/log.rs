@@ -1,7 +1,31 @@
 #[allow(unused_macros)]
 
 cfg_if! {
-    if #[cfg(feature = "wasm")] {
+    if #[cfg(feature = "nolog")] {
+        macro_rules! log {
+            ($($t:tt)*) => ()
+        }
+
+        macro_rules! elog {
+            ($($t:tt)*) => ()
+        }
+
+        macro_rules! log_verbose {
+            ($($t:tt)*) => ()
+        }
+
+        macro_rules! elog_verbose {
+            ($($t:tt)*) => ()
+        }
+
+        pub struct Stopwatch {}
+
+        impl Stopwatch {
+            pub fn new() -> Stopwatch {
+                Stopwatch {}
+            }
+        }
+    } else if #[cfg(feature = "wasm")] {
         use web_sys;
         use web_sys::Performance;
 
