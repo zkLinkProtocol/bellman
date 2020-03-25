@@ -1,5 +1,3 @@
-
-#[macro_use]
 use crate::ff::*;
 
 use crate::pairing::Engine;
@@ -47,7 +45,6 @@ pub trait PartialTwoBitReductionField: PartialReductionField {
 pub mod engine {
     use super::Fr;
 
-    #[macro_use]
     use super::impl_macro::*;
 
     transparent_engine_impl!{Transparent252, Fr}

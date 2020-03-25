@@ -293,7 +293,7 @@ fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
     bases: S,
     density_map: D,
     exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
-    mut skip: u32,
+    skip: u32,
     c: u32,
     handle_trivial: bool
 ) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
