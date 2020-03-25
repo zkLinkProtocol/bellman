@@ -161,7 +161,8 @@ cfg_if! {
                 G: CurveAffine,
                 S: SourceBuilder<G>
         {
-            multiexp_inner_with_prefetch(pool, bases, density_map, exponents, skip, c, handle_trivial)
+            // multiexp_inner_with_prefetch(pool, bases, density_map, exponents, skip, c, handle_trivial)
+            multiexp_inner_with_prefetch_stable(pool, bases, density_map, exponents, skip, c, handle_trivial)
         }
     } else {
         #[inline(always)]
@@ -295,7 +296,7 @@ fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
     mut skip: u32,
     c: u32,
     handle_trivial: bool
-) -> Box<dyn Future<Item=<G as CurveAffine>::Projective, Error=SynthesisError>>
+) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
     where for<'a> &'a Q: QueryDensity,
           D: Send + Sync + 'static + Clone + AsRef<Q>,
           G: CurveAffine,
@@ -385,27 +386,7 @@ fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
         })
     };
 
-    skip += c;
-
-    if skip >= <G::Engine as ScalarEngine>::Fr::NUM_BITS {
-        // There isn't another region.
-        Box::new(this)
-    } else {
-        // There's another region more significant. Calculate and join it with
-        // this region recursively.
-        Box::new(
-            this.join(multiexp_inner_with_prefetch_stable(pool, bases, density_map, exponents, skip, c, false))
-                .map(move |(this, mut higher)| {
-                    for _ in 0..c {
-                        higher.double();
-                    }
-
-                    higher.add_assign(&this);
-
-                    higher
-                })
-        )
-    }
+    this
 }
 
 /// Perform multi-exponentiation. The caller is responsible for ensuring the

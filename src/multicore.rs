@@ -21,7 +21,7 @@ use self::futures::executor::{ThreadPool};
 
 #[derive(Clone)]
 pub struct Worker {
-    cpus: usize,
+    pub(crate) cpus: usize,
     pool: ThreadPool
 }
 

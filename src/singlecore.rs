@@ -13,7 +13,7 @@ use self::futures::executor::{block_on};
 
 #[derive(Clone)]
 pub struct Worker {
-    cpus: usize,
+    pub(crate) cpus: usize,
 }
 
 impl Worker {
