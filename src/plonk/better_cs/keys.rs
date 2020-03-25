@@ -1,12 +1,12 @@
 use super::cs::*;
 
 use crate::pairing::ff::{Field, PrimeField};
-use crate::pairing::{Engine};
+use crate::pairing::Engine;
 
-use crate::{SynthesisError};
+use crate::plonk::domains::*;
 use crate::plonk::polynomials::*;
 use crate::worker::Worker;
-use crate::plonk::domains::*;
+use crate::SynthesisError;
 
 use crate::kate_commitment::*;
 
@@ -22,18 +22,15 @@ pub struct SetupPolynomials<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub next_step_selector_polynomials: Vec<Polynomial<E::Fr, Coefficients>>,
     pub permutation_polynomials: Vec<Polynomial<E::Fr, Coefficients>>,
 
-    pub(crate) _marker: std::marker::PhantomData<P>
+    pub(crate) _marker: std::marker::PhantomData<P>,
 }
 
-use std::io::{Read, Write};
+use crate::byteorder::BigEndian;
 use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
-use crate::byteorder::BigEndian;
+use std::io::{Read, Write};
 
-pub fn write_fr<F: PrimeField, W: Write>(
-    el: &F,
-    mut writer: W
-) -> std::io::Result<()> {
+pub fn write_fr<F: PrimeField, W: Write>(el: &F, mut writer: W) -> std::io::Result<()> {
     use crate::ff::PrimeFieldRepr;
 
     let repr = el.into_repr();
@@ -42,10 +39,7 @@ pub fn write_fr<F: PrimeField, W: Write>(
     Ok(())
 }
 
-pub fn write_fr_raw<F: PrimeField, W: Write>(
-    el: &F,
-    mut writer: W
-) -> std::io::Result<()> {
+pub fn write_fr_raw<F: PrimeField, W: Write>(el: &F, mut writer: W) -> std::io::Result<()> {
     use crate::ff::PrimeFieldRepr;
 
     let repr = el.into_raw_repr();
@@ -54,9 +48,7 @@ pub fn write_fr_raw<F: PrimeField, W: Write>(
     Ok(())
 }
 
-pub fn read_fr<F: PrimeField, R: Read>(
-    mut reader: R
-) -> std::io::Result<F> {
+pub fn read_fr<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<F> {
     use crate::ff::PrimeFieldRepr;
 
     let mut repr = F::Repr::default();
@@ -65,9 +57,7 @@ pub fn read_fr<F: PrimeField, R: Read>(
     F::from_repr(repr).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-pub fn read_fr_raw<F: PrimeField, R: Read>(
-    mut reader: R
-) -> std::io::Result<F> {
+pub fn read_fr_raw<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<F> {
     use crate::ff::PrimeFieldRepr;
     let mut repr = F::Repr::default();
     repr.read_be(&mut reader)?;
@@ -76,11 +66,7 @@ pub fn read_fr_raw<F: PrimeField, R: Read>(
 }
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
-    pub fn write<W: Write>(
-        &self,
-        mut writer: W
-    ) -> std::io::Result<()>
-    {
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
         writer.write_u64::<BigEndian>(self.n as u64)?;
         writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
 
@@ -111,10 +97,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
         Ok(())
     }
 
-    pub fn read<R: Read>(
-        mut reader: R
-    ) -> std::io::Result<Self>
-    {
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
         let n = reader.read_u64::<BigEndian>()?;
         let num_inputs = reader.read_u64::<BigEndian>()?;
 
@@ -134,7 +117,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
 
         let num_next_step_selectors = reader.read_u64::<BigEndian>()?;
         let mut next_step_selectors = Vec::with_capacity(num_next_step_selectors as usize);
-        for _ in 0..num_selectors {
+        for _ in 0..num_next_step_selectors {
             let num_values = reader.read_u64::<BigEndian>()?;
             let mut poly_coeffs = Vec::with_capacity(num_values as usize);
             for _ in 0..num_values {
@@ -148,7 +131,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
 
         let num_permutation_polys = reader.read_u64::<BigEndian>()?;
         let mut permutation_polys = Vec::with_capacity(num_permutation_polys as usize);
-        for _ in 0..num_selectors {
+        for _ in 0..num_permutation_polys {
             let num_values = reader.read_u64::<BigEndian>()?;
             let mut poly_coeffs = Vec::with_capacity(num_values as usize);
             for _ in 0..num_values {
@@ -160,35 +143,36 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
             permutation_polys.push(poly);
         }
 
-        let new = Self{
+        let new = Self {
             n: n as usize,
             num_inputs: num_inputs as usize,
             selector_polynomials: selectors,
             next_step_selector_polynomials: next_step_selectors,
             permutation_polynomials: permutation_polys,
-        
-            _marker: std::marker::PhantomData
+
+            _marker: std::marker::PhantomData,
         };
 
         Ok(new)
-    }  
+    }
 }
 
 pub struct SetupPolynomialsPrecomputations<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub selector_polynomials_on_coset_of_size_4n_bitreversed: Vec<Polynomial<E::Fr, Values>>,
-    pub next_step_selector_polynomials_on_coset_of_size_4n_bitreversed: Vec<Polynomial<E::Fr, Values>>,
+    pub next_step_selector_polynomials_on_coset_of_size_4n_bitreversed:
+        Vec<Polynomial<E::Fr, Values>>,
     pub permutation_polynomials_on_coset_of_size_4n_bitreversed: Vec<Polynomial<E::Fr, Values>>,
     pub permutation_polynomials_values_of_size_n_minus_one: Vec<Polynomial<E::Fr, Values>>,
     pub inverse_divisor_on_coset_of_size_4n_bitreversed: Polynomial<E::Fr, Values>,
     pub x_on_coset_of_size_4n_bitreversed: Polynomial<E::Fr, Values>,
 
-    pub(crate) _marker: std::marker::PhantomData<P>
+    pub(crate) _marker: std::marker::PhantomData<P>,
 }
 
 use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputations<E, P> {
-    pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>> (
+    pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
         setup: &SetupPolynomials<E, P>,
         worker: &Worker,
         omegas_bitreversed: &CP,
@@ -198,10 +182,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputatio
             next_step_selector_polynomials_on_coset_of_size_4n_bitreversed: vec![],
             permutation_polynomials_on_coset_of_size_4n_bitreversed: vec![],
             permutation_polynomials_values_of_size_n_minus_one: vec![],
-            inverse_divisor_on_coset_of_size_4n_bitreversed: Polynomial::from_values(vec![E::Fr::one()]).unwrap(),
+            inverse_divisor_on_coset_of_size_4n_bitreversed: Polynomial::from_values(vec![
+                E::Fr::one(),
+            ])
+            .unwrap(),
             x_on_coset_of_size_4n_bitreversed: Polynomial::from_values(vec![E::Fr::one()]).unwrap(),
-            
-            _marker: std::marker::PhantomData
+
+            _marker: std::marker::PhantomData,
         };
 
         let required_domain_size = setup.selector_polynomials[0].size();
@@ -214,57 +201,70 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputatio
         // we do not precompute q_const as we need to use it for public inputs;
         for p in setup.selector_polynomials[0..(setup.selector_polynomials.len() - 1)].iter() {
             let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                LDE_FACTOR, 
-                omegas_bitreversed, 
-                &coset_generator
+                &worker,
+                LDE_FACTOR,
+                omegas_bitreversed,
+                &coset_generator,
             )?;
 
-            new.selector_polynomials_on_coset_of_size_4n_bitreversed.push(ext);
+            new.selector_polynomials_on_coset_of_size_4n_bitreversed
+                .push(ext);
         }
 
         for p in setup.next_step_selector_polynomials.iter() {
             let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                LDE_FACTOR, 
-                omegas_bitreversed, 
-                &coset_generator
+                &worker,
+                LDE_FACTOR,
+                omegas_bitreversed,
+                &coset_generator,
             )?;
 
-            new.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed.push(ext);
+            new.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed
+                .push(ext);
         }
 
         for p in setup.permutation_polynomials.iter() {
             let lde = p.clone().bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                LDE_FACTOR, 
-                omegas_bitreversed, 
-                &coset_generator
+                &worker,
+                LDE_FACTOR,
+                omegas_bitreversed,
+                &coset_generator,
             )?;
-            new.permutation_polynomials_on_coset_of_size_4n_bitreversed.push(lde);
+            new.permutation_polynomials_on_coset_of_size_4n_bitreversed
+                .push(lde);
 
             let as_values = p.clone().fft(&worker);
             let mut as_values = as_values.into_coeffs();
-            as_values.pop().expect("must shorted permutation polynomial values by one");
+            as_values
+                .pop()
+                .expect("must shorted permutation polynomial values by one");
 
             let p = Polynomial::from_values_unpadded(as_values)?;
 
-            new.permutation_polynomials_values_of_size_n_minus_one.push(p);
+            new.permutation_polynomials_values_of_size_n_minus_one
+                .push(p);
         }
-        
-        let mut vanishing_poly_inverse_bitreversed = evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
-            required_domain_size as u64, 
-            &E::Fr::multiplicative_generator(),
-            (required_domain_size * LDE_FACTOR) as u64,
-            &worker, 
-        )?;
+
+        let mut vanishing_poly_inverse_bitreversed =
+            evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
+                required_domain_size as u64,
+                &E::Fr::multiplicative_generator(),
+                (required_domain_size * LDE_FACTOR) as u64,
+                &worker,
+            )?;
         vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
         vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker);
 
-        assert_eq!(vanishing_poly_inverse_bitreversed.size(), required_domain_size * LDE_FACTOR);
+        assert_eq!(
+            vanishing_poly_inverse_bitreversed.size(),
+            required_domain_size * LDE_FACTOR
+        );
 
         // evaluate polynomial X on the coset
-        let mut x_poly = Polynomial::from_values(vec![coset_generator; vanishing_poly_inverse_bitreversed.size()])?;
+        let mut x_poly = Polynomial::from_values(vec![
+            coset_generator;
+            vanishing_poly_inverse_bitreversed.size()
+        ])?;
         x_poly.distribute_powers(&worker, x_poly.omega);
         x_poly.bitreverse_enumeration(&worker);
 
@@ -276,17 +276,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputatio
         Ok(new)
     }
 
-    pub fn from_setup (
+    pub fn from_setup(
         setup: &SetupPolynomials<E, P>,
         worker: &Worker,
     ) -> Result<Self, SynthesisError> {
-        let precomps = BitReversedOmegas::new_for_domain_size(setup.permutation_polynomials[0].size());
+        let precomps =
+            BitReversedOmegas::new_for_domain_size(setup.permutation_polynomials[0].size());
 
-        Self::from_setup_and_precomputations(
-            setup, 
-            worker, 
-            &precomps
-        )  
+        Self::from_setup_and_precomputations(setup, worker, &precomps)
     }
 }
 
@@ -309,7 +306,7 @@ pub struct Proof<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub opening_at_z_proof: E::G1Affine,
     pub opening_at_z_omega_proof: E::G1Affine,
 
-    pub(crate) _marker: std::marker::PhantomData<P>
+    pub(crate) _marker: std::marker::PhantomData<P>,
 }
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
@@ -333,15 +330,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             opening_at_z_proof: E::G1Affine::zero(),
             opening_at_z_omega_proof: E::G1Affine::zero(),
 
-            _marker: std::marker::PhantomData
+            _marker: std::marker::PhantomData,
         }
     }
 
-    pub fn write<W: Write>(
-        &self,
-        mut writer: W
-    ) -> std::io::Result<()>
-    {
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
         use crate::pairing::CurveAffine;
 
         assert_eq!(self.num_inputs, self.input_values.len());
@@ -392,10 +385,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
         Ok(())
     }
 
-    pub fn read<R: Read>(
-        mut reader: R
-    ) -> std::io::Result<Self>
-    {
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
         use crate::pairing::CurveAffine;
         use crate::pairing::EncodedPoint;
 
@@ -406,9 +396,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             let mut repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
             reader.read_exact(repr.as_mut())?;
 
-            let e = repr.into_affine()
+            let e = repr
+                .into_affine()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                
+
             Ok(e)
         };
 
@@ -479,11 +470,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Proof<E, P> {
             opening_at_z_proof: opening_at_z_proof,
             opening_at_z_omega_proof: opening_at_z_omega_proof,
 
-            _marker: std::marker::PhantomData
+            _marker: std::marker::PhantomData,
         };
 
         Ok(new)
-    }  
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -497,14 +488,14 @@ pub struct VerificationKey<E: Engine, P: PlonkConstraintSystemParams<E>> {
 
     pub g2_elements: [E::G2Affine; 2],
 
-    pub(crate) _marker: std::marker::PhantomData<P>
+    pub(crate) _marker: std::marker::PhantomData<P>,
 }
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
     pub fn from_setup(
-        setup: &SetupPolynomials<E, P>, 
-        worker: &Worker, 
-        crs: &Crs<E, CrsForMonomialForm>
+        setup: &SetupPolynomials<E, P>,
+        worker: &Worker,
+        crs: &Crs<E, CrsForMonomialForm>,
     ) -> Result<Self, SynthesisError> {
         assert_eq!(setup.selector_polynomials.len(), P::STATE_WIDTH + 2);
         if P::CAN_ACCESS_NEXT_TRACE_STEP == false {
@@ -521,8 +512,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             non_residues: vec![],
 
             g2_elements: [crs.g2_monomial_bases[0], crs.g2_monomial_bases[1]],
-        
-            _marker: std::marker::PhantomData
+
+            _marker: std::marker::PhantomData,
         };
 
         for p in setup.selector_polynomials.iter() {
@@ -541,16 +532,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
         }
 
         let domain = Domain::<E::Fr>::new_for_size(setup.n.next_power_of_two() as u64)?;
-        new.non_residues.extend(super::utils::make_non_residues(P::STATE_WIDTH - 1, &domain));
+        new.non_residues
+            .extend(super::utils::make_non_residues(P::STATE_WIDTH - 1, &domain));
 
         Ok(new)
     }
 
-    pub fn write<W: Write>(
-        &self,
-        mut writer: W
-    ) -> std::io::Result<()>
-    {
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
         use crate::pairing::CurveAffine;
 
         writer.write_u64::<BigEndian>(self.n as u64)?;
@@ -578,15 +566,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
 
         writer.write_all(self.g2_elements[0].into_uncompressed().as_ref())?;
         writer.write_all(self.g2_elements[1].into_uncompressed().as_ref())?;
-        
 
         Ok(())
     }
 
-    pub fn read<R: Read>(
-        mut reader: R
-    ) -> std::io::Result<Self>
-    {
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
         use crate::pairing::CurveAffine;
         use crate::pairing::EncodedPoint;
 
@@ -597,9 +581,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             let mut repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
             reader.read_exact(repr.as_mut())?;
 
-            let e = repr.into_affine()
+            let e = repr
+                .into_affine()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                
+
             Ok(e)
         };
 
@@ -608,13 +593,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             reader.read_exact(repr.as_mut())?;
 
             let e = repr
-            .into_affine()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-            .and_then(|e| if e.is_zero() {
-                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "point at infinity"))?
-            } else {
-                Ok(e)
-            });
+                .into_affine()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                .and_then(|e| {
+                    if e.is_zero() {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "point at infinity",
+                        ))?
+                    } else {
+                        Ok(e)
+                    }
+                });
 
             e
         };
@@ -649,10 +639,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
 
         let g2_points = [
             read_g2_not_zero(&mut reader)?,
-            read_g2_not_zero(&mut reader)?
+            read_g2_not_zero(&mut reader)?,
         ];
 
-        let new = Self{
+        let new = Self {
             n: n as usize,
             num_inputs: num_inputs as usize,
             selector_commitments: selectors,
@@ -661,13 +651,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             non_residues: non_residues,
 
             g2_elements: g2_points,
-        
-            _marker: std::marker::PhantomData
+
+            _marker: std::marker::PhantomData,
         };
 
         Ok(new)
-    }  
+    }
 }
-
-
-
