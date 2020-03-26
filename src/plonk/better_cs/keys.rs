@@ -65,6 +65,36 @@ pub fn read_fr_raw<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<F> 
     F::from_raw_repr(repr).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+pub fn write_polynomial<F: PrimeField, P: PolynomialForm, W: Write>(p: &Polynomial<F, P>, mut writer: W) -> std::io::Result<()> {
+    writer.write_u64::<BigEndian>(p.as_ref().len() as u64)?;
+    for el in p.as_ref().iter() {
+        write_fr(el, &mut writer)?;
+    }
+    Ok(())
+}
+
+pub fn read_polynomial_coeffs<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Polynomial<F, Coefficients>> {
+    let num_values = reader.read_u64::<BigEndian>()?;
+    let mut poly_coeffs = Vec::with_capacity(num_values as usize);
+    for _ in 0..num_values {
+        let el = read_fr(&mut reader)?;
+        poly_coeffs.push(el);
+    }
+
+    Ok(Polynomial::from_coeffs(poly_coeffs).expect("must fit into some domain"))
+}
+
+pub fn read_polynomial_values_unpadded<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Polynomial<F, Values>> {
+    let num_values = reader.read_u64::<BigEndian>()?;
+    let mut poly_values = Vec::with_capacity(num_values as usize);
+    for _ in 0..num_values {
+        let el = read_fr(&mut reader)?;
+        poly_values.push(el);
+    }
+
+    Ok(Polynomial::from_values_unpadded(poly_values).expect("must fit into some domain"))
+}
+
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
         writer.write_u64::<BigEndian>(self.n as u64)?;
@@ -72,26 +102,17 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
 
         writer.write_u64::<BigEndian>(self.selector_polynomials.len() as u64)?;
         for p in self.selector_polynomials.iter() {
-            writer.write_u64::<BigEndian>(p.as_ref().len() as u64)?;
-            for el in p.as_ref().iter() {
-                write_fr(el, &mut writer)?;
-            }
+            write_polynomial(p, &mut writer)?;
         }
 
         writer.write_u64::<BigEndian>(self.next_step_selector_polynomials.len() as u64)?;
         for p in self.next_step_selector_polynomials.iter() {
-            writer.write_u64::<BigEndian>(p.as_ref().len() as u64)?;
-            for el in p.as_ref().iter() {
-                write_fr(el, &mut writer)?;
-            }
+            write_polynomial(p, &mut writer)?;
         }
 
         writer.write_u64::<BigEndian>(self.permutation_polynomials.len() as u64)?;
         for p in self.permutation_polynomials.iter() {
-            writer.write_u64::<BigEndian>(p.as_ref().len() as u64)?;
-            for el in p.as_ref().iter() {
-                write_fr(el, &mut writer)?;
-            }
+            write_polynomial(p, &mut writer)?;
         }
 
         Ok(())
@@ -104,42 +125,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
         let num_selectors = reader.read_u64::<BigEndian>()?;
         let mut selectors = Vec::with_capacity(num_selectors as usize);
         for _ in 0..num_selectors {
-            let num_values = reader.read_u64::<BigEndian>()?;
-            let mut poly_coeffs = Vec::with_capacity(num_values as usize);
-            for _ in 0..num_values {
-                let el = read_fr(&mut reader)?;
-                poly_coeffs.push(el);
-            }
-
-            let poly = Polynomial::from_coeffs(poly_coeffs).expect("must fit into some domain");
+            let poly = read_polynomial_coeffs(&mut reader)?;
             selectors.push(poly);
         }
 
         let num_next_step_selectors = reader.read_u64::<BigEndian>()?;
         let mut next_step_selectors = Vec::with_capacity(num_next_step_selectors as usize);
         for _ in 0..num_next_step_selectors {
-            let num_values = reader.read_u64::<BigEndian>()?;
-            let mut poly_coeffs = Vec::with_capacity(num_values as usize);
-            for _ in 0..num_values {
-                let el = read_fr(&mut reader)?;
-                poly_coeffs.push(el);
-            }
-
-            let poly = Polynomial::from_coeffs(poly_coeffs).expect("must fit into some domain");
+            let poly = read_polynomial_coeffs(&mut reader)?;
             next_step_selectors.push(poly);
         }
 
         let num_permutation_polys = reader.read_u64::<BigEndian>()?;
         let mut permutation_polys = Vec::with_capacity(num_permutation_polys as usize);
         for _ in 0..num_permutation_polys {
-            let num_values = reader.read_u64::<BigEndian>()?;
-            let mut poly_coeffs = Vec::with_capacity(num_values as usize);
-            for _ in 0..num_values {
-                let el = read_fr(&mut reader)?;
-                poly_coeffs.push(el);
-            }
-
-            let poly = Polynomial::from_coeffs(poly_coeffs).expect("must fit into some domain");
+            let poly = read_polynomial_coeffs(&mut reader)?;
             permutation_polys.push(poly);
         }
 
@@ -284,6 +284,74 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomialsPrecomputatio
             BitReversedOmegas::new_for_domain_size(setup.permutation_polynomials[0].size());
 
         Self::from_setup_and_precomputations(setup, worker, &precomps)
+    }
+
+
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u64::<BigEndian>(self.selector_polynomials_on_coset_of_size_4n_bitreversed.len() as u64)?;
+        for p in &self.selector_polynomials_on_coset_of_size_4n_bitreversed {
+            write_polynomial(p, &mut writer)?;
+        }
+        writer.write_u64::<BigEndian>(self.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed.len() as u64)?;
+        for p in &self.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed {
+            write_polynomial(p, &mut writer)?;
+        }
+        writer.write_u64::<BigEndian>(self.permutation_polynomials_on_coset_of_size_4n_bitreversed.len() as u64)?;
+        for p in &self.permutation_polynomials_on_coset_of_size_4n_bitreversed {
+            write_polynomial(p, &mut writer)?;
+        }
+        writer.write_u64::<BigEndian>(self.permutation_polynomials_values_of_size_n_minus_one.len() as u64)?;
+        for p in &self.permutation_polynomials_values_of_size_n_minus_one {
+            write_polynomial(p, &mut writer)?;
+        }
+        write_polynomial(&self.inverse_divisor_on_coset_of_size_4n_bitreversed, &mut writer)?;
+        write_polynomial(&self.x_on_coset_of_size_4n_bitreversed, &mut writer)?;
+        Ok(())
+    }
+
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let num_selectors = reader.read_u64::<BigEndian>()?;
+        let mut selector_polynomials_on_coset_of_size_4n_bitreversed =
+            Vec::with_capacity(num_selectors as usize);
+        for _ in 0..num_selectors {
+            let poly = read_polynomial_values_unpadded(&mut reader)?;
+            selector_polynomials_on_coset_of_size_4n_bitreversed.push(poly);
+        }
+
+        let num_next_step_selectors = reader.read_u64::<BigEndian>()?;
+        let mut next_step_selector_polynomials_on_coset_of_size_4n_bitreversed =
+            Vec::with_capacity(num_next_step_selectors as usize);
+        for _ in 0..num_next_step_selectors {
+            let poly = read_polynomial_values_unpadded(&mut reader)?;
+            next_step_selector_polynomials_on_coset_of_size_4n_bitreversed.push(poly);
+        }
+
+        let num_permutation_polys = reader.read_u64::<BigEndian>()?;
+        let mut permutation_polynomials_on_coset_of_size_4n_bitreversed =
+            Vec::with_capacity(num_permutation_polys as usize);
+        for _ in 0..num_permutation_polys {
+            let poly = read_polynomial_values_unpadded(&mut reader)?;
+            permutation_polynomials_on_coset_of_size_4n_bitreversed.push(poly);
+        }
+
+        let num_permutation_polys_size_minus_one = reader.read_u64::<BigEndian>()?;
+        let mut permutation_polynomials_values_of_size_n_minus_one = Vec::with_capacity(num_permutation_polys as usize);
+        for _ in 0..num_permutation_polys_size_minus_one {
+            let poly = read_polynomial_values_unpadded(&mut reader)?;
+            permutation_polynomials_values_of_size_n_minus_one.push(poly);
+        }
+        let inverse_divisor_on_coset_of_size_4n_bitreversed = read_polynomial_values_unpadded(&mut reader)?;
+        let x_on_coset_of_size_4n_bitreversed = read_polynomial_values_unpadded(&mut reader)?;
+
+        Ok(Self {
+            selector_polynomials_on_coset_of_size_4n_bitreversed,
+            next_step_selector_polynomials_on_coset_of_size_4n_bitreversed,
+            permutation_polynomials_on_coset_of_size_4n_bitreversed,
+            permutation_polynomials_values_of_size_n_minus_one,
+            inverse_divisor_on_coset_of_size_4n_bitreversed,
+            x_on_coset_of_size_4n_bitreversed,
+            _marker: std::marker::PhantomData,
+        })
     }
 }
 
