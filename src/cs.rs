@@ -56,6 +56,12 @@ impl<E: Engine> AsRef<[(Variable, E::Fr)]> for LinearCombination<E> {
     }
 }
 
+impl<E: Engine> AsMut<Vec<(Variable, E::Fr)>> for LinearCombination<E> {
+    fn as_mut(&mut self) -> &mut Vec<(Variable, E::Fr)> {
+        &mut self.0
+    }
+}
+
 impl<E: Engine> LinearCombination<E> {
     pub fn zero() -> LinearCombination<E> {
         LinearCombination(vec![])
