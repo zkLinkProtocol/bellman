@@ -739,7 +739,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, P> f
     ) -> Result<(), SynthesisError> {
         // Transpiler does NOT allocate any gates himself
         self.n += 1;
-        
+
         Ok(())
     }
 
@@ -771,6 +771,8 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, 
             || "alloc input var", 
         value)?;
 
+        self.n += 1;
+
         Ok(convert_variable(var))
     }
 
@@ -780,6 +782,8 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, 
         _next_step_coeffs: P::NextTraceStepCoefficients
     ) -> Result<(), SynthesisError> {
         // Transpiler does NOT allocate any gates himself
+        self.n += 1;
+        
         Ok(())
     }
 
