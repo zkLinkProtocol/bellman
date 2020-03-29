@@ -39,6 +39,16 @@ pub fn transpile<E: Engine, C: crate::Circuit<E>>(circuit: C) -> Result<Vec<(usi
     Ok(hints)
 }
 
+pub fn transpile_with_gates_count<E: Engine, C: crate::Circuit<E>>(circuit: C) -> Result<(usize, Vec<(usize, TranspilationVariant)>), SynthesisError> {
+    let mut transpiler = Transpiler::<E, PlonkCsWidth4WithNextStepParams>::new();
+
+    circuit.synthesize(&mut transpiler).expect("sythesize into traspilation must succeed");
+
+    let (n, hints) = transpiler.into_hints_and_num_gates();
+
+    Ok((n, hints))
+}
+
 pub fn is_satisfied<E: Engine, C: crate::Circuit<E>>(
     circuit: C,
     hints: &Vec<(usize, TranspilationVariant)>

@@ -267,6 +267,7 @@ pub struct Transpiler<E: Engine, P: PlonkConstraintSystemParams<E>> {
     deduplication_scratch: HashMap<crate::cs::Variable, usize>,
     transpilation_scratch_space: Option<TranspilationScratchSpace<E>>,
     hints: Vec<(usize, TranspilationVariant)>,
+    n: usize,
     _marker_e: std::marker::PhantomData<E>,
     _marker_p: std::marker::PhantomData<P>
 }
@@ -677,13 +678,22 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> Transpiler<E, P> {
             deduplication_scratch: HashMap::with_capacity((E::Fr::NUM_BITS * 2) as usize),
             transpilation_scratch_space: Some(TranspilationScratchSpace::<E>::new(P::STATE_WIDTH * 2)),
             hints: vec![],
+            n: 0usize,
             _marker_e: std::marker::PhantomData,
             _marker_p: std::marker::PhantomData
         }
     }
 
+    pub fn num_gates(&self) -> usize {
+        self.n
+    }
+
     pub fn into_hints(self) -> Vec<(usize, TranspilationVariant)> {
         self.hints
+    }
+
+    pub fn into_hints_and_num_gates(self) -> (usize, Vec<(usize, TranspilationVariant)>) {
+        (self.n, self.hints)
     }
 
     fn increment_lc_number(&mut self) -> usize {
@@ -716,6 +726,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, P> f
             self,
             || "alloc input var", 
         value)?;
+
+        self.n += 1;
+
         Ok(convert_variable(var))
     }
 
@@ -725,6 +738,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, P> f
         _next_step_coeffs: P::NextTraceStepCoefficients
     ) -> Result<(), SynthesisError> {
         // Transpiler does NOT allocate any gates himself
+        self.n += 1;
+        
         Ok(())
     }
 
@@ -755,6 +770,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, 
             self,
             || "alloc input var", 
         value)?;
+
         Ok(convert_variable(var))
     }
 
