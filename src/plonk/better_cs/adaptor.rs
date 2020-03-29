@@ -323,7 +323,6 @@ fn evaluate_lc<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraint
 fn evaluate_over_variables<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem<E, P>>(
     cs: &CS,
     variables: &[(Variable, E::Fr)],
-    // multiplier: E::Fr, 
     free_term_constant: E::Fr
 ) -> Result<E::Fr, SynthesisError> {
     let mut final_value = E::Fr::zero();
@@ -341,7 +340,6 @@ fn evaluate_over_variables<E: Engine, P: PlonkConstraintSystemParams<E>, CS: Plo
 fn evaluate_over_plonk_variables<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem<E, P>>(
     cs: &CS,
     variables: &[(PlonkVariable, E::Fr)],
-    // multiplier: E::Fr, 
     free_term_constant: E::Fr
 ) -> Result<E::Fr, SynthesisError> {
     let mut final_value = E::Fr::zero();
@@ -350,10 +348,6 @@ fn evaluate_over_plonk_variables<E: Engine, P: PlonkConstraintSystemParams<E>, C
         may_be_value.mul_assign(&coeff);
         final_value.add_assign(&may_be_value);
     }
-
-    // if multiplier != E::Fr::one() {
-    //     final_value.mul_assign(&multiplier);
-    // }
 
     final_value.add_assign(&free_term_constant);
 
@@ -364,7 +358,6 @@ fn evaluate_over_plonk_variables_and_coeffs<E: Engine, P: PlonkConstraintSystemP
     cs: &CS,
     variables: &[PlonkVariable],
     coeffs: &[E::Fr],
-    // multiplier: E::Fr, 
     free_term_constant: E::Fr
 ) -> Result<E::Fr, SynthesisError> {
     debug_assert_eq!(variables.len(), coeffs.len());
@@ -374,10 +367,6 @@ fn evaluate_over_plonk_variables_and_coeffs<E: Engine, P: PlonkConstraintSystemP
         may_be_value.mul_assign(&coeff);
         final_value.add_assign(&may_be_value);
     }
-
-    // if multiplier != E::Fr::one() {
-    //     final_value.mul_assign(&multiplier);
-    // }
 
     final_value.add_assign(&free_term_constant);
 
@@ -834,13 +823,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
         LB: FnOnce(crate::LinearCombination<E>) -> crate::LinearCombination<E>,
         LC: FnOnce(crate::LinearCombination<E>) -> crate::LinearCombination<E>,
     {
-        // let ann: String = _ann().into();
-        // if ann.contains("y-coordinate lookup") {
-        //     // 
-        //     let _t = E::Fr::one();
-        // };
-        // println!("Enforce {}", ann);
-
         let zero_fr = E::Fr::zero();
         let one_fr = E::Fr::one();
 
@@ -1501,17 +1483,7 @@ fn deduplicate_and_split_linear_term<E: Engine, CS: ConstraintSystem<E>>(
         }
     }
 
-    // let _initial_len = deduped_vec.len();
-
     deduped_vec = deduped_vec.into_iter().filter(|(_var, coeff)| !coeff.is_zero()).collect();
-
-    // let _final_len = deduped_vec.len();
-
-    // if _initial_len != _final_len {
-    //     println!("Encountered constraint with zero coeff for variable!");
-    // }
-
-    // assert!(deduped_vec.len() != 0);
 
     scratch.clear();
 
@@ -1558,17 +1530,7 @@ fn subtract_lcs_with_dedup_stable<E: Engine, CS: ConstraintSystem<E>>(
         }
     }
 
-    // let _initial_len = deduped_vec.len();
-
     deduped_vec = deduped_vec.into_iter().filter(|(_var, coeff)| !coeff.is_zero()).collect();
-
-    // let _final_len = deduped_vec.len();
-
-    // if _initial_len != _final_len {
-    //     println!("Encountered constraint with zero coeff for variable!");
-    // }
-
-    // assert!(deduped_vec.len() != 0);
 
     scratch.clear();
 
@@ -1627,20 +1589,6 @@ pub struct Adaptor<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkCo
 }
 
 impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem<E, P> + 'a> Adaptor<'a, E, P, CS> {
-    // fn get_next_hint(&mut self) -> &(usize, TranspilationVariant<E>) {
-    //     let current_hint_index = self.current_hint_index;
-    //     let expected_constraint_index = self.current_constraint_index;
-
-    //     let next_hint = &self.hints[current_hint_index];
-
-    //     assert!(next_hint.0 == expected_constraint_index);
-
-    //     self.current_hint_index += 1;
-    //     self.current_constraint_index += 1;
-
-    //     next_hint
-    // }
-
     fn get_next_hint(&mut self) -> (usize, TranspilationVariant) {
         let current_hint_index = self.current_hint_index;
         let expected_constraint_index = self.current_constraint_index;
@@ -1734,25 +1682,6 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
         let b_is_constant = b_has_constant & b_lc_is_empty;
         let c_is_constant = c_has_constant & c_lc_is_empty;
 
-        // debug_assert!(a_has_constant || !a_lc_is_empty);
-        // debug_assert!(b_has_constant || !b_lc_is_empty);
-        // debug_assert!(c_has_constant || !c_lc_is_empty);
-
-        // let ann : String = _ann().into();
-        // println!("Enforcing {}", ann);
-        // println!("LC_A");
-        // for (var, coeff) in a.as_ref().iter() {
-        //     println!("{} * {:?}", coeff, var);
-        // }
-        // println!("LC_B");
-        // for (var, coeff) in b.as_ref().iter() {
-        //     println!("{} * {:?}", coeff, var);
-        // }
-        // println!("LC_C");
-        // for (var, coeff) in c.as_ref().iter() {
-        //     println!("{} * {:?}", coeff, var);
-        // }
-
         let dummy_var = self.cs.get_dummy_variable();
 
         // variables are left, right, output
@@ -1803,17 +1732,8 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                     &*space.scratch_space_for_vars,
                     &*space.scratch_space_for_coeffs
                 ).expect("must make a quadratic gate");
-
-                // self.cs.new_gate(
-                //     (var, var, dummy_var),
-                //     [c1, zero_fr, zero_fr, c2, c0, zero_fr]
-                // ).expect("must make a quadratic gate");
             },
             TranspilationVariant::IntoMultiplicationGate(hints) => {
-                // let ann: String = _ann().into();
-                // if ann.contains("(a - b) * x == r - 1") {
-                //     println!("{}", ann);
-                // }
 
                 let (t_a, t_b, t_c) = hints;
                 let mut q_m = one_fr;
@@ -1928,19 +1848,6 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                         &*space.scratch_space_for_vars,
                         &*space.scratch_space_for_coeffs
                     ).expect("must make a multiplication gate with C being constant");
-
-                    // A*B == constant
-                    // let t = self.cs.new_gate(
-                    //     (a_var, b_var, dummy_var), 
-                    //     [zero_fr, zero_fr, zero_fr, q_m, constant_term, zero_fr]
-                    // ); //.expect("must make a multiplication gate with C being constant");
-
-                    // if t.is_err() {
-                    //     let ann: String = _ann().into();
-                    //     println!("Enforcing {}", ann);
-                    //     println!("Hint = {:?}", _hint);
-                    //     panic!("Unsatisfied multiplication gate with C being constant");
-                    // }
                 } else {
                     // Plain multiplication gate
 
@@ -1967,30 +1874,10 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                         &*space.scratch_space_for_vars,
                         &*space.scratch_space_for_coeffs
                     ).expect("must make a plain multiplication gate");
-
-
-                    // let t = self.cs.new_gate(
-                    //     (a_var, b_var, c_var), 
-                    //     [zero_fr, zero_fr, q_c, q_m, zero_fr, zero_fr]
-                    // ); //.expect("must make a multiplication gate");
-
-                    // if t.is_err() {
-                    //     let ann: String = _ann().into();
-                    //     println!("Enforcing {}", ann);
-                    //     println!("A constant term = {}", a_constant_term);
-                    //     println!("B constant term = {}", b_constant_term);
-                    //     println!("C constant term = {}", c_constant_term);
-                    //     println!("Hint = {:?}", _hint);
-                    //     panic!("Unsatisfied multiplication gate");
-                    // }
                 }
             },
             // make an addition gate
             TranspilationVariant::IntoAdditionGate(hint) => {
-                // let ann: String = _ann().into();
-                // println!("Enforcing {}", ann);
-                // println!("Hint is {:?}", hint);
-
                 // these are simple enforcements that are not a part of multiplication gate
                 // or merge of LCs
 
@@ -2033,35 +1920,11 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
 
                     assert!(hint == _variant);
                 } else {
-                    // let ann: String = _ann().into();
-                    // println!("Enforcing {}", ann);
-                    // println!("Hint is {:?}", hint);
-
                     // c is not a constant and it's handled by MergeLCs
                     unreachable!();
                 }
             },
-            // TranspilationVariant::IsConstant => {
-            //     // let ann: String = _ann().into();
-            //     // println!("Enforcing {}", ann);
-            //     // println!("Hint is {:?}", hint);
-            //     unreachable!()
-            // },
-            // TranspilationVariant::LeaveAsSingleVariable => {
-            //     // let ann: String = _ann().into();
-            //     // println!("Enforcing {}", ann);
-            //     // println!("Hint is {:?}", hint);
-
-            //     // we may have encounted this if something like variable == 0
-            //     // but we use addition gate instead
-            //     unreachable!()
-            // },
             TranspilationVariant::MergeLinearCombinations(merge_variant, merge_hint) => {
-                // let ann: String = _ann().into();
-                // if ann.contains("unpacking constraint") {
-                //     println!("{}", ann);
-                // }
-
                 let multiplier = if a_is_constant {
                     a_constant_term
                 } else if b_is_constant {
