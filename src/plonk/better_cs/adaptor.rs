@@ -783,7 +783,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>> PlonkConstraintSystem<E, 
     ) -> Result<(), SynthesisError> {
         // Transpiler does NOT allocate any gates himself
         self.n += 1;
-        
+
         Ok(())
     }
 
@@ -936,6 +936,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 );
                 if is_quadratic_gate {
                     let current_lc_number = self.increment_lc_number();
+                    // we don't pass a call to any function that allocates a gate,
+                    // so we count ourselves
+                    self.n += 1;
 
                     let hint = TranspilationVariant::IntoQuadraticGate;
 
@@ -973,6 +976,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 let hint_c = LcTransformationVariant::IsConstant;
 
                 let hint = TranspilationVariant::IntoMultiplicationGate((hint_a, hint_b, hint_c));
+                // we don't pass a call to any function that allocates a gate,
+                // so we count ourselves
+                self.n += 1;
 
                 // println!("Hint = {:?}", hint);
 
@@ -1110,6 +1116,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     let current_lc_number = self.increment_lc_number();
 
                     let hint = TranspilationVariant::IntoQuadraticGate;
+                    // we don't pass a call to any function that allocates a gate,
+                    // so we count ourselves
+                    self.n += 1;
 
                     // println!("Hint = {:?}", hint);
 
@@ -1152,6 +1161,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 let current_lc_number = self.increment_lc_number();
 
                 let hint = TranspilationVariant::IntoMultiplicationGate((hint_a, hint_b, hint_c));
+                // we don't pass a call to any function that allocates a gate,
+                // so we count ourselves
+                self.n += 1;
 
                 // println!("Hint = {:?}", hint);
 
