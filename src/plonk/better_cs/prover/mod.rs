@@ -21,6 +21,8 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::LDE_FACTOR;
 
+pub(crate) mod prove_steps;
+
 // #[derive(Debug, Clone)]
 pub struct ProverAssembly<E: Engine, P: PlonkConstraintSystemParams<E>> {
     m: usize,
