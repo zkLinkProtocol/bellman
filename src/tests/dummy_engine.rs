@@ -485,4 +485,20 @@ impl CurveAffine for Fr {
     fn into_projective(&self) -> Self::Projective {
         *self
     }
+
+    fn as_xy(&self) -> (&Self::Base, &Self::Base) {
+        (self, self)
+    }
+
+    fn into_xy_unchecked(&self) -> (Self::Base, Self::Base) {
+        (*self, *self)
+    }
+
+    fn from_xy_unchecked(_x: Self::Base, _y: Self::Base) -> Self {
+        _x
+    }
+
+    fn from_xy_checked(_x: Self::Base, _y: Self::Base) -> Result<Self, GroupDecodingError> {
+        Ok(_x)
+    }
 }
