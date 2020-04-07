@@ -18,6 +18,8 @@ pub mod commitments;
 
 pub mod better_cs;
 
+pub mod better_better_cs;
+
 pub use self::better_cs::adaptor::{TranspilationVariant, Transpiler, Adaptor, AdaptorCircuit};
 pub use self::better_cs::keys::{SetupPolynomials, SetupPolynomialsPrecomputations, VerificationKey, Proof};
 
