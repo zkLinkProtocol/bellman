@@ -486,11 +486,19 @@ impl CurveAffine for Fr {
         *self
     }
 
+    fn as_xy(&self) -> (&Self::Base, &Self::Base) {
+        (&self, &self)
+    }
 
     fn into_xy_unchecked(&self) -> (Self::Base, Self::Base) {
         (<Fr as Field>::zero(), <Fr as Field>::zero())
     }
+
     fn from_xy_unchecked(_x: Self::Base, _y: Self::Base) -> Self {
         <Fr as Field>::zero()
+    }
+
+    fn from_xy_checked(_x: Self::Base, _y: Self::Base) -> Result<Self, GroupDecodingError> {
+        Ok(<Fr as Field>::zero())
     }
 }

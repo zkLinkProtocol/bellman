@@ -103,7 +103,7 @@ mod test {
 
     #[test]
     fn test_proth_field() {
-        use crate::ff::{Field, PrimeField};
+        use crate::ff::{Field, PrimeField, to_hex};
         use super::Fr as FrMontNaive;
         use super::proth::Fr as FrOptimized;
 
@@ -122,9 +122,9 @@ mod test {
         let mut tmp1 = one_optimized;
         tmp1.mul_assign(&one_optimized);
 
-        assert_eq!(tmp0.to_hex(), tmp1.to_hex());
+        assert_eq!(to_hex(&tmp0), to_hex(&tmp1));
 
-        assert_eq!(FrMontNaive::multiplicative_generator().to_hex(), FrOptimized::multiplicative_generator().to_hex());
+        assert_eq!(to_hex(&FrMontNaive::multiplicative_generator()), to_hex(&FrOptimized::multiplicative_generator()));
     }
 
     #[test]
