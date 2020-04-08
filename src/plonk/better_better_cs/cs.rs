@@ -1,10 +1,12 @@
 use crate::pairing::ff::{Field};
 use crate::pairing::{Engine};
+use crate::bit_vec::BitVec;
 
 use crate::{SynthesisError};
 use std::marker::PhantomData;
 
 pub use crate::plonk::cs::variable::*;
+
 
 pub trait Circuit<E: Engine, P: PlonkConstraintSystemParams<E>> {
     fn synthesize<CS: ConstraintSystem<E, P>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
@@ -14,14 +16,14 @@ pub trait Circuit<E: Engine, P: PlonkConstraintSystemParams<E>> {
 pub enum PolynomialInConstraint {
     VariablesPolynomial(usize, TimeDilation),
     WitnessPolynomial(usize, TimeDilation),
-    SetupPolynomial(usize, TimeDilation)
+    SetupPolynomial(&'static str, usize, TimeDilation)
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum PolyIdentifier {
     VariablesPolynomial(usize),
     WitnessPolynomial(usize),
-    SetupPolynomial(usize),
+    SetupPolynomial(&'static str, usize),
 }
 // pub struct VariablesPolynomial(pub usize);
 // pub struct WitnessPolynomial(pub usize);
@@ -147,7 +149,7 @@ impl Width4MainGateWithDNextEquation {
                 PolynomialMultiplicativeTerm(
                     vec![
                         PolynomialInConstraint::VariablesPolynomial(i, TimeDilation(0)), 
-                        PolynomialInConstraint::SetupPolynomial(i, TimeDilation(0))
+                        PolynomialInConstraint::SetupPolynomial("main gate of width 4", i, TimeDilation(0))
                     ]
                 )
             );
@@ -159,7 +161,7 @@ impl Width4MainGateWithDNextEquation {
                 vec![
                     PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)), 
                     PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)), 
-                    PolynomialInConstraint::SetupPolynomial(4, TimeDilation(0))
+                    PolynomialInConstraint::SetupPolynomial("main gate of width 4", 4, TimeDilation(0))
                 ]
             )
         );
@@ -168,7 +170,7 @@ impl Width4MainGateWithDNextEquation {
         terms.push(
             PolynomialMultiplicativeTerm(
                 vec![
-                    PolynomialInConstraint::SetupPolynomial(5, TimeDilation(0))
+                    PolynomialInConstraint::SetupPolynomial("main gate of width 4", 5, TimeDilation(0))
                 ]
             )
         );
@@ -177,7 +179,7 @@ impl Width4MainGateWithDNextEquation {
             PolynomialMultiplicativeTerm(
                 vec![
                     PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)), 
-                    PolynomialInConstraint::SetupPolynomial(6, TimeDilation(0))
+                    PolynomialInConstraint::SetupPolynomial("main gate of width 4", 6, TimeDilation(0))
                 ]
             )
         );
@@ -221,7 +223,7 @@ fn has_access_to_next_step<G: GateEquation>(gate: &G) -> bool {
                             return true;
                         }
                     },
-                    PolynomialInConstraint::SetupPolynomial(_, TimeDilation(shift)) => {
+                    PolynomialInConstraint::SetupPolynomial(_, _, TimeDilation(shift)) => {
                         if shift != &0usize {
                             return true;
                         }
@@ -298,37 +300,39 @@ fn max_addressed_witness_poly<G: GateEquation>(gate: &G) -> Option<usize> {
     max
 }
 
-fn max_addressed_setup_poly<G: GateEquation>(gate: &G) -> Option<usize> {
-    let mut max: Option<usize> = None;
+// fn max_addressed_setup_poly<G: GateEquation>(gate: &G) -> Option<(usize, &'static str)> {
+//     let mut max: Option<usize> = None;
 
-    for t in gate.get_constraints() {
-        for c in t.0.iter() {
-            for s in c.0.iter() {
-                match s {
-                    PolynomialInConstraint::SetupPolynomial(idx, _) => {
-                        let new_max = match max.take() {
-                            Some(value) => {
-                                if value < *idx {
-                                    Some(*idx)
-                                } else {
-                                    Some(value)
-                                }
-                            },
-                            None => {
-                                Some(*idx)
-                            }
-                        };
+//     let mut setup_tag = None;
 
-                        max = new_max;
-                    },
-                    _ => {}
-                }
-            }
-        }
-    }
+//     for t in gate.get_constraints() {
+//         for c in t.0.iter() {
+//             for s in c.0.iter() {
+//                 match s {
+//                     PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
+//                         let new_max = match max.take() {
+//                             Some(value) => {
+//                                 if value < *idx {
+//                                     Some(*idx)
+//                                 } else {
+//                                     Some(value)
+//                                 }
+//                             },
+//                             None => {
+//                                 Some(*idx)
+//                             }
+//                         };
 
-    max
-}
+//                         max = new_max;
+//                     },
+//                     _ => {}
+//                 }
+//             }
+//         }
+//     }
+
+//     max
+// }
 
 fn check_gate_is_allowed_for_params<E: Engine, P: PlonkConstraintSystemParams<E>, G: GateEquation>(
     gate: &G
@@ -412,7 +416,7 @@ pub trait ConstraintSystem<E: Engine, P: PlonkConstraintSystemParams<E>> {
         Err(SynthesisError::AssignmentMissing)
     }
 
-    fn get_dummy_variable(&self) -> Variable;
+    fn get_dummy_variable() -> Variable;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -434,7 +438,7 @@ use crate::plonk::polynomials::*;
 // }
 
 pub struct PolynomialStorage<E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
+    pub state_map: std::collections::HashMap<PolyIdentifier, Vec<Variable>>,
     pub witness_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
     pub setup_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
 }
@@ -449,6 +453,14 @@ impl<E: Engine> PolynomialStorage<E> {
     }
 }
 
+pub struct GateDensityStorage(pub std::collections::HashMap<Box<dyn GateEquationInternal>, BitVec>);
+
+impl GateDensityStorage {
+    pub fn new() -> Self {
+        Self(std::collections::HashMap::new())
+    }
+}
+
 struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> {
     storage: PolynomialStorage<E>,
     n: usize,
@@ -460,6 +472,7 @@ struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEqu
     num_aux: usize,
     trace_step_for_batch: Option<usize>,
     constraints: std::collections::HashSet<Box<dyn GateEquationInternal>>,
+    gate_density: GateDensityStorage,
     _marker: std::marker::PhantomData<P>
 }
 
@@ -515,24 +528,28 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
         // check that gate is ok for config
         debug_assert!(check_gate_is_allowed_for_params::<E, P, G>(&gate));
 
+        let n = self.trace_step_for_batch.unwrap();
+
         let mut coeffs_it = coefficients_assignments.iter();
 
-        let mut setup_index: Option<usize> = None;
-
+        let mut setup_index: Option<(&'static str, usize)> = None;
         for t in gate.get_constraints() {
             for c in t.0.iter() {
                 for s in c.0.iter() {
                     match s {
-                        PolynomialInConstraint::SetupPolynomial(idx, _) => {
-                            setup_index = Some(*idx);
+                        PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
+                            setup_index = Some((name, *idx));
                         },
                         _ => {}
                     }
 
                     match setup_index.take() {
-                        Some(idx) => {
-                            let key = PolyIdentifier::SetupPolynomial(idx);
+                        Some((name, idx)) => {
+                            let key = PolyIdentifier::SetupPolynomial(name, idx);
                             let poly_ref = self.storage.setup_map.entry(key).or_insert(vec![]);
+                            if poly_ref.len() < n {
+                                poly_ref.resize(n, E::Fr::zero());
+                            }
                             poly_ref.push(*coeffs_it.next().expect("must get some coefficient for assignment"));
                         },
                         _ => {}
@@ -543,9 +560,93 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
 
         debug_assert!(coeffs_it.next().is_none(), "must consume all the coefficients for gate");
 
+        let mut variable_index: Option<usize> = None;
+
+        let mut variable_it = variables_assignments.iter();
+
+        // go through all used variables to place them into the STATE
+        for t in gate.get_constraints() {
+            for c in t.0.iter() {
+                for s in c.0.iter() {
+                    match s {
+                        PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)) => {
+                            variable_index = Some(*idx);
+                        }
+                        PolynomialInConstraint::VariablesPolynomial(_, TimeDilation(_)) => {
+                            // gate can only have power over the current step
+                        },
+                        _ => {}
+                    }
+
+                    match variable_index.take() {
+                        Some(idx) => {
+                            let key = PolyIdentifier::VariablesPolynomial(idx);
+                            let poly_ref = self.storage.state_map.entry(key).or_insert(vec![]);
+                            if poly_ref.len() < n {
+                                poly_ref.resize(n, Self::get_dummy_variable());
+                            } else if poly_ref.len() == n {
+                                // we consume variable only ONCE
+                                let var = *variable_it.next().expect("must get some variable for assignment");
+                                poly_ref.push(var);
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        debug_assert!(variable_it.next().is_none(), "must consume all variables for gate");
+
+        let mut witness_it = witness_assignments.iter();
+
+        let mut witness_index: Option<usize> = None;
+
+        // go through all used variables to place them into the STATE
+        for t in gate.get_constraints() {
+            for c in t.0.iter() {
+                for s in c.0.iter() {
+                    match s {
+                        PolynomialInConstraint::WitnessPolynomial(idx, TimeDilation(0)) => {
+                            witness_index = Some(*idx);
+                        },
+                        _ => {}
+                    }
+
+                    match witness_index.take() {
+                        Some(idx) => {
+                            let key = PolyIdentifier::VariablesPolynomial(idx);
+                            let poly_ref = self.storage.witness_map.entry(key).or_insert(vec![]);
+                            if poly_ref.len() < n {
+                                poly_ref.resize(n, E::Fr::zero());
+                            } 
+                            poly_ref.push(*witness_it.next().expect("must get some coefficient for assignment"));
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        debug_assert!(witness_it.next().is_none(), "must consume all variables for gate");
+
         if !self.constraints.contains(gate.as_internal() as &dyn GateEquationInternal) {
             self.constraints.insert(gate.clone().into_internal());
         }        
+
+        if let Some(tracker) = self.gate_density.0.get_mut(gate.as_internal() as &dyn GateEquationInternal) {
+            if tracker.len() != n {
+                let padding = n - tracker.len();
+                tracker.grow(padding, false);
+            }
+            tracker.push(true);
+            debug_assert_eq!(n+1, tracker.len());
+        } else {
+            self.gate_density.0.insert(gate.clone().into_internal(), BitVec::new());
+            let tracker = self.gate_density.0.get_mut(gate.as_internal() as &dyn GateEquationInternal).unwrap();
+            tracker.grow(n, false);
+            tracker.push(true);
+        }
 
         Ok(())
     }
@@ -580,8 +681,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
         Ok(value)
     }
 
-    fn get_dummy_variable(&self) -> Variable {
-        self.dummy_variable()
+    fn get_dummy_variable() -> Variable {
+        Self::dummy_variable()
     }
 }
 
@@ -606,10 +707,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> TrivialAsse
 
             constraints: std::collections::HashSet::new(),
 
+            gate_density: GateDensityStorage::new(),
+
             _marker: std::marker::PhantomData
         };
 
         tmp.max_constraint_degree = tmp.main_gate.degree();
+        tmp.constraints.insert(Box::from(MG::default()));
 
         assert!(check_gate_to_support_public_inputs(&tmp.main_gate), "default gate must support making public inputs");
 
@@ -617,7 +721,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> TrivialAsse
     }
 
     // return variable that is not in a constraint formally, but has some value
-    fn dummy_variable(&self) -> Variable {
+    fn dummy_variable() -> Variable {
         Variable(Index::Aux(0))
     }
 }
@@ -671,7 +775,7 @@ mod test {
             let mut negative_one = one;
             negative_one.negate();
 
-            let dummy = cs.get_dummy_variable();
+            let dummy = CS::get_dummy_variable();
 
             cs.new_single_gate_for_trace_step(
                 &main_gate, 
@@ -726,5 +830,9 @@ mod test {
         circuit.synthesize(&mut assembly).expect("must work");
 
         assert!(assembly.constraints.len() == 1);
+
+        println!("Assembly state polys = {:?}", assembly.storage.state_map);
+
+        println!("Assembly setup polys = {:?}", assembly.storage.setup_map);
     }
 }
