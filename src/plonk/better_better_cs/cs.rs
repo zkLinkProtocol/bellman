@@ -8,8 +8,8 @@ use std::marker::PhantomData;
 pub use crate::plonk::cs::variable::*;
 
 
-pub trait Circuit<E: Engine, P: PlonkConstraintSystemParams<E>> {
-    fn synthesize<CS: ConstraintSystem<E, P>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
+pub trait Circuit<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
+    fn synthesize<CS: ConstraintSystem<E, P, MG>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -48,6 +48,10 @@ impl LinearCombinationOfTerms {
     fn terms(&self) -> &[PolynomialMultiplicativeTerm] {
        &self.0[..]
     }
+}
+
+pub trait MainGateEquation: GateEquation {
+    fn index_for_constant_term() -> usize;
 }
 
 pub trait GateEquation: GateEquationInternal
@@ -132,6 +136,12 @@ impl GateEquationInternal for Width4MainGateWithDNextEquation {
 }
 
 impl GateEquation for Width4MainGateWithDNextEquation {}
+
+impl MainGateEquation for Width4MainGateWithDNextEquation {
+    fn index_for_constant_term() -> usize {
+        5
+    }
+}
 
 impl std::default::Default for Width4MainGateWithDNextEquation {
     fn default() -> Self {
@@ -375,7 +385,10 @@ pub trait PlonkConstraintSystemParams<E: Engine> {
     const CAN_ACCESS_NEXT_TRACE_STEP: bool;
 }
 
-pub trait ConstraintSystem<E: Engine, P: PlonkConstraintSystemParams<E>> {
+pub trait ConstraintSystem<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
+    type Params: PlonkConstraintSystemParams<E>;
+    type MainGate: MainGateEquation;
+
     // allocate a variable
     fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
@@ -402,6 +415,7 @@ pub trait ConstraintSystem<E: Engine, P: PlonkConstraintSystemParams<E>> {
         self.end_gates_batch_for_step()
     }
 
+    fn get_main_gate(&self) -> &MG;
 
     fn begin_gates_batch_for_step(&mut self) -> Result<(), SynthesisError>;
     fn new_gate_in_batch<G: GateEquation>(&mut self, 
@@ -461,7 +475,7 @@ impl GateDensityStorage {
     }
 }
 
-struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> {
+struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
     storage: PolynomialStorage<E>,
     n: usize,
     max_constraint_degree: usize,
@@ -476,7 +490,7 @@ struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEqu
     _marker: std::marker::PhantomData<P>
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintSystem<E, P> for TrivialAssembly<E, P, MG> {
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintSystem<E, P, MG> for TrivialAssembly<E, P, MG> {
     // allocate a variable
     fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
@@ -509,6 +523,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
         self.n += 1;
 
         Ok(input_var)
+    }
+
+    fn get_main_gate(&self) -> &MG {
+        &self.main_gate
     }
 
     fn begin_gates_batch_for_step(&mut self) -> Result<(), SynthesisError> {
@@ -737,8 +755,8 @@ mod test {
         _marker: PhantomData<E>
     }
 
-    impl<E: Engine> Circuit<E, PlonkCsWidth4WithNextStepParams> for TestCircuit4<E> {
-        fn synthesize<CS: ConstraintSystem<E, PlonkCsWidth4WithNextStepParams> >(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<E: Engine> Circuit<E, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation> for TestCircuit4<E> {
+        fn synthesize<CS: ConstraintSystem<E, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let main_gate = Width4MainGateWithDNextEquation::default();
 
             let a = cs.alloc(|| {
