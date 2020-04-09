@@ -36,13 +36,11 @@ impl<E: Engine> Clone for AllocatedNum<E> {
 }
 
 impl<E: Engine> AllocatedNum<E> {
-    pub fn alloc<P, MG, CS, F>(
-        mut cs: CS,
+    pub fn alloc<CS, F>(
+        cs: &mut CS,
         value: F,
     ) -> Result<Self, SynthesisError>
-        where P: PlonkConstraintSystemParams<E>,
-            MG: MainGateEquation,
-            CS: ConstraintSystem<E, P, MG>,
+        where CS: ConstraintSystem<E>,
             F: FnOnce() -> Result<E::Fr, SynthesisError>
     {
         let mut new_value = None;
@@ -64,14 +62,14 @@ impl<E: Engine> AllocatedNum<E> {
 
     pub fn add<CS>(
         &self,
-        mut cs: CS,
+        cs: &mut CS,
         other: &Self
     ) -> Result<Self, SynthesisError>
         where CS: ConstraintSystem<E>
     {
         let mut value = None;
 
-        let var = cs.alloc(|| "add num", || {
+        let addition_result = cs.alloc(|| {
             let mut tmp = *self.value.get()?;
             tmp.add_assign(other.value.get()?);
 
@@ -79,6 +77,18 @@ impl<E: Engine> AllocatedNum<E> {
 
             Ok(tmp)
         })?;
+
+        let gate = cs.get_main_gate();
+
+        let dummy = CS::get_dummy_variable();
+
+        cs.new_single_gate_for_trace_step(
+            gate, 
+            &[], 
+            &[self.get_variable(), other.get_variable(), addition_result, dummy], 
+            &[],
+        )
+
 
         // Constrain: a * b = ab
         cs.enforce(

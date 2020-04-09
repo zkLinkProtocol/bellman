@@ -7,9 +7,8 @@ use std::marker::PhantomData;
 
 pub use crate::plonk::cs::variable::*;
 
-
-pub trait Circuit<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
-    fn synthesize<CS: ConstraintSystem<E, P, MG>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
+pub trait Circuit<E: Engine> {
+    fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -50,8 +49,120 @@ impl LinearCombinationOfTerms {
     }
 }
 
+pub enum ArithmeticTerm<E: Engine>{
+    Product(Vec<Variable>, E::Fr),
+    SingleVariable(Variable, E::Fr),
+    Constant(E::Fr),
+}
+
+impl<E: Engine> ArithmeticTerm<E> {
+    pub fn from_variable(var: Variable) -> Self {
+        ArithmeticTerm::SingleVariable(var, E::Fr::one())
+    }
+
+    pub fn from_variable_and_coeff(var: Variable, coeff: E::Fr) -> Self {
+        ArithmeticTerm::SingleVariable(var, coeff)
+    }
+
+    pub fn constant(coeff: E::Fr) -> Self {
+        ArithmeticTerm::Constant(coeff)
+    }
+
+    pub fn mul_by_variable(self, other: Variable) -> Self {
+        match self {
+            ArithmeticTerm::Product(mut terms, coeff) => {
+                terms.push(other);
+
+                ArithmeticTerm::Product(terms, coeff)
+            },
+            ArithmeticTerm::SingleVariable(this, coeff) => {
+                let terms = vec![this, other];
+
+                ArithmeticTerm::Product(terms, coeff)
+            },
+            ArithmeticTerm::Constant(coeff) => {
+                let terms = vec![other];
+
+                ArithmeticTerm::Product(terms, coeff)
+            },
+        }
+    }
+
+    pub fn scale(&mut self, by: &E::Fr) {
+        match self {
+            ArithmeticTerm::Product(_, ref mut coeff) => {
+                coeff.mul_assign(by);
+            },
+            ArithmeticTerm::SingleVariable(_, ref mut coeff) => {
+                coeff.mul_assign(by);
+            },
+            ArithmeticTerm::Constant(ref mut coeff) => {
+                coeff.mul_assign(by);
+            },
+        }
+    }
+}
+
+pub struct MainGateTerm<E: Engine>{
+    terms: Vec<ArithmeticTerm<E>>,
+    num_multiplicative_terms: usize,
+    num_constant_terms: usize
+}
+
+impl<E: Engine> MainGateTerm<E> {
+    pub fn new() -> Self {
+        Self {
+            terms: Vec::with_capacity(8),
+            num_multiplicative_terms: 0,
+            num_constant_terms: 0
+        }
+    }
+
+    pub fn add_assign(&mut self, other: ArithmeticTerm<E>) {
+        match &other {
+            ArithmeticTerm::Product(_, _) => {
+                self.num_multiplicative_terms += 1;
+                self.terms.push(other);
+            },
+            ArithmeticTerm::SingleVariable(_, _) => {
+                self.terms.push(other);
+            },
+            ArithmeticTerm::Constant(_) => {
+                self.num_constant_terms += 1;
+                self.terms.push(other);
+            },
+        }
+
+        debug_assert!(self.num_constant_terms <= 1, "must not duplicate constants");        
+    }
+
+    pub fn sub_assign(&mut self, mut other: ArithmeticTerm<E>) {
+        match &mut other {
+            ArithmeticTerm::Product(_, ref mut coeff) => {
+                coeff.negate();
+                self.num_multiplicative_terms += 1;
+            },
+            ArithmeticTerm::SingleVariable(_, ref mut coeff) => {
+                coeff.negate();
+            },
+            ArithmeticTerm::Constant(ref mut coeff) => {
+                coeff.negate();
+                self.num_constant_terms += 1;       
+            },
+        }
+
+        self.terms.push(other);
+
+        debug_assert!(self.num_constant_terms <= 1, "must not duplicate constants");        
+    }
+}
+
 pub trait MainGateEquation: GateEquation {
+    const NUM_LINEAR_TERMS: usize;
+    const NUM_VARIABLES: usize;
+    fn static_description() -> &'static Self;
     fn index_for_constant_term() -> usize;
+    fn format_term<E: Engine>(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
 }
 
 pub trait GateEquation: GateEquationInternal
@@ -138,8 +249,127 @@ impl GateEquationInternal for Width4MainGateWithDNextEquation {
 impl GateEquation for Width4MainGateWithDNextEquation {}
 
 impl MainGateEquation for Width4MainGateWithDNextEquation {
+    const NUM_LINEAR_TERMS: usize = 4;
+    const NUM_VARIABLES: usize = 4;
+
+    // Width4MainGateWithDNextEquation is NOT generic, so this is fine
+    // and safe since it's sync!
+    fn static_description() -> &'static Self {
+        static mut VALUE: Option<Width4MainGateWithDNextEquation> = None;
+        static INIT: std::sync::Once = std::sync::Once::new();
+
+        unsafe {
+            INIT.call_once(||{
+                VALUE = Some(Width4MainGateWithDNextEquation::default());
+            });
+
+            VALUE.as_ref().unwrap()
+        }
+    }
+
     fn index_for_constant_term() -> usize {
         5
+    }
+
+    fn format_term<E: Engine>(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
+        let mut flattened_variables = vec![padding; Self::NUM_VARIABLES];
+        let mut flattened_coefficients = vec![E::Fr::zero(); 7];
+
+        let allowed_linear = 4;
+        let allowed_multiplications = 1;
+        let allowed_constants = 1;
+
+        debug_assert!(instance.num_constant_terms <= allowed_constants, "must not containt more constants than allowed");  
+        debug_assert!(instance.num_multiplicative_terms <= allowed_multiplications, "must not containt more multiplications than allowed"); 
+        debug_assert!(instance.terms.len() <= allowed_constants + allowed_multiplications + allowed_linear, "gate can not fit that many terms"); 
+
+        if instance.num_multiplicative_terms != 0 {
+            let index = instance.terms.iter().position(
+                |t| {
+                    match t {
+                        ArithmeticTerm::Product(_, _) => true,
+                        _ => false,
+                    }
+                }
+            ).unwrap();
+
+            let term = instance.terms.swap_remove(index);
+            match term {
+                ArithmeticTerm::Product(vars, coeff) => {
+                    debug_assert_eq!(vars.len(), 2, "multiplicative terms must contain two variables");
+
+                    flattened_variables[0] = vars[0];
+                    flattened_variables[1] = vars[1];
+                    flattened_coefficients[4] = coeff;
+                },
+                _ => {
+                    unreachable!("must be multiplicative term");
+                }
+            }
+        }
+
+        if instance.num_constant_terms != 0 {
+            let index = instance.terms.iter().position(
+                |t| {
+                    match t {
+                        ArithmeticTerm::Constant(_) => true,
+                        _ => false,
+                    }
+                }
+            ).unwrap();
+
+            let term = instance.terms.swap_remove(index);
+            match term {
+                ArithmeticTerm::Constant(coeff) => {
+                    flattened_coefficients[5] = coeff;
+                },
+                _ => {
+                    unreachable!("must be multiplicative term");
+                }
+            }
+        }
+
+        let mut idx = 0;
+        for i in 0..flattened_variables.len() {
+            if flattened_variables[i] == padding {
+                break
+            } else {
+                idx += 1;
+            }
+        }
+
+        debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
+        // only additions left
+        for term in instance.terms.into_iter() {
+            debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
+            match term {
+                ArithmeticTerm::SingleVariable(var, coeff) => {
+                    let index = flattened_variables.iter().position(
+                        |&t| t == var
+                    );
+                    if let Some(index) = index {
+                        // there is some variable there already,
+                        flattened_coefficients[index] = coeff;
+                    } else {
+                        flattened_variables[idx] = var;
+                        flattened_coefficients[idx] = coeff;
+                        idx += 1;
+                        loop {
+                            if flattened_variables[idx] != padding {
+                                idx += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    unreachable!("must be multiplicative term");
+                }
+            }
+        }
+
+        Ok((flattened_variables, flattened_coefficients))
     }
 }
 
@@ -385,7 +615,7 @@ pub trait PlonkConstraintSystemParams<E: Engine> {
     const CAN_ACCESS_NEXT_TRACE_STEP: bool;
 }
 
-pub trait ConstraintSystem<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
+pub trait ConstraintSystem<E: Engine> {
     type Params: PlonkConstraintSystemParams<E>;
     type MainGate: MainGateEquation;
 
@@ -415,7 +645,20 @@ pub trait ConstraintSystem<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
         self.end_gates_batch_for_step()
     }
 
-    fn get_main_gate(&self) -> &MG;
+    fn get_main_gate(&self) -> &Self::MainGate;
+
+    fn allocate_main_gate(&mut self, gate: MainGateTerm<E>) -> Result<(), SynthesisError> {
+        let (vars, coeffs) = Self::MainGate::format_term(gate, Self::get_dummy_variable())?;
+
+        let mg = Self::MainGate::static_description();
+
+        self.new_single_gate_for_trace_step(
+            mg,
+            &coeffs,
+            &vars,
+            &[]
+        )
+    }
 
     fn begin_gates_batch_for_step(&mut self) -> Result<(), SynthesisError>;
     fn new_gate_in_batch<G: GateEquation>(&mut self, 
@@ -490,7 +733,10 @@ struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGat
     _marker: std::marker::PhantomData<P>
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintSystem<E, P, MG> for TrivialAssembly<E, P, MG> {
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> ConstraintSystem<E> for TrivialAssembly<E, P, MG> {
+    type Params = P;
+    type MainGate = MG;
+
     // allocate a variable
     fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
@@ -547,6 +793,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
         debug_assert!(check_gate_is_allowed_for_params::<E, P, G>(&gate));
 
         let n = self.trace_step_for_batch.unwrap();
+        let dummy = Self::get_dummy_variable();
+        let zero = E::Fr::zero();
 
         let mut coeffs_it = coefficients_assignments.iter();
 
@@ -568,7 +816,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
                             if poly_ref.len() < n {
                                 poly_ref.resize(n, E::Fr::zero());
                             }
-                            poly_ref.push(*coeffs_it.next().expect("must get some coefficient for assignment"));
+                            poly_ref.push(*coeffs_it.next().unwrap_or(&zero));
                         },
                         _ => {}
                     }
@@ -601,10 +849,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
                             let key = PolyIdentifier::VariablesPolynomial(idx);
                             let poly_ref = self.storage.state_map.entry(key).or_insert(vec![]);
                             if poly_ref.len() < n {
-                                poly_ref.resize(n, Self::get_dummy_variable());
+                                poly_ref.resize(n, dummy);
                             } else if poly_ref.len() == n {
                                 // we consume variable only ONCE
-                                let var = *variable_it.next().expect("must get some variable for assignment");
+                                let var = *variable_it.next().unwrap_or(&dummy);
                                 poly_ref.push(var);
                             }
                         },
@@ -638,7 +886,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
                             if poly_ref.len() < n {
                                 poly_ref.resize(n, E::Fr::zero());
                             } 
-                            poly_ref.push(*witness_it.next().expect("must get some coefficient for assignment"));
+                            poly_ref.push(*witness_it.next().unwrap_or(&zero));
                         },
                         _ => {}
                     }
@@ -704,7 +952,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> ConstraintS
     }
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: GateEquation> TrivialAssembly<E, P, MG> {
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> TrivialAssembly<E, P, MG> {
     pub fn new() -> Self {
         let mut tmp = Self {
             n: 0,
@@ -755,10 +1003,88 @@ mod test {
         _marker: PhantomData<E>
     }
 
-    impl<E: Engine> Circuit<E, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation> for TestCircuit4<E> {
-        fn synthesize<CS: ConstraintSystem<E, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-            let main_gate = Width4MainGateWithDNextEquation::default();
+    // impl<E: Engine> Circuit<E> for TestCircuit4<E> {
+    //     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+    //         let main_gate = CS::MainGate::default();
+    //         // let main_gate = Width4MainGateWithDNextEquation::default();
 
+    //         let a = cs.alloc(|| {
+    //             Ok(E::Fr::from_str("10").unwrap())
+    //         })?;
+
+    //         println!("A = {:?}", a);
+
+    //         let b = cs.alloc(|| {
+    //             Ok(E::Fr::from_str("20").unwrap())
+    //         })?;
+
+    //         println!("B = {:?}", b);
+
+    //         let c = cs.alloc(|| {
+    //             Ok(E::Fr::from_str("200").unwrap())
+    //         })?;
+
+    //         println!("C = {:?}", c);
+
+    //         let d = cs.alloc(|| {
+    //             Ok(E::Fr::from_str("100").unwrap())
+    //         })?;
+
+    //         println!("D = {:?}", d);
+
+    //         let zero = E::Fr::zero();
+
+    //         let one = E::Fr::one();
+
+    //         let mut two = one;
+    //         two.double();
+
+    //         let mut negative_one = one;
+    //         negative_one.negate();
+
+    //         let dummy = CS::get_dummy_variable();
+
+    //         cs.new_single_gate_for_trace_step(
+    //             &main_gate, 
+    //             &[two, negative_one, zero, zero, zero, zero, zero],
+    //             &[a, b, dummy, dummy], 
+    //             &[]
+    //         )?;
+
+    //         // 10b - c = 0
+    //         let ten = E::Fr::from_str("10").unwrap();
+
+    //         cs.new_single_gate_for_trace_step(
+    //             &main_gate, 
+    //             &[ten, negative_one, zero, zero, zero, zero, zero],
+    //             &[b, c, dummy, dummy], 
+    //             &[]
+    //         )?;
+
+    //         // c - a*b == 0 
+
+    //         cs.new_single_gate_for_trace_step(
+    //             &main_gate, 
+    //             &[zero, zero, zero, negative_one, one, zero, zero],
+    //             &[a, b, dummy, c], 
+    //             &[]
+    //         )?;
+
+    //         // 10a + 10b - c - d == 0
+
+    //         cs.new_single_gate_for_trace_step(
+    //             &main_gate, 
+    //             &[ten, ten, negative_one, negative_one, zero, zero, zero],
+    //             &[a, b, c, d], 
+    //             &[]
+    //         )?;
+
+    //         Ok(())
+    //     }
+    // }
+
+    impl<E: Engine> Circuit<E> for TestCircuit4<E> {
+        fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let a = cs.alloc(|| {
                 Ok(E::Fr::from_str("10").unwrap())
             })?;
@@ -793,42 +1119,36 @@ mod test {
             let mut negative_one = one;
             negative_one.negate();
 
-            let dummy = CS::get_dummy_variable();
+            // 2a - b = 0
 
-            cs.new_single_gate_for_trace_step(
-                &main_gate, 
-                &[two, negative_one, zero, zero, zero, zero, zero],
-                &[a, b, dummy, dummy], 
-                &[]
-            )?;
+            let two_a = ArithmeticTerm::from_variable_and_coeff(a, two);
+            let minus_b = ArithmeticTerm::from_variable_and_coeff(b, negative_one);
+            let mut term = MainGateTerm::new();
+            term.add_assign(two_a);
+            term.add_assign(minus_b);
 
-            // 10b - c = 0
-            let ten = E::Fr::from_str("10").unwrap();
-
-            cs.new_single_gate_for_trace_step(
-                &main_gate, 
-                &[ten, negative_one, zero, zero, zero, zero, zero],
-                &[b, c, dummy, dummy], 
-                &[]
-            )?;
+            cs.allocate_main_gate(term)?;
 
             // c - a*b == 0 
 
-            cs.new_single_gate_for_trace_step(
-                &main_gate, 
-                &[zero, zero, zero, negative_one, one, zero, zero],
-                &[a, b, dummy, c], 
-                &[]
-            )?;
+            let mut ab_term = ArithmeticTerm::from_variable(a).mul_by_variable(b);
+            ab_term.scale(&negative_one);
+            let c_term = ArithmeticTerm::from_variable(c);
+            let mut term = MainGateTerm::new();
+            term.add_assign(c_term);
+            term.add_assign(ab_term);
 
-            // 10a + 10b - c - d == 0
+            cs.allocate_main_gate(term)?;
 
-            cs.new_single_gate_for_trace_step(
-                &main_gate, 
-                &[ten, ten, negative_one, negative_one, zero, zero, zero],
-                &[a, b, c, d], 
-                &[]
-            )?;
+            // d - 100 == 0 
+
+            let hundred = ArithmeticTerm::constant(E::Fr::from_str("100").unwrap());
+            let d_term = ArithmeticTerm::from_variable(d);
+            let mut term = MainGateTerm::new();
+            term.add_assign(d_term);
+            term.sub_assign(hundred);
+
+            cs.allocate_main_gate(term)?;
 
             Ok(())
         }
