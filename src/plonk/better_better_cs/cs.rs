@@ -160,7 +160,6 @@ impl<E: Engine> MainGateTerm<E> {
 pub trait MainGateEquation: GateEquation {
     const NUM_LINEAR_TERMS: usize;
     const NUM_VARIABLES: usize;
-    fn static_description() -> &'static Self;
     fn index_for_constant_term() -> usize;
     fn format_term<E: Engine>(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
 }
@@ -178,6 +177,8 @@ pub trait GateEquation: GateEquationInternal
     fn into_internal(self) -> Box<dyn GateEquationInternal> {
         Box::from(self) as Box<dyn GateEquationInternal>
     }
+
+    fn static_description() -> &'static Self;
 }
 
 pub trait GateEquationInternal: Send 
@@ -190,21 +191,6 @@ pub trait GateEquationInternal: Send
     fn get_constraint(&self) -> &LinearCombinationOfTerms;
     fn get_constraints(&self) -> &[LinearCombinationOfTerms];
 }
-
-// impl PartialEq for &[Term] {
-//     fn eq(&self, other: &Self) -> bool {
-//         if self.len() != other.len() {
-//             return false;
-//         }
-//         for (l, r) in self.iter().zip(other.iter()) {
-//             if l.0 != r.0 {
-//                 return false;
-//             }
-//         }
-
-//         true
-//     }
-// }
 
 impl std::hash::Hash for dyn GateEquationInternal {
     fn hash<H>(&self, state: &mut H) where H: std::hash::Hasher {
@@ -246,12 +232,7 @@ impl GateEquationInternal for Width4MainGateWithDNextEquation {
     }
 }
 
-impl GateEquation for Width4MainGateWithDNextEquation {}
-
-impl MainGateEquation for Width4MainGateWithDNextEquation {
-    const NUM_LINEAR_TERMS: usize = 4;
-    const NUM_VARIABLES: usize = 4;
-
+impl GateEquation for Width4MainGateWithDNextEquation {
     // Width4MainGateWithDNextEquation is NOT generic, so this is fine
     // and safe since it's sync!
     fn static_description() -> &'static Self {
@@ -266,6 +247,11 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
             VALUE.as_ref().unwrap()
         }
     }
+}
+
+impl MainGateEquation for Width4MainGateWithDNextEquation {
+    const NUM_LINEAR_TERMS: usize = 4;
+    const NUM_VARIABLES: usize = 4;
 
     fn index_for_constant_term() -> usize {
         5
@@ -718,18 +704,18 @@ impl GateDensityStorage {
     }
 }
 
-struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
-    storage: PolynomialStorage<E>,
-    n: usize,
-    max_constraint_degree: usize,
-    main_gate: MG,
-    input_assingments: Vec<E::Fr>,
-    aux_assingments: Vec<E::Fr>,
-    num_inputs: usize,
-    num_aux: usize,
-    trace_step_for_batch: Option<usize>,
-    constraints: std::collections::HashSet<Box<dyn GateEquationInternal>>,
-    gate_density: GateDensityStorage,
+pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
+    pub storage: PolynomialStorage<E>,
+    pub n: usize,
+    pub max_constraint_degree: usize,
+    pub main_gate: MG,
+    pub input_assingments: Vec<E::Fr>,
+    pub aux_assingments: Vec<E::Fr>,
+    pub num_inputs: usize,
+    pub num_aux: usize,
+    pub trace_step_for_batch: Option<usize>,
+    pub constraints: std::collections::HashSet<Box<dyn GateEquationInternal>>,
+    pub gate_density: GateDensityStorage,
     _marker: std::marker::PhantomData<P>
 }
 

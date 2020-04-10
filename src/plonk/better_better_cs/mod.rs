@@ -1,3 +1,3 @@
 pub mod cs;
 
-// mod gadgets;
+mod gadgets;
