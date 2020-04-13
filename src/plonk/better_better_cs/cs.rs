@@ -157,7 +157,9 @@ impl<E: Engine> MainGateTerm<E> {
 pub trait MainGateEquation: GateEquation {
     const NUM_LINEAR_TERMS: usize;
     const NUM_VARIABLES: usize;
+    const NUM_VARIABLES_ON_NEXT_STEP: usize;
     fn index_for_constant_term() -> usize;
+    fn range_of_next_step_linear_terms() -> std::ops::Range<usize>;
     fn format_term<E: Engine>(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
 }
 
@@ -250,9 +252,14 @@ impl GateEquation for Width4MainGateWithDNextEquation {
 impl MainGateEquation for Width4MainGateWithDNextEquation {
     const NUM_LINEAR_TERMS: usize = 4;
     const NUM_VARIABLES: usize = 4;
+    const NUM_VARIABLES_ON_NEXT_STEP: usize = 1;
 
     fn index_for_constant_term() -> usize {
         5
+    }
+
+    fn range_of_next_step_linear_terms() -> std::ops::Range<usize> {
+        6..7
     }
 
     fn format_term<E: Engine>(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
