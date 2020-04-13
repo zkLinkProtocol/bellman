@@ -24,9 +24,6 @@ pub enum PolyIdentifier {
     WitnessPolynomial(usize),
     SetupPolynomial(&'static str, usize),
 }
-// pub struct VariablesPolynomial(pub usize);
-// pub struct WitnessPolynomial(pub usize);
-// pub struct SetupPolynomial(pub usize);
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct TimeDilation(pub usize);
@@ -325,7 +322,6 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
             }
         }
 
-        debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
         // only additions left
         for term in instance.terms.into_iter() {
             debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
