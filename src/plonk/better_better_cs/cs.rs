@@ -185,6 +185,7 @@ pub trait GateEquationInternal: Send
     + Sync 
     + 'static 
     + std::any::Any 
+    + std::fmt::Debug
 {
     fn degree(&self) -> usize;
     fn num_constraints(&self) -> usize;
@@ -1157,6 +1158,6 @@ mod test {
 
         println!("Assembly state polys = {:?}", assembly.storage.state_map);
 
-        println!("Assembly setup polys = {:?}", assembly.storage.setup_map);
+        println!("Assembly setup polys = {:?}", assembly.storage.setup_map);        
     }
 }

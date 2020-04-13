@@ -224,7 +224,7 @@ impl<E: Engine> Rescue125<E> {
         let state_1_quad = state_1.clone();
         let state_1_fifth = state_1.clone();
 
-        // input[0] + round_constant[0] - d_next = 0
+        // input[0] + round_constant[0] - state[0]^5 = 0
 
         cs.new_single_gate_for_trace_step(
             Width4MainGateWithDNextEquation::static_description(), 
@@ -480,7 +480,11 @@ mod test {
 
         assert!(assembly.constraints.len() == 2);
         let num_gates = assembly.n - before;
-        println!("Single rescue r = 2, c = 1, alpha = 5 invication takes {} gates", num_gates);
+        println!("Single rescue r = 2, c = 1, alpha = 5 invocation takes {} gates", num_gates);
+
+        for (gate, density) in assembly.gate_density.0.into_iter() {
+            println!("Custom gate {:?} selector = {:?}", gate, density);
+        }
 
         // println!("Assembly state polys = {:?}", assembly.storage.state_map);
 
