@@ -20,7 +20,7 @@ pub mod gm17;
 pub mod sonic;
 
 mod group;
-mod source;
+pub mod source;
 mod multiexp;
 
 #[cfg(test)]

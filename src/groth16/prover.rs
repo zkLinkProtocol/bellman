@@ -128,15 +128,15 @@ pub(crate) fn scalars_into_representations<E: Engine>(
 
 // This is a proving assignment with densities precalculated
 pub struct PreparedProver<E: Engine>{
-    assignment: ProvingAssignment<E>,
+    pub assignment: ProvingAssignment<E>,
 }
 
 #[derive(Clone)]
-struct ProvingAssignment<E: Engine> {
+pub struct ProvingAssignment<E: Engine> {
     // Density of queries
-    a_aux_density: DensityTracker,
-    b_input_density: DensityTracker,
-    b_aux_density: DensityTracker,
+    pub a_aux_density: DensityTracker,
+    pub b_input_density: DensityTracker,
+    pub b_aux_density: DensityTracker,
 
     // Evaluations of A, B, C polynomials
     a: Vec<Scalar<E>>,
