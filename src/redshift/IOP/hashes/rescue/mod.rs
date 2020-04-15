@@ -61,6 +61,7 @@ fn rescue_f<F: PrimeField, Params: RescueParams<F>>(
     let RESCUE_M = params.t();
     let RESCUE_ROUNDS = params.get_num_rescue_rounds();
     let constants = params.get_constants();
+
    
     for i in 0..RESCUE_M {
         state[i].add_assign(&constants[0][i]);
@@ -116,7 +117,7 @@ fn rescue_duplex<F: PrimeField, Params: RescueParams<F>>(
 
     let mut output = vec![];
     for i in 0..OUTPUT_RATE {
-        output[i] = Some(state[i]);
+        output.push(Some(state[i]));
     }
     output
 }
@@ -205,4 +206,22 @@ impl<F: PrimeField, RP: RescueParams<F>> Rescue<F, RP> {
             }
         }
     }
+}
+
+
+#[test]
+fn test_rescue() {
+    use crate::ff::Field;
+    use crate::pairing::bn256::Fr as Fr;
+    use bn256_rescue_params::BN256Rescue;
+
+    let bn256_params = BN256Rescue::default();
+
+    let mut elem = Fr::one();
+
+    let mut rescue = Rescue::new(&bn256_params);   
+    rescue.absorb(elem.clone(), &bn256_params);
+    elem.double();
+    rescue.absorb(elem, &bn256_params);
+    rescue.squeeze(&bn256_params);
 }

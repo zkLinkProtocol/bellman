@@ -73,7 +73,6 @@ impl<'a, F: PrimeField, RP: RescueParams<F>> Oracle<F> for FriSpecificRescueTree
         let mut nodes = vec![F::zero(); num_nodes];
 
         let worker = Worker::new();
-
         let mut leaf_hashes = vec![F::zero(); num_leafs];
         {
             worker.scope(leaf_hashes.len(), |scope, chunk| {
@@ -159,8 +158,8 @@ impl<'a, F: PrimeField, RP: RescueParams<F>> Oracle<F> for FriSpecificRescueTree
         // we never expect that query is mis-alligned, so check it
         debug_assert!(indexes.start % params.values_per_leaf == 0);
         debug_assert!(indexes.len() == params.values_per_leaf);
-        debug_assert!(indexes.end < self.size());
-        debug_assert!(indexes.end < values.len());
+        debug_assert!(indexes.end <= self.size());
+        debug_assert!(indexes.end <= values.len());
 
         let query_values = Vec::from(&values[indexes.start..indexes.end]);
 
@@ -253,9 +252,7 @@ fn make_small_iop() {
 
     const SIZE: usize = 16;
     const VALUES_PER_LEAF: usize = 4;
-
     let bn256_params = BN256Rescue::default();
-
     let params = RescueTreeParams {
         values_per_leaf: VALUES_PER_LEAF,
         rescue_params: &bn256_params,
@@ -282,40 +279,3 @@ fn make_small_iop() {
     }
 }
 
-
-#[test]
-fn test_bench_large_fri_specific_iop() {
-    use crate::ff::Field;
-    use crate::pairing::bn256::Fr as Fr;
-    use crate::redshift::IOP::hashes::rescue::bn256_rescue_params::BN256Rescue;
-
-    const SIZE: usize = 1 << (20 + 4);
-    const VALUES_PER_LEAF: usize = 8;
-
-    let bn256_params = BN256Rescue::default();
-
-    let params = RescueTreeParams {
-        values_per_leaf: VALUES_PER_LEAF,
-        rescue_params: &bn256_params,
-        _marker: std::marker::PhantomData::<Fr>,
-    };
-
-    let mut inputs = vec![];
-    let mut f = Fr::one();
-    for _ in 0..SIZE {
-        inputs.push(f);
-        f.double();
-    }
-
-    let iop = FriSpecificRescueTree::create(&inputs, &params);
-    let commitment = iop.get_commitment();
-    let tree_size = iop.size();
-    assert!(tree_size == SIZE);
-    assert!(iop.nodes.len() == (SIZE / VALUES_PER_LEAF));
-    for i in 0..128 {
-        let indexes = (i*VALUES_PER_LEAF)..(VALUES_PER_LEAF + i*VALUES_PER_LEAF); 
-        let query = iop.produce_query(indexes, &inputs, &params);
-        let valid = FriSpecificRescueTree::verify_query(&commitment, &query, &params);
-        assert!(valid, "invalid query for leaf index {}", i);
-    }
-}

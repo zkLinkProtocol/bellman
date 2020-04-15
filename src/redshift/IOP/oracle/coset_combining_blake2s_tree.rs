@@ -188,8 +188,8 @@ impl<F: PrimeField> Oracle<F> for FriSpecificBlake2sTree<F> {
         // we never expect that query is mis-alligned, so check it
         debug_assert!(indexes.start % self.params.values_per_leaf == 0);
         debug_assert!(indexes.len() == self.params.values_per_leaf);
-        debug_assert!(indexes.end < self.size());
-        debug_assert!(indexes.end < values.len());
+        debug_assert!(indexes.end <= self.size());
+        debug_assert!(indexes.end <= values.len());
 
         let query_values = Vec::from(&values[indexes.start..indexes.end]);
 
@@ -292,39 +292,6 @@ fn make_small_iop() {
     assert!(tree_size == SIZE);
     assert!(iop.nodes.len() == (SIZE / VALUES_PER_LEAF));
     for i in 0..(SIZE / VALUES_PER_LEAF) {
-        let indexes = (i*VALUES_PER_LEAF)..(VALUES_PER_LEAF + i*VALUES_PER_LEAF);
-        let query = iop.produce_query(indexes, &inputs, &params);
-        let valid = FriSpecificBlake2sTree::verify_query(&commitment, &query, &params);
-        assert!(valid, "invalid query for leaf index {}", i);
-    }
-}
-
-
-#[test]
-fn test_bench_large_fri_specific_iop() {
-    use crate::ff::Field;
-    use crate::redshift::partial_reduction_field::Fr;
-
-    const SIZE: usize = 1 << (20 + 4);
-    const VALUES_PER_LEAF: usize = 8;
-
-    let params = FriSpecificBlake2sTreeParams {
-        values_per_leaf: VALUES_PER_LEAF
-    };
-
-    let mut inputs = vec![];
-    let mut f = Fr::one();
-    for _ in 0..SIZE {
-        inputs.push(f);
-        f.double();
-    }
-
-    let iop = FriSpecificBlake2sTree::create(&inputs, &params);
-    let commitment = iop.get_commitment();
-    let tree_size = iop.size();
-    assert!(tree_size == SIZE);
-    assert!(iop.nodes.len() == (SIZE / VALUES_PER_LEAF));
-    for i in 0..128 {
         let indexes = (i*VALUES_PER_LEAF)..(VALUES_PER_LEAF + i*VALUES_PER_LEAF);
         let query = iop.produce_query(indexes, &inputs, &params);
         let valid = FriSpecificBlake2sTree::verify_query(&commitment, &query, &params);

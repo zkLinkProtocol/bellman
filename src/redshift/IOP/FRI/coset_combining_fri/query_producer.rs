@@ -27,7 +27,7 @@ impl<F: PrimeField, I: Oracle<F>> FriProofPrototype<F, I>
 
         let mut rounds = vec![];
         let initial_domain_size = params.initial_degree_plus_one.get() * params.lde_factor;
-        let log_initial_domain_size = log2_floor(initial_domain_size) as usize;
+        let log_initial_domain_size = log2_floor(initial_domain_size);
         let collapsing_factor = params.collapsing_factor;
         let coset_size = 1 << collapsing_factor;
         let mut upper_layer_queries = vec![];
@@ -41,7 +41,7 @@ impl<F: PrimeField, I: Oracle<F>> FriProofPrototype<F, I>
 
             let mut queries = vec![];
             let mut domain_size = initial_domain_size >> collapsing_factor;
-            let mut log_domain_size = initial_domain_size - collapsing_factor;
+            let mut log_domain_size = log_initial_domain_size - collapsing_factor;
             let mut elem_index = (natural_first_element_index << collapsing_factor) % domain_size;
 
             for (oracle, leaf_values) in self.oracles.iter().zip(&self.intermediate_values) {

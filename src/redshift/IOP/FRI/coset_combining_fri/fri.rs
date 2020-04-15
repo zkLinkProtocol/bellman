@@ -33,7 +33,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         )
     }
 
-    fn prototype_into_proof<'a>(
+    pub fn prototype_into_proof<'a>(
         prototype: FriProofPrototype<F, O>,
         upper_layer_oracles: &'a BatchedOracle<F, O>,
         upper_layer_values: Vec<&[F]>,

@@ -45,7 +45,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let collapsing_factor = params.collapsing_factor;
         let coset_size = 1 << collapsing_factor;
         let initial_domain_size = domain.size as usize;
-        let log_initial_domain_size = log2_floor(initial_domain_size) as usize;
+        let log_initial_domain_size = log2_floor(initial_domain_size);
 
         if natural_element_indexes.len() != params.R || proof.final_coefficients.len() > params.final_degree_plus_one {
             return Ok(false);
@@ -96,8 +96,8 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         fri_challenges: &[F],
         _num_steps: usize,
         initial_domain_size: usize,
-        log_initial_domain_size: usize,
-        collapsing_factor: usize,
+        log_initial_domain_size: u32,
+        collapsing_factor: u32,
         coset_size: usize,
         oracle_params: &O::Params,
         omega: &F,
@@ -130,7 +130,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut domain_size = initial_domain_size;
         let mut log_domain_size = log_initial_domain_size;
         let mut elem_index = (natural_first_element_index << collapsing_factor) % domain_size;
-        // TODO: here is a bug - omega inverse should also be cloned
+        // TODO: here is a bug - omega inverse should also be doubled
         let mut omega_inv = omega_inv.clone();
         let mut previous_layer_element = FriIop::<F, O, C>::coset_interpolant_value(
             &values[..],
@@ -200,10 +200,10 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         values: &[F],
         challenge: &F,
         coset_idx_range: Range<usize>,
-        collapsing_factor: usize,
+        collapsing_factor: u32,
         coset_size: usize,
         domain_size: &mut usize,
-        log_domain_size: &mut usize,
+        log_domain_size: &mut u32,
         elem_index: &mut usize,
         omega_inv: &mut F,
         two_inv: &F,
@@ -213,7 +213,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut this_level_values = Vec::with_capacity(coset_size/2);
         let mut next_level_values = vec![F::zero(); coset_size / 2];
 
-        let base_omega_idx = bitreverse(coset_idx_range.start, *log_domain_size);
+        let base_omega_idx = bitreverse(coset_idx_range.start, *log_domain_size as usize);
 
         for wrapping_step in 0..collapsing_factor {
             let inputs = if wrapping_step == 0 {
@@ -224,7 +224,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             for (pair_idx, (pair, o)) in inputs.chunks(2).zip(next_level_values.iter_mut()).enumerate() 
             {
                 
-                let idx = bitreverse(base_omega_idx + 2 * pair_idx, *log_domain_size);
+                let idx = bitreverse(base_omega_idx + 2 * pair_idx, *log_domain_size as usize);
                 let divisor = omega_inv.pow([idx as u64]);
                 let f_at_omega = pair[0];
                 let f_at_minus_omega = pair[1];
@@ -256,6 +256,87 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         }
 
     next_level_values[0]
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn fri_queries() {
+
+        use crate::ff::{Field, PrimeField};
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+    
+        use crate::redshift::polynomials::*;
+        use crate::multicore::*;
+        use crate::redshift::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas};
+
+        use crate::redshift::IOP::FRI::coset_combining_fri::precomputation::*;
+        use crate::redshift::IOP::FRI::coset_combining_fri::FriPrecomputations;
+        use crate::redshift::IOP::FRI::coset_combining_fri::fri;
+        use crate::redshift::IOP::FRI::coset_combining_fri::{FriParams, FriIop};
+
+        use crate::redshift::IOP::channel::blake_channel::*;
+        use crate::redshift::IOP::channel::*;
+
+        use crate::redshift::IOP::oracle::coset_combining_blake2s_tree::*;
+        use crate::redshift::IOP::oracle::{Oracle, BatchedOracle};
+
+        use crate::pairing::bn256::Fr as Fr;
+
+        const SIZE: usize = 1024;
+        let worker = Worker::new_with_cpus(1);
+        let mut channel = Blake2sChannel::new(&());
+
+        let params = FriParams {
+            collapsing_factor: 1,
+            R: 80,
+            initial_degree_plus_one: std::cell::Cell::new(1024),
+            lde_factor: 16,
+            final_degree_plus_one: 2,
+        };
+
+        let oracle_params = FriSpecificBlake2sTreeParams {
+            values_per_leaf: 1 << params.collapsing_factor
+        };
+
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        let coeffs = (0..SIZE).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+    
+        let poly = Polynomial::<Fr, _>::from_coeffs(coeffs).unwrap();
+        let precomp = BitReversedOmegas::<Fr>::new_for_domain_size(poly.size());
+
+        let coset_factor = Fr::multiplicative_generator();
+        let eval_result = poly.bitreversed_lde_using_bitreversed_ntt(&worker, 16, &precomp, &coset_factor).unwrap();
+
+        // construct upper layer oracle from eval_result
+
+        let upper_layer_oracle = FriSpecificBlake2sTree::create(eval_result.as_ref(), &oracle_params);
+        let batched_oracle = BatchedOracle::create(vec![("starting oracle", &upper_layer_oracle)]);
+
+        let fri_precomp = <OmegasInvBitreversed::<Fr> as FriPrecomputations<Fr>>::new_for_domain_size(eval_result.size());
+
+        let fri_proto = FriIop::<Fr, FriSpecificBlake2sTree<Fr>, Blake2sChannel<Fr>>::proof_from_lde(
+            eval_result.clone(), 
+            &fri_precomp, 
+            &worker, 
+            &mut channel,
+            &params,
+            &oracle_params,
+        ).expect("FRI must succeed");
+
+        // upper layer combiner is trivial in our case
+
+        let proof = FriIop::<Fr, FriSpecificBlake2sTree<Fr>, Blake2sChannel<Fr>>::prototype_into_proof(
+            fri_proto,
+            &batched_oracle,
+            vec![eval_result.as_ref()],
+            vec![0],
+            &params,
+            &oracle_params,
+        ).expect("Fri Proof must be constrcuted");
     }
 }
 

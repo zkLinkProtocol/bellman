@@ -72,7 +72,7 @@ pub trait FriPrecomputations<F: PrimeField> {
 pub struct FriParams {
     //it measures how much nearby levels of FRI differ in size (nu in the paper)
     // it is 1 for 2 -> 1 mapping, 2 for 4 -> 1 mapping, etc.
-    pub collapsing_factor : usize,
+    pub collapsing_factor : u32,
     //number of iterations done during FRI query phase
     pub R : usize,
     // should be mutable as initial degree is set by generator
