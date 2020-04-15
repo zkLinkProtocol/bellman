@@ -19,6 +19,13 @@ pub enum PolynomialInConstraint {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum Coefficient {
+    PlusOne,
+    MinusOne,
+    Other
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum PolyIdentifier {
     VariablesPolynomial(usize),
     WitnessPolynomial(usize),
@@ -29,11 +36,11 @@ pub enum PolyIdentifier {
 pub struct TimeDilation(pub usize);
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct PolynomialMultiplicativeTerm(pub Vec<PolynomialInConstraint>);
+pub struct PolynomialMultiplicativeTerm(pub Coefficient, pub Vec<PolynomialInConstraint>);
 
 impl PolynomialMultiplicativeTerm {
     fn degree(&self) -> usize {
-        self.0.len()
+        self.1.len()
     }
 }
 
@@ -158,6 +165,8 @@ pub trait MainGateEquation: GateEquation {
     const NUM_LINEAR_TERMS: usize;
     const NUM_VARIABLES: usize;
     const NUM_VARIABLES_ON_NEXT_STEP: usize;
+    fn range_of_multiplicative_term() -> std::ops::Range<usize>;
+    fn range_of_linear_terms() -> std::ops::Range<usize>;
     fn index_for_constant_term() -> usize;
     fn range_of_next_step_linear_terms() -> std::ops::Range<usize>;
     fn format_term<E: Engine>(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
@@ -169,6 +178,9 @@ pub trait GateEquation: GateEquationInternal
     + std::hash::Hash
     + std::default::Default 
 {
+    const HAS_NONTRIVIAL_CONSTANTS: bool;
+    const NUM_CONSTANTS: usize;
+
     fn as_internal(&self) -> &dyn GateEquationInternal {
         self as &dyn GateEquationInternal
     }
@@ -178,6 +190,8 @@ pub trait GateEquation: GateEquationInternal
     }
 
     fn static_description() -> &'static Self;
+
+    fn output_constant_coefficients<E: Engine>(&self) -> Vec<E::Fr>;
 }
 
 pub trait GateEquationInternal: Send 
@@ -233,6 +247,9 @@ impl GateEquationInternal for Width4MainGateWithDNextEquation {
 }
 
 impl GateEquation for Width4MainGateWithDNextEquation {
+    const HAS_NONTRIVIAL_CONSTANTS: bool = false;
+    const NUM_CONSTANTS: usize = 7;
+
     // Width4MainGateWithDNextEquation is NOT generic, so this is fine
     // and safe since it's sync!
     fn static_description() -> &'static Self {
@@ -247,12 +264,23 @@ impl GateEquation for Width4MainGateWithDNextEquation {
             VALUE.as_ref().unwrap()
         }
     }
+
+    fn output_constant_coefficients<E: Engine>(&self) -> Vec<E::Fr> {
+        vec![E::Fr::one(); 7]
+    }
 }
 
 impl MainGateEquation for Width4MainGateWithDNextEquation {
     const NUM_LINEAR_TERMS: usize = 4;
     const NUM_VARIABLES: usize = 4;
     const NUM_VARIABLES_ON_NEXT_STEP: usize = 1;
+
+    fn range_of_multiplicative_term() -> std::ops::Range<usize> {
+        0..2
+    }
+    fn range_of_linear_terms() -> std::ops::Range<usize> {
+        0..4
+    }
 
     fn index_for_constant_term() -> usize {
         5
@@ -331,6 +359,15 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
 
         // only additions left
         for term in instance.terms.into_iter() {
+            loop {
+                debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
+
+                if flattened_variables[idx] == padding {
+                    break
+                } else {
+                    idx += 1;
+                }
+            }
             debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
             match term {
                 ArithmeticTerm::SingleVariable(var, coeff) => {
@@ -344,13 +381,6 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
                         flattened_variables[idx] = var;
                         flattened_coefficients[idx] = coeff;
                         idx += 1;
-                        loop {
-                            if flattened_variables[idx] != padding {
-                                idx += 1;
-                            } else {
-                                break;
-                            }
-                        }
                     }
                 },
                 _ => {
@@ -377,6 +407,7 @@ impl Width4MainGateWithDNextEquation {
             // N * Q_n
             terms.push(
                 PolynomialMultiplicativeTerm(
+                    Coefficient::PlusOne,
                     vec![
                         PolynomialInConstraint::VariablesPolynomial(i, TimeDilation(0)), 
                         PolynomialInConstraint::SetupPolynomial("main gate of width 4", i, TimeDilation(0))
@@ -388,6 +419,7 @@ impl Width4MainGateWithDNextEquation {
         // multiplication
         terms.push(
             PolynomialMultiplicativeTerm(
+                Coefficient::PlusOne,
                 vec![
                     PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)), 
                     PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)), 
@@ -399,6 +431,7 @@ impl Width4MainGateWithDNextEquation {
         // constant
         terms.push(
             PolynomialMultiplicativeTerm(
+                Coefficient::PlusOne,
                 vec![
                     PolynomialInConstraint::SetupPolynomial("main gate of width 4", 5, TimeDilation(0))
                 ]
@@ -407,6 +440,7 @@ impl Width4MainGateWithDNextEquation {
 
         terms.push(
             PolynomialMultiplicativeTerm(
+                Coefficient::PlusOne,
                 vec![
                     PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)), 
                     PolynomialInConstraint::SetupPolynomial("main gate of width 4", 6, TimeDilation(0))
@@ -421,10 +455,10 @@ impl Width4MainGateWithDNextEquation {
 fn check_gate_to_support_public_inputs<G: GateEquation>(gate: &G) -> bool {
     for t in gate.get_constraints() {
         for c in t.0.iter() {
-            if c.0.len() != 1 {
+            if c.1.len() != 1 {
                 continue;
             }
-            for s in c.0.iter() {
+            for s in c.1.iter() {
                 match s {
                     PolynomialInConstraint::SetupPolynomial(..) => {
                         return true;
@@ -441,7 +475,7 @@ fn check_gate_to_support_public_inputs<G: GateEquation>(gate: &G) -> bool {
 fn has_access_to_next_step<G: GateEquation>(gate: &G) -> bool {
     for t in gate.get_constraints() {
         for c in t.0.iter() {
-            for s in c.0.iter() {
+            for s in c.1.iter() {
                 match s {
                     PolynomialInConstraint::VariablesPolynomial(_, TimeDilation(shift)) => {
                         if shift != &0usize {
@@ -471,7 +505,7 @@ fn max_addressed_state_poly<G: GateEquation>(gate: &G) -> Option<usize> {
 
     for t in gate.get_constraints() {
         for c in t.0.iter() {
-            for s in c.0.iter() {
+            for s in c.1.iter() {
                 match s {
                     PolynomialInConstraint::VariablesPolynomial(idx, _) => {
                         let new_max = match max.take() {
@@ -503,7 +537,7 @@ fn max_addressed_witness_poly<G: GateEquation>(gate: &G) -> Option<usize> {
 
     for t in gate.get_constraints() {
         for c in t.0.iter() {
-            for s in c.0.iter() {
+            for s in c.1.iter() {
                 match s {
                     PolynomialInConstraint::WitnessPolynomial(idx, _) => {
                         let new_max = match max.take() {
@@ -780,7 +814,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
         witness_assignments: &[E::Fr]
     ) -> Result<(), SynthesisError> {
         // check that gate is ok for config
-        debug_assert!(check_gate_is_allowed_for_params::<E, P, G>(&gate));
+        debug_assert!(check_gate_is_allowed_for_params::<E, P, G>(&gate), format!("supplied params do not work with gate {:?}", gate));
 
         let n = self.trace_step_for_batch.unwrap();
         let dummy = Self::get_dummy_variable();
@@ -791,7 +825,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
         let mut setup_index: Option<(&'static str, usize)> = None;
         for t in gate.get_constraints() {
             for c in t.0.iter() {
-                for s in c.0.iter() {
+                for s in c.1.iter() {
                     match s {
                         PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
                             setup_index = Some((name, *idx));
@@ -823,7 +857,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
         // go through all used variables to place them into the STATE
         for t in gate.get_constraints() {
             for c in t.0.iter() {
-                for s in c.0.iter() {
+                for s in c.1.iter() {
                     match s {
                         PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)) => {
                             variable_index = Some(*idx);
@@ -861,7 +895,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
         // go through all used variables to place them into the STATE
         for t in gate.get_constraints() {
             for c in t.0.iter() {
-                for s in c.0.iter() {
+                for s in c.1.iter() {
                     match s {
                         PolynomialInConstraint::WitnessPolynomial(idx, TimeDilation(0)) => {
                             witness_index = Some(*idx);
@@ -1098,8 +1132,6 @@ mod test {
             })?;
 
             println!("D = {:?}", d);
-
-            let zero = E::Fr::zero();
 
             let one = E::Fr::one();
 

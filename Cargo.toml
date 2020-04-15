@@ -18,7 +18,7 @@ bit-vec = "0.6"
 cfg-if = "0.1"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
-pairing = {package = "pairing_ce", version = "0.20" }
+pairing = {package = "pairing_ce", version = "0.21.*" }
 byteorder = "1"
 
 futures= {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
@@ -39,6 +39,8 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 
 hex = "*"
 
+generic_static = {version = "0.1", optional = true}
+
 [features]
 # default = ["multicore"]
 default = ["multicore", "plonk"]
@@ -49,7 +51,7 @@ multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []
 nolog = []
-plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const"]
+plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const", "generic_static"]
 marlin = ["blake2s_simd", "tiny-keccak", "blake2s_const"]
 wasm = ["web-sys"]
 nightly = ["prefetch"]

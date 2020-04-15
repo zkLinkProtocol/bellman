@@ -49,7 +49,7 @@ enum RescueStateSimplifier<E: Engine> {
 #[derive(Clone, Debug, Hash)]
 pub struct Rescue5CustomGate(pub [LinearCombinationOfTerms; 3]);
 
-impl GateEquationInternal for Rescue5CustomGate {
+impl<E: Engine> GateEquationInternal<E> for Rescue5CustomGate {
     fn degree(&self) -> usize {
         2
     }
@@ -58,11 +58,11 @@ impl GateEquationInternal for Rescue5CustomGate {
         3
     }
 
-    fn get_constraint(&self) -> &LinearCombinationOfTerms {
+    fn get_constraint(&self) -> &LinearCombinationOfTerms<E> {
         unreachable!("must not try to access single constraint of Rescue alpha  5 gate");
     }
 
-    fn get_constraints(&self) -> &[LinearCombinationOfTerms] {
+    fn get_constraints(&self) -> &[LinearCombinationOfTerms<E>] {
         &self.0[..]
     }
 }
