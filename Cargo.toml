@@ -39,8 +39,6 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 
 hex = "*"
 
-generic_static = {version = "0.1", optional = true}
-
 [features]
 # default = ["multicore"]
 default = ["multicore", "plonk"]
@@ -51,7 +49,7 @@ multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []
 nolog = []
-plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const", "generic_static"]
+plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const"]
 marlin = ["blake2s_simd", "tiny-keccak", "blake2s_const"]
 wasm = ["web-sys"]
 nightly = ["prefetch"]
