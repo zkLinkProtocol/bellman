@@ -23,8 +23,12 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         oracle_params: &O::Params,
         upper_layer_combiner: Func,
     ) -> Result<bool, SynthesisError> {
+        
+        println!("fri challenges len: {}", fri_challenges.len());
+        println!("proof commitments len: {}", proof.commitments.len());
+        
 
-        assert!(fri_challenges.len() == proof.commitments.len());
+        assert!(fri_challenges.len() == proof.commitments.len() + 1);
         assert!(proof.queries.len() == params.R);
         assert!(natural_element_indexes.len() == proof.queries.len());
 
@@ -48,6 +52,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let log_initial_domain_size = log2_floor(initial_domain_size);
 
         if natural_element_indexes.len() != params.R || proof.final_coefficients.len() > params.final_degree_plus_one {
+            println!("First");
             return Ok(false);
         }
 
@@ -107,12 +112,20 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
     {
         let coset_idx_range = CosetCombiner::get_coset_idx_for_natural_index(
             natural_first_element_index, initial_domain_size, log_initial_domain_size, collapsing_factor);
+
+        println!("coset idx range: {}-{}", coset_idx_range.start, coset_idx_range.end);
+        println!("initial domain size: {}", initial_domain_size);
+        for elem in upper_layer_queries {
+            println!("elem idx range: {}-{}", elem.1.indexes().start, elem.1.indexes().end);
+        }
         
         //check query cardinality here!
-        if upper_layer_queries.iter().any(|x| x.1.card() != initial_domain_size || x.1.indexes() != coset_idx_range) {
+        if upper_layer_queries.iter().any(|x| x.1.indexes() != coset_idx_range) {
+            println!("second");
             return Ok(false);
         }
         if !BatchedOracle::<F, O>::verify_query(upper_layer_commitments, upper_layer_queries, oracle_params) {
+            println!("third");
             return Ok(false);
         }
 
@@ -132,6 +145,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut elem_index = (natural_first_element_index << collapsing_factor) % domain_size;
         // TODO: here is a bug - omega inverse should also be doubled
         let mut omega_inv = omega_inv.clone();
+        println!("domain size and it's log before: {},{}", domain_size, log_domain_size);
         let mut previous_layer_element = FriIop::<F, O, C>::coset_interpolant_value(
             &values[..],
             &fri_challenges[0],
@@ -143,22 +157,26 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             &mut elem_index,
             & mut omega_inv,
             two_inv);
+        println!("domain size and it's log after: {},{}", domain_size, log_domain_size);
+        println!("challenge verifier: {}", fri_challenges[0]);
+
+        println!("Here!");
 
         for ((query, commitment), challenge) 
             in queries.into_iter().zip(commitments.iter()).zip(fri_challenges.iter().skip(1)) 
         {
-            //check query cardinality here!
-            if query.card() != domain_size {
-                return Ok(false);
-            }
+            // TODO: check query cardinality here!
 
+            println!("Here!");
             //we do also need to check that coset_indexes are consistent with query
             let (coset_idx_range, elem_tree_idx) = CosetCombiner::get_coset_idx_for_natural_index_extended(
                 elem_index, domain_size, log_domain_size, collapsing_factor);
+            println!("Here!");
             
             assert_eq!(coset_idx_range.len(), coset_size);
 
             if query.indexes() != coset_idx_range {
+                println!("fifth");
                 return Ok(false);
             }              
             <O as Oracle<F>>::verify_query(commitment, query, &oracle_params);
@@ -175,8 +193,11 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 &mut elem_index,
                 & mut omega_inv,
                 two_inv);
-         
+
+            println!("elem tree idx: {}", elem_tree_idx);
+            println!("Next layer element: {}", query.values()[elem_tree_idx]);
             if previous_layer_element != query.values()[elem_tree_idx] {
+                println!("sixth");
                 return Ok(false);
             }
             previous_layer_element = this_layer_element;
@@ -212,6 +233,11 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut challenge = challenge.clone();
         let mut this_level_values = Vec::with_capacity(coset_size/2);
         let mut next_level_values = vec![F::zero(); coset_size / 2];
+
+        println!("coset interpolation challenge: {}", challenge);
+        for e in values {
+            println!("coset elem: {}", e);
+        }
 
         let base_omega_idx = bitreverse(coset_idx_range.start, *log_domain_size as usize);
 
@@ -250,11 +276,12 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             }
             
             omega_inv.square();
-            *domain_size /= 2;
-            *log_domain_size <<= 1;
+            *domain_size >>= 1;
+            *log_domain_size -= 1;
             *elem_index = (*elem_index << collapsing_factor) % *domain_size;
         }
 
+    println!("Interpolation result: {}", next_level_values[0]);
     next_level_values[0]
     }
 }
@@ -282,7 +309,7 @@ mod test {
         use crate::redshift::IOP::channel::*;
 
         use crate::redshift::IOP::oracle::coset_combining_blake2s_tree::*;
-        use crate::redshift::IOP::oracle::{Oracle, BatchedOracle};
+        use crate::redshift::IOP::oracle::{Oracle, BatchedOracle, Label};
 
         use crate::pairing::bn256::Fr as Fr;
 
@@ -292,7 +319,7 @@ mod test {
 
         let params = FriParams {
             collapsing_factor: 1,
-            R: 80,
+            R: 1,
             initial_degree_plus_one: std::cell::Cell::new(1024),
             lde_factor: 16,
             final_degree_plus_one: 2,
@@ -315,6 +342,7 @@ mod test {
 
         let upper_layer_oracle = FriSpecificBlake2sTree::create(eval_result.as_ref(), &oracle_params);
         let batched_oracle = BatchedOracle::create(vec![("starting oracle", &upper_layer_oracle)]);
+        let upper_layer_commitments = batched_oracle.get_commitment();
 
         let fri_precomp = <OmegasInvBitreversed::<Fr> as FriPrecomputations<Fr>>::new_for_domain_size(eval_result.size());
 
@@ -337,6 +365,30 @@ mod test {
             &params,
             &oracle_params,
         ).expect("Fri Proof must be constrcuted");
+
+        channel.reset();
+        let fri_challenges = FriIop::<Fr, FriSpecificBlake2sTree<Fr>, Blake2sChannel<Fr>>::get_fri_challenges(
+            &proof,
+            &mut channel,
+            &params,
+        );
+
+        let upper_layer_combiner = |arr: Vec<(Label, &Fr)>| -> Option<Fr> {
+            let res = arr.iter().find(|(l, _)| *l == "starting oracle").map(|(_, c)| (*c).clone());
+            res
+        };
+
+        let result = FriIop::<Fr, FriSpecificBlake2sTree<Fr>, Blake2sChannel<Fr>>::verify_proof_queries(
+            &proof,
+            upper_layer_commitments,
+            vec![0],
+            &fri_challenges,
+            &params,
+            &oracle_params,
+            upper_layer_combiner,
+        ).expect("Verification must be successful");
+
+        assert_eq!(result, true);    
     }
 }
 

@@ -132,6 +132,11 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             let mut challenge = channel.produce_field_element_challenge();
             challenges.push(challenge.clone());
 
+            if fri_step == 0 {
+                println!("challenge: {}", challenge);
+            }
+            
+
             // we combine like this with FRI trees being aware of the FRI computations
             //            next_value(omega**)
             //          /                     \
@@ -214,6 +219,11 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                     });
                 }
             });
+
+            if fri_step == 1 {
+                 println!("Next layer element: {}", next_values[0]);
+            }
+
             
             if fri_step < num_steps - 1 {
                 this_domain_size = next_domain_size;
