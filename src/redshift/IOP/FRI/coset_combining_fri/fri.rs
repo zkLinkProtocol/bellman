@@ -117,8 +117,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let omegas_inv_bitreversed: &[F] = precomputations.omegas_inv_bitreversed();
         let mut this_domain_size = initial_domain_size;
 
-        intermediate_values.push(lde_values);
-        let mut values_slice = intermediate_values.last().expect("is something").as_ref();
+        let mut values_slice =lde_values.as_ref();
         let mut next_values;  
 
         let mut final_poly_coeffs = Vec::<F>::new();
@@ -210,7 +209,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                                 if wrapping_step != collapsing_factor - 1 {
                                     this_level_values.clear();
                                     this_level_values.clone_from(&next_level_values);
-                                    challenge.double();
+                                    challenge.square();
                                 }
                             }
 
@@ -220,11 +219,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 }
             });
 
-            if fri_step == 1 {
-                 println!("Next layer element: {}", next_values[0]);
-            }
-
-            
             if fri_step < num_steps - 1 {
                 this_domain_size = next_domain_size;
                 let intermediate_oracle = <O as Oracle<F>>::create(next_values.as_ref(), &oracle_params);
@@ -232,7 +226,22 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
 
                 let next_values_as_poly = Polynomial::from_values(next_values)?;
                 intermediate_values.push(next_values_as_poly);
-                values_slice = intermediate_values.last().expect("is something").as_ref();         
+                values_slice = intermediate_values.last().expect("is something").as_ref();   
+
+                // DELETE THIS!
+                let test_poly_values = intermediate_values.last().expect("is something").clone(); 
+                let test_data = test_poly_values.icoset_fft_for_generator(&worker, &F::multiplicative_generator());
+                let final_poly_coeffs = test_data.into_coeffs();   
+
+                let mut degree = final_poly_coeffs.len() - 1;
+                for c in final_poly_coeffs.iter().rev() {
+                    if c.is_zero() {
+                        degree -= 1;
+                    } else {
+                        break
+                    }
+                }
+                println!("current FRI iter poly degree+1: {}", degree+1);
             }
             else {
                 let mut final_poly_values = Polynomial::from_values(next_values)?;
@@ -244,7 +253,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
 
         assert_eq!(challenges.len(), num_steps as usize);
         assert_eq!(oracles.len(), (num_steps-1) as usize);
-        assert_eq!(intermediate_values.len(), num_steps as usize);
+        assert_eq!(intermediate_values.len(), (num_steps-1) as usize);
 
         let mut degree = final_poly_coeffs.len() - 1;
         for c in final_poly_coeffs.iter().rev() {
@@ -254,7 +263,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 break
             }
         }
-
+        println!("final degree: {}", degree);
         assert!(degree < params.final_degree_plus_one, "polynomial degree is too large, coeffs = {:?}", final_poly_coeffs);
 
         final_poly_coeffs.truncate(params.final_degree_plus_one);
