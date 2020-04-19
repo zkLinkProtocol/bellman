@@ -128,13 +128,15 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             if fri_step != 0 {
                 channel.consume(&oracles.last().expect("should not be empty").get_commitment());
             }
+            
             let mut challenge = channel.produce_field_element_challenge();
             challenges.push(challenge.clone());
 
-            if fri_step == 0 {
-                println!("challenge: {}", challenge);
+            let mut challenges_arr = Vec::with_capacity(collapsing_factor as usize);
+            for _ in 0..collapsing_factor {
+                challenges_arr.push(challenge.clone());
+                challenge.square();
             }
-            
 
             // we combine like this with FRI trees being aware of the FRI computations
             //            next_value(omega**)
@@ -154,6 +156,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             worker.scope(next_values.len(), |scope, chunk| {
                 for (i, v) in next_values.chunks_mut(chunk).enumerate() {
 
+                    let challenges_arr = challenges_arr.clone();
                     scope.spawn(move |_| {
                         let initial_k = i*chunk;
                         let mut this_level_values = Vec::with_capacity(wrapping_factor);
@@ -161,7 +164,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                         for (j, v) in v.iter_mut().enumerate() {
                             let batch_id = initial_k + j;
                             let values_offset = batch_id*wrapping_factor;
-                            for wrapping_step in 0..collapsing_factor {
+                            for (wrapping_step, challenge) in challenges_arr.iter().enumerate() {
                                 let base_omega_idx = (batch_id * wrapping_factor) >> (1 + wrapping_step);
                                 let expected_this_level_values = wrapping_factor >> wrapping_step;
                                 let expected_next_level_values = wrapping_factor >> (wrapping_step + 1);
@@ -199,17 +202,16 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                                     v_odd_coeffs.mul_assign(&omega_inv);
 
                                     let mut tmp = v_odd_coeffs;
-                                    tmp.mul_assign(&challenge);
+                                    tmp.mul_assign(challenge);
                                     tmp.add_assign(&v_even_coeffs);
                                     tmp.mul_assign(&two_inv);
 
                                     *o = tmp;
                                 }
 
-                                if wrapping_step != collapsing_factor - 1 {
+                                if wrapping_step != collapsing_factor as usize - 1 {
                                     this_level_values.clear();
                                     this_level_values.clone_from(&next_level_values);
-                                    challenge.square();
                                 }
                             }
 
@@ -227,21 +229,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 let next_values_as_poly = Polynomial::from_values(next_values)?;
                 intermediate_values.push(next_values_as_poly);
                 values_slice = intermediate_values.last().expect("is something").as_ref();   
-
-                // DELETE THIS!
-                let test_poly_values = intermediate_values.last().expect("is something").clone(); 
-                let test_data = test_poly_values.icoset_fft_for_generator(&worker, &F::multiplicative_generator());
-                let final_poly_coeffs = test_data.into_coeffs();   
-
-                let mut degree = final_poly_coeffs.len() - 1;
-                for c in final_poly_coeffs.iter().rev() {
-                    if c.is_zero() {
-                        degree -= 1;
-                    } else {
-                        break
-                    }
-                }
-                println!("current FRI iter poly degree+1: {}", degree+1);
             }
             else {
                 let mut final_poly_values = Polynomial::from_values(next_values)?;
@@ -263,7 +250,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 break
             }
         }
-        println!("final degree: {}", degree);
+
         assert!(degree < params.final_degree_plus_one, "polynomial degree is too large, coeffs = {:?}", final_poly_coeffs);
 
         final_poly_coeffs.truncate(params.final_degree_plus_one);

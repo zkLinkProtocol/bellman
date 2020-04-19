@@ -297,11 +297,11 @@ mod test {
         let mut channel = Blake2sChannel::new(&());
 
         let params = FriParams {
-            collapsing_factor: 2,
+            collapsing_factor: 3,
             R: 1,
             initial_degree_plus_one: std::cell::Cell::new(1024),
             lde_factor: 16,
-            final_degree_plus_one: 1,
+            final_degree_plus_one: 2,
         };
 
         let oracle_params = FriSpecificBlake2sTreeParams {
