@@ -73,7 +73,10 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
     let num_gates = input_gates.len() + aux_gates.len();
     let num_partitions = num_inputs + num_aux;
     // in the partition number i there is a set of indexes in V = (a, b, c) such that V_j = i
-    let mut partitions = vec![vec![]; num_partitions + 1];
+    let mut partitions = vec![vec![]; num_partitions];
+
+    println!("num inputs: {}", num_inputs);
+    println!("num aux: {}", num_aux);
 
     for (j, gate) in input_gates.iter().chain(aux_gates).enumerate()
     {
@@ -84,7 +87,8 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
             },
             Variable(Index::Aux(index)) => {
                 if *index != 0 {
-                    let i = index + num_inputs;
+                    
+                    let i = index + num_inputs - 1;
                     partitions[i].push(j+1);
                 }
             },
@@ -97,7 +101,7 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
             },
             Variable(Index::Aux(index)) => {
                 if *index != 0 {
-                    let i = index + num_inputs;
+                    let i = index + num_inputs - 1;
                     partitions[i].push(j + 1 + num_gates);
                 }
             },
@@ -110,7 +114,7 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
             },
             Variable(Index::Aux(index)) => {
                 if *index != 0 {
-                    let i = index + num_inputs;
+                    let i = index + num_inputs - 1;
                     partitions[i].push(j + 1 + 2*num_gates);
                 }
             },
@@ -121,8 +125,6 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
     let mut sigma_2: Vec<_> = ((num_gates+1)..=(2*num_gates)).collect();
     let mut sigma_3: Vec<_> = ((2*num_gates + 1)..=(3*num_gates)).collect();
 
-    let mut permutations = vec![vec![]; num_partitions + 1];
-
     fn rotate(mut vec: Vec<usize>) -> Vec<usize> {
         if vec.len() > 0 {
             let els: Vec<_> = vec.drain(0..1).collect();
@@ -132,11 +134,10 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
         vec
     }
 
-    for (i, partition) in partitions.into_iter().enumerate().skip(1) {
+    for partition in partitions.into_iter() {
         // copy-permutation should have a cycle around the partition
 
         let permutation = rotate(partition.clone());
-        permutations[i] = permutation.clone();
 
         for (original, new) in partition.into_iter()
                                 .zip(permutation.into_iter()) 

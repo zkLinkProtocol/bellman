@@ -23,6 +23,8 @@ mod test {
     use std::marker::PhantomData;
     use crate::multicore::*;
 
+    use crate::redshift::redshift::test_assembly::*;
+
     #[derive(Clone)]
     struct BenchmarkCircuit<E: Engine>{
         num_steps: usize,
@@ -35,11 +37,11 @@ mod test {
         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             // yeah, fibonacci...
             
-            let mut a = cs.alloc_input(|| {
+            let mut a = cs.alloc(|| {
                 Ok(self.a)
             })?;
 
-            let mut b = cs.alloc_input(|| {
+            let mut b = cs.alloc(|| {
                 Ok(self.b)
             })?;
 
@@ -90,7 +92,19 @@ mod test {
             _marker: std::marker::PhantomData::<E>
         };
 
-        let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(num_steps.next_power_of_two());
+        // verify that circuit is satifiable
+        let mut test_assembly = TestAssembly::new();
+        let test_circuit = circuit.clone();
+        test_circuit.synthesize(&mut test_assembly)?;
+        println!("test circuit: {}", test_assembly.is_satisfied(true));
+
+        println!("Begin2!");
+
+        let n = num_steps.next_power_of_two();
+        println!("setup n: {}", n);
+        let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(n);  
+
+         println!("Begin!");
 
         let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>,  BitReversedOmegas<E::Fr>, I, T>(
             &circuit,
@@ -100,10 +114,14 @@ mod test {
             &omegas_bitreversed,
         )?;
 
+        println!("Heeeeeere!");
 
-        let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(num_steps.next_power_of_two());
+
+        let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(n);
         let omegas_inv_bitreversed_for_fri = <CosetOmegasInvBitreversed::<E::Fr> as FriPrecomputations::<E::Fr>>::new_for_domain_size(
             num_steps.next_power_of_two() * fri_params.lde_factor);
+
+         println!("Heeeeeeeeere2!");
 
         let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, BitReversedOmegas<E::Fr>, 
             OmegasInvBitreversed::<E::Fr>, CosetOmegasInvBitreversed::<E::Fr>, I, T> (
@@ -147,7 +165,7 @@ mod test {
         let fri_params = FriParams {
             lde_factor : 16,
             initial_degree_plus_one: std::cell::Cell::new(0),
-            R : 4,
+            R : 1,
             collapsing_factor : 1,
             final_degree_plus_one : 1,
         };
@@ -192,14 +210,14 @@ mod test {
         // prepare parameters
         let a = Fr::one();
         let b = Fr::one();
-        let num_steps = 1000;
+        let num_steps = 3;
 
         let fri_params = FriParams {
             initial_degree_plus_one: std::cell::Cell::new(0),
             lde_factor: 16,
             R: 4,
-            collapsing_factor: 2,
-            final_degree_plus_one: 4
+            collapsing_factor: 1,
+            final_degree_plus_one: 1
         };
 
         let bn256_rescue_params = BN256Rescue::default();

@@ -168,6 +168,8 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
     
     let mut assembly = GeneratorAssembly::<E>::new();
     circuit.synthesize(&mut assembly)?;
+
+    println!("setup1");
     
     assembly.finalize();
     let (input_gates, aux_gates, num_inputs, num_aux) = assembly.get_data();
@@ -184,6 +186,7 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
 
     // we prefer to pass degree explicitely (in order to implement hiding later)
     // we also have plans to hold the case of various degrees polynomials
+    println!("setup11");
     let q_l_commitment_data = commit_single_poly::<E, CP, I>(&q_l, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
     let q_r_commitment_data = commit_single_poly::<E, CP, I>(&q_r, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
     let q_o_commitment_data = commit_single_poly::<E, CP, I>(&q_o, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
@@ -195,6 +198,8 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
     let sigma_2_commitment_data = commit_single_poly::<E, CP, I>(&sigma_2, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
     let sigma_3_commitment_data = commit_single_poly::<E, CP, I>(&sigma_3, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
 
+    println!("setup12");
+
     channel.consume(&q_l_commitment_data.oracle.get_commitment());
     channel.consume(&q_r_commitment_data.oracle.get_commitment());
     channel.consume(&q_o_commitment_data.oracle.get_commitment());
@@ -205,6 +210,8 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
     channel.consume(&sigma_1_commitment_data.oracle.get_commitment());
     channel.consume(&sigma_2_commitment_data.oracle.get_commitment());
     channel.consume(&sigma_3_commitment_data.oracle.get_commitment());
+
+    println!("setup2");
 
     // TODOl it is better to produce setup point via list-decoding algorithm
     let setup_point = channel.produce_field_element_challenge();
@@ -234,6 +241,8 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
         sigma_2: sigma_2_commitment_data.oracle.get_commitment(),
         sigma_3: sigma_3_commitment_data.oracle.get_commitment(),
     };
+
+    println!("setup3");
 
     let precomputation = RedshiftSetupPrecomputation::<E::Fr, I> {
         q_l_aux: SinglePolySetupData::<E::Fr, I> {
@@ -307,6 +316,8 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
             setup_value: sigma_3_setup_value,
         },
     };
+
+    println!("setup4");
 
     Ok((setup, precomputation))
 }
