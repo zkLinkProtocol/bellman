@@ -48,11 +48,113 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         path
     }
 
-    fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.size
     }
 
-    fn create(values: &[E::Fr], tree_hasher: H, params: &BinaryTreeParams) -> Self {
+    pub(crate) fn create_from_combined_leafs(leafs: &[Vec<&[E::Fr]>], tree_hasher: H, params: &BinaryTreeParams) -> Self {
+        let values_per_leaf = params.values_per_leaf;
+        let num_leafs = leafs.len();
+        let values_per_leaf_supplied = leafs[0].len() * leafs[0][0].len();
+        assert!(values_per_leaf == values_per_leaf_supplied);
+        assert!(num_leafs.is_power_of_two());
+
+        let num_nodes = num_leafs;
+
+        let size = num_leafs;
+
+        let mut nodes = vec![H::placeholder_output(); num_nodes];
+
+        let worker = Worker::new();
+
+        let mut leaf_hashes = vec![H::placeholder_output(); num_leafs];
+
+        let hasher_ref = &tree_hasher;
+
+        {
+            worker.scope(leaf_hashes.len(), |scope, chunk| {
+                for (i, lh) in leaf_hashes.chunks_mut(chunk)
+                                .enumerate() {
+                    scope.spawn(move |_| {
+                        let mut scratch_space = Vec::with_capacity(values_per_leaf);
+                        let base_idx = i*chunk;
+                        for (j, lh) in lh.iter_mut().enumerate() {
+                            let idx = base_idx + j;
+                            let leaf_values_ref = &leafs[idx];
+                            for &lv in leaf_values_ref.iter() {
+                                scratch_space.extend_from_slice(lv);
+                            }
+                            *lh = hasher_ref.leaf_hash(&scratch_space[..]);
+                            scratch_space.truncate(0);
+                        }
+                    });
+                }
+            });
+        }
+
+        // leafs are now encoded and hashed, so let's make a tree
+
+        let num_levels = log2_floor(num_leafs) as usize;
+        let mut nodes_for_hashing = &mut nodes[..];
+
+        // separately hash last level, which hashes leaf hashes into first nodes
+        {
+            let _level = num_levels-1;
+            let inputs = &mut leaf_hashes[..];
+            let (_, outputs) = nodes_for_hashing.split_at_mut(nodes_for_hashing.len()/2);
+            assert!(outputs.len() * 2 == inputs.len());
+            assert!(outputs.len().is_power_of_two());
+
+            worker.scope(outputs.len(), |scope, chunk| {
+                for (o, i) in outputs.chunks_mut(chunk)
+                                .zip(inputs.chunks(chunk*2)) {
+                    scope.spawn(move |_| {
+                        let mut hash_input = [H::placeholder_output(); 2];
+                        for (o, i) in o.iter_mut().zip(i.chunks(2)) {
+                            hash_input[0] = i[0];
+                            hash_input[1] = i[1];
+                            *o = hasher_ref.node_hash(&hash_input, _level);
+                        }
+                    });
+                }
+            });
+        }
+
+        for _level in (0..(num_levels-1)).rev() {
+            // do the trick - split
+            let (next_levels, inputs) = nodes_for_hashing.split_at_mut(nodes_for_hashing.len()/2);
+            let (_, outputs) = next_levels.split_at_mut(next_levels.len() / 2);
+            assert!(outputs.len() * 2 == inputs.len());
+            assert!(outputs.len().is_power_of_two());
+
+            worker.scope(outputs.len(), |scope, chunk| {
+                for (o, i) in outputs.chunks_mut(chunk)
+                                .zip(inputs.chunks(chunk*2)) {
+                    scope.spawn(move |_| {
+                        let mut hash_input = [H::placeholder_output(); 2];
+                        for (o, i) in o.iter_mut().zip(i.chunks(2)) {
+                            hash_input[0] = i[0];
+                            hash_input[1] = i[1];
+                            *o = hasher_ref.node_hash(&hash_input, _level);
+                        }
+                    });
+                }
+            });
+
+            nodes_for_hashing = next_levels;
+        }
+
+        Self {
+            size: size,
+            nodes: nodes,
+            tree_hasher: tree_hasher,
+            params: params.clone(),
+            _marker: std::marker::PhantomData
+        }
+
+    }
+
+    pub(crate) fn create(values: &[E::Fr], tree_hasher: H, params: &BinaryTreeParams) -> Self {
         assert!(params.values_per_leaf.is_power_of_two());
 
         let values_per_leaf = params.values_per_leaf;
@@ -61,7 +163,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
 
         let num_nodes = num_leafs;
 
-        let size = values.len();
+        let size = num_leafs;
 
         let mut nodes = vec![H::placeholder_output(); num_nodes];
 
@@ -242,8 +344,10 @@ mod test {
     use crate::pairing::bn256::{Bn256, Fr};
     use rescue_hash::bn256::Bn256RescueParams;
 
-    const SIZE: usize = 16;
-    const VALUES_PER_LEAF: usize = 4;
+    // const SIZE: usize = 16;
+    // const VALUES_PER_LEAF: usize = 4;
+    const SIZE: usize = 24;
+    const VALUES_PER_LEAF: usize = 8;
 
     #[test]
     fn make_binary_tree() {

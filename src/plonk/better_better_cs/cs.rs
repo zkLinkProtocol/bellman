@@ -640,7 +640,7 @@ fn check_gate_is_allowed_for_params<E: Engine, P: PlonkConstraintSystemParams<E>
     true
 }
 
-pub trait PlonkConstraintSystemParams<E: Engine> {
+pub trait PlonkConstraintSystemParams<E: Engine>: Sized + Copy + Clone + Send + Sync {
     const STATE_WIDTH: usize;
     const WITNESS_WIDTH: usize;
     const HAS_WITNESS_POLYNOMIALS: bool;
@@ -850,6 +850,8 @@ pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
     pub is_finalized: bool,
     pub constraints: std::collections::HashSet<Box<dyn GateEquationInternal>>,
     pub gate_internal_coefficients: GateConstantCoefficientsStorage<E>,
+    pub sorted_setup_polynomial_ids: Vec<PolyIdentifier>,
+    pub sorted_gates_for_selectors: Vec<Box<dyn GateEquationInternal>>,
     pub aux_gate_density: GateDensityStorage,
     _marker: std::marker::PhantomData<P>
 }
@@ -943,11 +945,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
             witness_assignments
         )?;
 
-        if !self.constraints.contains(gate.as_internal() as &dyn GateEquationInternal) {
-            self.constraints.insert(gate.clone().into_internal());
-            let gate_constants = G::output_constant_coefficients::<E>();
-            self.gate_internal_coefficients.0.insert(Box::from(gate.clone().into_internal()), gate_constants);
-        }        
+        self.add_gate_into_list(gate);
 
         if let Some(tracker) = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateEquationInternal) {
             if tracker.len() != n {
@@ -1115,6 +1113,48 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
         self.num_input_gates + self.num_aux_gates
     }
 
+    fn add_gate_setup_polys_into_list<G: GateEquation>(&mut self, gate: &G) {
+        let mut setup_index: Option<(&'static str, usize)> = None;
+        for t in gate.get_constraints() {
+            for c in t.0.iter() {
+                for s in c.1.iter() {
+                    match s {
+                        PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
+                            setup_index = Some((name, *idx));
+                        },
+                        _ => {}
+                    }
+
+                    match setup_index.take() {
+                        Some((name, idx)) => {
+                            let key = PolyIdentifier::SetupPolynomial(name, idx);
+                            self.sorted_setup_polynomial_ids.push(key);
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn add_gate_into_list<G: GateEquation>(&mut self, gate: &G) {
+        if !self.constraints.contains(gate.as_internal() as &dyn GateEquationInternal) {
+            self.constraints.insert(gate.clone().into_internal());
+
+            self.add_gate_setup_polys_into_list(gate);
+
+            self.sorted_gates_for_selectors.push(gate.clone().into_internal());
+
+            let degree = gate.degree();
+            if self.max_constraint_degree < degree {
+                self.max_constraint_degree = degree;
+            }
+
+            let gate_constants = G::output_constant_coefficients::<E>();
+            self.gate_internal_coefficients.0.insert(Box::from(gate.clone().into_internal()), gate_constants);
+        }        
+    }
+
     pub fn new() -> Self {
         let mut tmp = Self {
             inputs_storage: PolynomialStorage::new(),
@@ -1139,17 +1179,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
             gate_internal_coefficients: GateConstantCoefficientsStorage::<E>::new(),
 
             aux_gate_density: GateDensityStorage::new(),
+            sorted_setup_polynomial_ids: vec![],
+            sorted_gates_for_selectors: vec![],
 
             is_finalized: false,
 
             _marker: std::marker::PhantomData
         };
 
-        tmp.max_constraint_degree = tmp.main_gate.degree();
-        tmp.constraints.insert(Box::from(MG::default()));
-
-        let gate_constants = MG::output_constant_coefficients::<E>();
-        tmp.gate_internal_coefficients.0.insert(Box::from(MG::default()), gate_constants);
+        tmp.add_gate_into_list(&MG::default());
 
         assert!(check_gate_to_support_public_inputs(&tmp.main_gate), "default gate must support making public inputs");
 
@@ -1446,6 +1484,50 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         Ok((map, permutation_polys))
     }
+
+    pub fn output_gate_selectors(&self, worker: &Worker) -> Result<Vec<Polynomial<E::Fr, Values>>, SynthesisError> {
+        assert!(self.is_finalized);
+        if self.sorted_gates_for_selectors.len() == 1 {
+            return Ok(vec![]);
+        }
+
+        let num_gate_selectors = self.sorted_gates_for_selectors.len();
+
+        let one = E::Fr::one();
+        let empty_poly = Polynomial::<E::Fr, Values>::new_for_size(self.n().next_power_of_two())?;
+        let mut poly_values = vec![empty_poly.clone(); num_gate_selectors];
+        let num_input_gates = self.num_input_gates;
+
+        for p in poly_values.iter_mut() {
+            for p in p.as_mut()[..num_input_gates].iter_mut() {
+                *p = one;
+            }
+        }
+
+        worker.scope(poly_values.len(), |scope, chunk| {
+            for (i, lh) in poly_values.chunks_mut(chunk)
+                            .enumerate() {
+                scope.spawn(move |_| {
+                    // we take `values_per_leaf` values from each of the polynomial
+                    // and push them into the conbinations
+                    let base_idx = i*chunk;
+                    for (j, lh) in lh.iter_mut().enumerate() {
+                        let idx = base_idx + j;
+                        let id = &self.sorted_gates_for_selectors[idx];
+                        let density = self.aux_gate_density.0.get(id).unwrap();
+                        let poly_mut_slice: &mut [E::Fr] = &mut lh.as_mut()[num_input_gates..];
+                        for (i, d) in density.iter().enumerate() {
+                            if d {
+                                poly_mut_slice[i] = one;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        Ok(poly_values)
+    }
 }
 
 #[cfg(test)]
@@ -1458,86 +1540,6 @@ mod test {
     struct TestCircuit4<E:Engine>{
         _marker: PhantomData<E>
     }
-
-    // impl<E: Engine> Circuit<E> for TestCircuit4<E> {
-    //     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-    //         let main_gate = CS::MainGate::default();
-    //         // let main_gate = Width4MainGateWithDNextEquation::default();
-
-    //         let a = cs.alloc(|| {
-    //             Ok(E::Fr::from_str("10").unwrap())
-    //         })?;
-
-    //         println!("A = {:?}", a);
-
-    //         let b = cs.alloc(|| {
-    //             Ok(E::Fr::from_str("20").unwrap())
-    //         })?;
-
-    //         println!("B = {:?}", b);
-
-    //         let c = cs.alloc(|| {
-    //             Ok(E::Fr::from_str("200").unwrap())
-    //         })?;
-
-    //         println!("C = {:?}", c);
-
-    //         let d = cs.alloc(|| {
-    //             Ok(E::Fr::from_str("100").unwrap())
-    //         })?;
-
-    //         println!("D = {:?}", d);
-
-    //         let zero = E::Fr::zero();
-
-    //         let one = E::Fr::one();
-
-    //         let mut two = one;
-    //         two.double();
-
-    //         let mut negative_one = one;
-    //         negative_one.negate();
-
-    //         let dummy = CS::get_dummy_variable();
-
-    //         cs.new_single_gate_for_trace_step(
-    //             &main_gate, 
-    //             &[two, negative_one, zero, zero, zero, zero, zero],
-    //             &[a, b, dummy, dummy], 
-    //             &[]
-    //         )?;
-
-    //         // 10b - c = 0
-    //         let ten = E::Fr::from_str("10").unwrap();
-
-    //         cs.new_single_gate_for_trace_step(
-    //             &main_gate, 
-    //             &[ten, negative_one, zero, zero, zero, zero, zero],
-    //             &[b, c, dummy, dummy], 
-    //             &[]
-    //         )?;
-
-    //         // c - a*b == 0 
-
-    //         cs.new_single_gate_for_trace_step(
-    //             &main_gate, 
-    //             &[zero, zero, zero, negative_one, one, zero, zero],
-    //             &[a, b, dummy, c], 
-    //             &[]
-    //         )?;
-
-    //         // 10a + 10b - c - d == 0
-
-    //         cs.new_single_gate_for_trace_step(
-    //             &main_gate, 
-    //             &[ten, ten, negative_one, negative_one, zero, zero, zero],
-    //             &[a, b, c, d], 
-    //             &[]
-    //         )?;
-
-    //         Ok(())
-    //     }
-    // }
 
     impl<E: Engine> Circuit<E> for TestCircuit4<E> {
         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
@@ -1650,5 +1652,46 @@ mod test {
         let worker = Worker::new();
 
         let (_storage, _permutation_polys) = assembly.perform_setup(&worker).unwrap();
+    }
+
+    #[test]
+    fn test_make_setup_for_triival_circuit() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::worker::Worker;
+
+        use super::super::redshift::setup::*;
+        use super::super::redshift::tree_hash::*;
+        use rescue_hash::bn256::Bn256RescueParams;
+
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
+
+        let circuit = TestCircuit4::<Bn256> {
+            _marker: PhantomData
+        };
+
+        circuit.synthesize(&mut assembly).expect("must work");
+
+        assert!(assembly.constraints.len() == 1);
+
+        // println!("Assembly state polys = {:?}", assembly.storage.state_map);
+
+        // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
+
+        println!("Assembly contains {} gates", assembly.n());
+        
+        assert!(assembly.is_satisfied());
+
+        assembly.finalize();
+
+        let params = Bn256RescueParams::new_checked_2_into_1();
+        let hasher = RescueBinaryTreeHasher::<Bn256>::new(&params);
+
+        let worker = Worker::new();
+
+        let _ = SetupMultioracle::from_assembly(
+            assembly,
+            hasher,
+            &worker
+        ).unwrap();
     }
 }

@@ -2206,6 +2206,8 @@ impl<F: PartialTwoBitReductionField> Polynomial<F, Values> {
 }
 
 impl<F: PrimeField> Polynomial<F, Values> {
+    /// taken in natural enumeration
+    /// outputs in natural enumeration
     pub fn ifft_using_bitreversed_ntt<P: CTPrecomputations<F>>(
         self, 
         worker: &Worker, 

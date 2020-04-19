@@ -45,6 +45,7 @@ impl<'a, E: RescueEngine> BinaryTreeHasher<E::Fr> for RescueBinaryTreeHasher<'a,
 
         as_vec.pop().unwrap()
     }
+
     fn node_hash(&self, input: &[Self::Output; 2], _level: usize) -> Self::Output {
         let mut as_vec = rescue_hash::<E>(self.params, &input[..]);
 

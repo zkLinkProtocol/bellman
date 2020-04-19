@@ -1,2 +1,4 @@
-mod tree_hash;
-mod binary_tree;
+pub mod tree_hash;
+pub mod binary_tree;
+pub mod multioracle;
+pub mod setup;
