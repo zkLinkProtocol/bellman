@@ -340,7 +340,7 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         w_l_contribution.mul_assign(&worker, &w_o_contribution);
         drop(w_o_contribution);
 
-        let grand_product = w_l_contribution.calculate_grand_product(&worker)?;
+        let grand_product = w_l_contribution.calculate_grand_product_serial()?;
 
         drop(w_l_contribution);
 
@@ -379,7 +379,7 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         w_l_contribution.mul_assign(&worker, &w_o_contribution);
         drop(w_o_contribution);
 
-        let grand_product = w_l_contribution.calculate_grand_product(&worker)?;
+        let grand_product = w_l_contribution.calculate_grand_product_serial()?;
 
         drop(w_l_contribution);
 
