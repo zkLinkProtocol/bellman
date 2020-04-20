@@ -36,40 +36,52 @@ mod test {
     impl<E: Engine> Circuit<E> for BenchmarkCircuit<E> {
         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             // yeah, fibonacci...
-            
-            let mut a = cs.alloc(|| {
-                Ok(self.a)
-            })?;
-
-            let mut b = cs.alloc(|| {
-                Ok(self.b)
-            })?;
-
-            let mut a_value;
-            let mut b_value = self.b.clone();
-            let mut c_value = self.a.clone();
-            c_value.add_assign(&b_value);
-            let mut c;
 
             let one = E::Fr::one();
             let mut negative_one = one;
             negative_one.negate();
+            
+            let mut a = cs.alloc(|| {
+                Ok(negative_one.clone())
+            })?;
 
-            for _ in 0..self.num_steps {
+            let mut b = cs.alloc(|| {
+                Ok(one.clone())
+            })?;
+
+            let mut c = cs.alloc(|| {
+                Ok(E::Fr::zero())
+            })?;
+
+            cs.enforce_zero_3((a, b, c), (one, one, one))?;
+            cs.enforce_zero_2((a, b), (one, one))?;
+
+            //let mut a_value;
+            // let mut b_value = self.b.clone();
+            // let mut c_value = self.a.clone();
+            // c_value.add_assign(&b_value);
+            // //let mut c;
+
+            // let one = E::Fr::one();
+            // let mut negative_one = one;
+            // negative_one.negate();
+
+            // for _ in 0..self.num_steps {
                
-                c = cs.alloc(|| {
-                    Ok(c_value)
-                })?;
+            //     let c = cs.alloc(|| {
+            //         Ok(E::Fr::one())
+            //     })?;
 
-                cs.enforce_zero_3((a, b, c), (one, one, negative_one))?;
+                //cs.enforce_zero_3(())
+                //cs.enforce_zero_3((a, b, c), (one, one, negative_one))?;
 
-                a = b;
-                b = c;
+                // a = b;
+                // b = c;
 
-                a_value = b_value;
-                b_value = c_value;
-                c_value.add_assign(&a_value);
-            }
+                // a_value = b_value;
+                // b_value = c_value;
+                // c_value.add_assign(&a_value);
+            //}
 
             Ok(())
         }
@@ -98,40 +110,24 @@ mod test {
         test_circuit.synthesize(&mut test_assembly)?;
         println!("test circuit: {}", test_assembly.is_satisfied(true));
 
-        println!("Begin2!");
-
-        let n = num_steps.next_power_of_two();
-        println!("setup n: {}", n);
-        let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(n);  
-
-         println!("Begin!");
-
-        let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>,  BitReversedOmegas<E::Fr>, I, T>(
+        let n = 4;
+        
+        let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
             &circuit,
             &fri_params,
             &oracle_params,
             &channel_params,
-            &omegas_bitreversed,
         )?;
 
-        println!("Heeeeeere!");
-
-
-        let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(n);
         let omegas_inv_bitreversed_for_fri = <CosetOmegasInvBitreversed::<E::Fr> as FriPrecomputations::<E::Fr>>::new_for_domain_size(
-            num_steps.next_power_of_two() * fri_params.lde_factor);
+           n * fri_params.lde_factor);
 
-         println!("Heeeeeeeeere2!");
-
-        let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, BitReversedOmegas<E::Fr>, 
-            OmegasInvBitreversed::<E::Fr>, CosetOmegasInvBitreversed::<E::Fr>, I, T> (
+        let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, CosetOmegasInvBitreversed::<E::Fr>, I, T> (
             &circuit,
             &setup_precomp, 
             &fri_params,
             &oracle_params,
             &channel_params, 
-            &omegas_bitreversed, 
-            &omegas_inv_bitreversed,
             &omegas_inv_bitreversed_for_fri
         )?;
 

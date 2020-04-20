@@ -115,7 +115,7 @@ pub(crate) fn best_ct_ntt<F: PrimeField, P: CTPrecomputations<F>>(
     use_cpus_hint: Option<usize>, 
     precomputed_omegas: &P
 )
-{
+{   
     let log_cpus = if let Some(hint) = use_cpus_hint {
         assert!(hint <= worker.cpus);
         let hint = if hint > 0 {

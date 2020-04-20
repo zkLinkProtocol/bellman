@@ -72,11 +72,9 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
 {
     let num_gates = input_gates.len() + aux_gates.len();
     let num_partitions = num_inputs + num_aux;
+    
     // in the partition number i there is a set of indexes in V = (a, b, c) such that V_j = i
-    let mut partitions = vec![vec![]; num_partitions];
-
-    println!("num inputs: {}", num_inputs);
-    println!("num aux: {}", num_aux);
+    let mut partitions = vec![vec![]; num_partitions + 1];
 
     for (j, gate) in input_gates.iter().chain(aux_gates).enumerate()
     {
@@ -87,8 +85,7 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
             },
             Variable(Index::Aux(index)) => {
                 if *index != 0 {
-                    
-                    let i = index + num_inputs - 1;
+                    let i = index + num_inputs;
                     partitions[i].push(j+1);
                 }
             },
@@ -101,9 +98,10 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
             },
             Variable(Index::Aux(index)) => {
                 if *index != 0 {
-                    let i = index + num_inputs - 1;
+                    let i = index + num_inputs;
                     partitions[i].push(j + 1 + num_gates);
                 }
+ 
             },
         }
 
@@ -114,7 +112,7 @@ pub(crate) fn calculate_permutations_as_in_a_paper<E: Engine>(
             },
             Variable(Index::Aux(index)) => {
                 if *index != 0 {
-                    let i = index + num_inputs - 1;
+                    let i = index + num_inputs;
                     partitions[i].push(j + 1 + 2*num_gates);
                 }
             },

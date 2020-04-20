@@ -18,6 +18,8 @@ use super::gates::*;
 use super::data_structures::*;
 use super::utils::*;
 
+use crate::redshift::fft::cooley_tukey_ntt::*;
+
 #[derive(Debug)]
 struct GeneratorAssembly<E: Engine> {
     m: usize,
@@ -112,13 +114,9 @@ impl<E: Engine> GeneratorAssembly<E> {
             is_finalized: false,
         };
 
-        let zero = tmp.alloc(|| Ok(E::Fr::zero())).expect("should have no issues");
-        tmp.enforce_constant(zero, E::Fr::zero()).expect("should have no issues");
-
-        let one = tmp.alloc(|| Ok(E::Fr::one())).expect("should have no issues");
-        tmp.enforce_constant(one, E::Fr::one()).expect("should have no issues");
-
-        match (tmp.dummy_variable(), zero) {
+        let dummy = tmp.alloc(|| Ok(E::Fr::zero())).expect("should have no issues");
+    
+        match (tmp.dummy_variable(), dummy) {
             (Variable(Index::Aux(1)), Variable(Index::Aux(1))) => {},
             _ => panic!("zero variable is incorrect")
         }
@@ -139,11 +137,13 @@ impl<E: Engine> GeneratorAssembly<E> {
     fn finalize(&mut self) {
         if !self.is_finalized {
             let n = self.input_gates.len() + self.aux_gates.len();
+
             if !(n+1).is_power_of_two() {
                 let empty_gate = Gate::<E::Fr>::new_empty_gate(self.dummy_variable());
                 let new_aux_len = (n+1).next_power_of_two() - 1 - self.input_gates.len();
                 self.aux_gates.resize(new_aux_len, empty_gate);
                 let n = self.input_gates.len() + self.aux_gates.len();
+ 
                 assert!((n+1).is_power_of_two());
             }       
             self.is_finalized = true;
@@ -155,26 +155,27 @@ impl<E: Engine> GeneratorAssembly<E> {
     }
 }
 
-pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputations<E::Fr>, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>> (
+pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>> (
     circuit: &C,
     fir_params: &FriParams,
     oracle_params: &I::Params,
     channel_params: &T::Params,
-    omegas_bitreversed: &CP,
     ) -> Result<(RedshiftSetup<E::Fr, I>, RedshiftSetupPrecomputation<E::Fr, I>), SynthesisError>
 //where E::Fr : PartialTwoBitReductionField 
 {
+
     let mut channel = T::new(channel_params);
     
     let mut assembly = GeneratorAssembly::<E>::new();
     circuit.synthesize(&mut assembly)?;
-
-    println!("setup1");
     
     assembly.finalize();
     let (input_gates, aux_gates, num_inputs, num_aux) = assembly.get_data();
     let n = input_gates.len() + aux_gates.len();
-    
+
+    let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(n); 
+    let omegas_bitreversed = &omegas_bitreversed;
+  
     //check consistency of n and FRI-parameters
     // TODO: I may be mistaken here and should have simply n instead of n+1 - CHECK THIS!
     fir_params.initial_degree_plus_one.set(n+1);
@@ -186,20 +187,18 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
 
     // we prefer to pass degree explicitely (in order to implement hiding later)
     // we also have plans to hold the case of various degrees polynomials
-    println!("setup11");
-    let q_l_commitment_data = commit_single_poly::<E, CP, I>(&q_l, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let q_r_commitment_data = commit_single_poly::<E, CP, I>(&q_r, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let q_o_commitment_data = commit_single_poly::<E, CP, I>(&q_o, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let q_m_commitment_data = commit_single_poly::<E, CP, I>(&q_m, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let q_c_commitment_data = commit_single_poly::<E, CP, I>(&q_c, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let q_add_sel_commitment_data = commit_single_poly::<E, CP, I>(&q_add_sel, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let s_id_commitment_data = commit_single_poly::<E, CP, I>(&s_id, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let sigma_1_commitment_data = commit_single_poly::<E, CP, I>(&sigma_1, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let sigma_2_commitment_data = commit_single_poly::<E, CP, I>(&sigma_2, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
-    let sigma_3_commitment_data = commit_single_poly::<E, CP, I>(&sigma_3, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
 
-    println!("setup12");
-
+    let q_l_commitment_data = commit_single_poly::<E, _, I>(&q_l, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let q_r_commitment_data = commit_single_poly::<E, _, I>(&q_r, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let q_o_commitment_data = commit_single_poly::<E, _, I>(&q_o, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let q_m_commitment_data = commit_single_poly::<E, _, I>(&q_m, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let q_c_commitment_data = commit_single_poly::<E, _, I>(&q_c, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let q_add_sel_commitment_data = commit_single_poly::<E, _, I>(&q_add_sel, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let s_id_commitment_data = commit_single_poly::<E, _, I>(&s_id, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let sigma_1_commitment_data = commit_single_poly::<E, _, I>(&sigma_1, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let sigma_2_commitment_data = commit_single_poly::<E, _, I>(&sigma_2, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    let sigma_3_commitment_data = commit_single_poly::<E, _, I>(&sigma_3, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
+    
     channel.consume(&q_l_commitment_data.oracle.get_commitment());
     channel.consume(&q_r_commitment_data.oracle.get_commitment());
     channel.consume(&q_o_commitment_data.oracle.get_commitment());
@@ -210,8 +209,6 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
     channel.consume(&sigma_1_commitment_data.oracle.get_commitment());
     channel.consume(&sigma_2_commitment_data.oracle.get_commitment());
     channel.consume(&sigma_3_commitment_data.oracle.get_commitment());
-
-    println!("setup2");
 
     // TODOl it is better to produce setup point via list-decoding algorithm
     let setup_point = channel.produce_field_element_challenge();
@@ -241,8 +238,6 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
         sigma_2: sigma_2_commitment_data.oracle.get_commitment(),
         sigma_3: sigma_3_commitment_data.oracle.get_commitment(),
     };
-
-    println!("setup3");
 
     let precomputation = RedshiftSetupPrecomputation::<E::Fr, I> {
         q_l_aux: SinglePolySetupData::<E::Fr, I> {
@@ -316,8 +311,6 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, CP: CTPrecomputation
             setup_value: sigma_3_setup_value,
         },
     };
-
-    println!("setup4");
 
     Ok((setup, precomputation))
 }

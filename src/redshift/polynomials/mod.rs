@@ -27,7 +27,7 @@ impl PolynomialForm for Values{}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
-    coeffs: Vec<F>,
+    pub coeffs: Vec<F>,
     //if domain is of size 2^s
     pub exp: u32,
     pub omega: F,
@@ -415,6 +415,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
     #[inline(always)]
     pub fn break_into_multiples(self, size: usize) -> Result<Vec<Polynomial<F, Coefficients>>, SynthesisError> {
         let mut coeffs = self.coeffs;
+        println!("coeffs len: {}", coeffs.len());
 
         let (mut num_parts, last_size) = if coeffs.len() % size == 0 {
             let num_parts = coeffs.len() / size;
@@ -1791,7 +1792,11 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut result = Vec::with_capacity(self.coeffs.len());
 
         let mut tmp = F::one();
-        for c in self.coeffs.iter() {
+        for (i, c) in self.coeffs.iter().enumerate() {
+            if i == 0 {
+                println!("grand product first: {}", c);
+            }
+            
             tmp.mul_assign(&c);
             result.push(tmp);
         }
@@ -2154,6 +2159,10 @@ impl<F: PrimeField> Polynomial<F, Values> {
         precomputed_omegas: &P,
         coset_generator: &F
     ) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
+        if self.coeffs.len() <= worker.cpus * 4 {
+            return Ok(self.ifft(&worker));
+        }
+
         let mut coeffs: Vec<_> = self.coeffs;
         let exp = self.exp;
         cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);

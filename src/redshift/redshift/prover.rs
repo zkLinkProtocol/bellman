@@ -16,6 +16,8 @@ use crate::redshift::IOP::FRI::coset_combining_fri::*;
 use crate::redshift::IOP::oracle::*;
 use crate::redshift::fft::cooley_tukey_ntt::*;
 
+use crate::redshift::IOP::FRI::coset_combining_fri::precomputation::*;
+
 #[derive(Debug)]
 pub(crate) struct ProvingAssembly<E: Engine> {
     m: usize,
@@ -136,10 +138,9 @@ impl<E: Engine> ProvingAssembly<E> {
             is_finalized: false,
         };
 
-        let zero = tmp.alloc(|| Ok(E::Fr::zero())).expect("should have no issues");
-        tmp.enforce_constant(zero, E::Fr::zero()).expect("should have no issues");
-
-        match (tmp.dummy_variable(), zero) {
+        let dummy = tmp.alloc(|| Ok(E::Fr::zero())).expect("should have no issues");
+    
+        match (tmp.dummy_variable(), dummy) {
             (Variable(Index::Aux(1)), Variable(Index::Aux(1))) => {},
             _ => panic!("zero variable is incorrect")
         }
@@ -241,7 +242,7 @@ impl<E: Engine> ProvingAssembly<E> {
 }
 
 //use setup and selector polynomials, precomputed by 
-pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputations<E::Fr>, CPI: CTPrecomputations<E::Fr>, 
+pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, 
     FP: FriPrecomputations<E::Fr>, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>> 
 (
     circuit: &C,
@@ -249,8 +250,6 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
     fri_params: &FriParams,
     oracle_params: &I::Params,
     channel_params: &T::Params,
-    omegas_bitreversed: &CP,
-    omegas_inv_bitreversed: &CPI,
     bitreversed_omegas_for_fri: &FP      
 ) -> Result<RedshiftProof<E::Fr, I>, SynthesisError> 
 //where E::Fr : PartialTwoBitReductionField
@@ -258,13 +257,18 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
     let mut channel = T::new(channel_params);
     
     let mut assembly = ProvingAssembly::<E>::new();
-    println!("inside prover");
     circuit.synthesize(&mut assembly)?;
     assembly.finalize();
     let (input_gates, aux_gates, num_inputs, num_aux) = assembly.get_data();
     
     let n = input_gates.len() + aux_gates.len();
     let worker = Worker::new();
+
+    let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(n);
+    let omegas_bitreversed = &omegas_bitreversed;
+
+    let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(n);
+    let omegas_inv_bitreversed = &omegas_inv_bitreversed;
 
     // we need n+1 to be a power of two and can not have n to be power of two
     let required_domain_size = n+1;
@@ -278,27 +282,21 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
     let w_r = Polynomial::<E::Fr, Values>::from_values_unpadded(w_r)?;
     let w_o = Polynomial::<E::Fr, Values>::from_values_unpadded(w_o)?;
 
-     println!("inside prover");
-
     // TODO: replace by ifft_using_bitreversed_ntt_with_partial_reduction
 
     let a_poly = w_l.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
     let b_poly = w_r.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
     let c_poly = w_o.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
 
-     println!("inside prover");
-
     // polynomials inside of these are values on cosets
 
-    let a_commitment_data = commit_single_poly::<E, CP, I>(&a_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
-    let b_commitment_data = commit_single_poly::<E, CP, I>(&b_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
-    let c_commitment_data = commit_single_poly::<E, CP, I>(&c_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
+    let a_commitment_data = commit_single_poly::<E, _, I>(&a_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
+    let b_commitment_data = commit_single_poly::<E, _, I>(&b_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
+    let c_commitment_data = commit_single_poly::<E, _, I>(&c_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
 
     channel.consume(&a_commitment_data.oracle.get_commitment());
     channel.consume(&b_commitment_data.oracle.get_commitment());
     channel.consume(&c_commitment_data.oracle.get_commitment());
-
-    println!("1");
 
     let beta = channel.produce_field_element_challenge();
     let gamma = channel.produce_field_element_challenge();
@@ -394,19 +392,18 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         z_2
     };
 
-    println!("2");
-
     assert!(z_2.as_ref().last().expect("must exist") == z_1.as_ref().last().expect("must exist"));
 
     // interpolate on the main domain
     // TODO: replace by ifft_using_bitreversed_ntt_with_partial_reduction
+
     let z_1 = z_1.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
     let z_2 = z_2.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
 
     // polynomials inside of these is are values in cosets
 
-    let z_1_commitment_data = commit_single_poly::<E, CP, I>(&z_1, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
-    let z_2_commitment_data = commit_single_poly::<E, CP, I>(&z_2, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
+    let z_1_commitment_data = commit_single_poly::<E, _, I>(&z_1, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
+    let z_2_commitment_data = commit_single_poly::<E, _, I>(&z_2, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
 
     channel.consume(&z_1_commitment_data.oracle.get_commitment());
     channel.consume(&z_2_commitment_data.oracle.get_commitment());
@@ -454,10 +451,8 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         calculate_inverse_vanishing_polynomial_in_a_coset::<E>(&worker, q_l_coset_lde_bitreversed.size(), required_domain_size.next_power_of_two())?;
     vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker);
 
-     // NB: Computation of public inputs polynomial PI(x) = \sum -x_i L_i(x) is carried by both prover and verifier
+    // NB: Computation of public inputs polynomial PI(x) = \sum -x_i L_i(x) is carried by both prover and verifier
     // as prover need to divide also
-
-    println!("3");
 
     let PI = Polynomial::<E::Fr, Values>::from_values(assembly.make_public_inputs_assingment().clone())?;
     // TODO: replace by ifft_using_bitreversed_ntt_with_partial_reduction
@@ -469,8 +464,6 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         &E::Fr::multiplicative_generator()
     )?.clone_subset_assuming_bitreversed(partition_factor)?;
 
-    println!("3.1");
-
     let mut c_shifted = c_poly.clone();
     c_shifted.distribute_powers(&worker, c_poly.omega);
     // TODO: replace by ifft_using_bitreversed_ntt_with_partial_reduction
@@ -481,15 +474,10 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         &E::Fr::multiplicative_generator()
     )?.clone_subset_assuming_bitreversed(partition_factor)?;
 
-    println!("3.2");
-
     let mut t_1 = {
         let mut t_1 = q_c_coset_lde_bitreversed;
-        println!("3.2");
 
         t_1.add_assign(&worker, &PI_on_domain);
-        println!("3.2");
-
 
         let mut q_l_by_a = q_l_coset_lde_bitreversed;
         q_l_by_a.mul_assign(&worker, &a_coset_lde_bitreversed);
@@ -512,29 +500,18 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         t_1.add_assign(&worker, &q_m_by_ab);
         drop(q_m_by_ab);
 
-         println!("3.21");
-
         let mut q_add_sel_by_c_next = q_add_sel_coset_lde_bitreversed;
         q_add_sel_by_c_next.mul_assign(&worker, &c_shifted_coset_lde_bitreversed);
         t_1.add_assign(&worker, &q_add_sel_by_c_next);
         drop(q_add_sel_by_c_next);
-
-         println!("3.22");
-
-         
-
 
         // No need for the first one
         //vanishing_poly_inverse_bitreversed.scale(&worker, alpha);
 
         t_1.mul_assign(&worker, &vanishing_poly_inverse_bitreversed);
 
-      
-
         t_1
     };
-
-    println!("3.3");
 
     fn get_degree<F: PrimeField>(poly: &Polynomial<F, Coefficients>) -> usize {
         let mut degree = poly.as_ref().len() - 1;
@@ -551,10 +528,7 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         degree
     }
 
-    println!("4");
-
     let z_1_coset_lde_bitreversed = z_1_commitment_data.poly.clone_subset_assuming_bitreversed(partition_factor)?;
-
     assert!(z_1_coset_lde_bitreversed.size() == required_domain_size*4);
     // TODO: replace by ifft_using_bitreversed_ntt_with_partial_reduction
     let z_1_shifted_coset_lde_bitreversed = z_1_shifted.clone().bitreversed_lde_using_bitreversed_ntt(
@@ -619,41 +593,36 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
 
         contrib_z_1.mul_assign(&worker, &vanishing_poly_inverse_bitreversed);
 
+          let mut t_1_q = contrib_z_1.clone();
+        t_1_q.bitreverse_enumeration(&worker);
 
-         let mut t_1_copy =  contrib_z_1.clone();
-
-        t_1_copy.bitreverse_enumeration(&worker);
-
-        let t_poly = t_1_copy.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
-        println!("in_z_1");
+    let t_poly = t_1_q.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
+    println!("z_1: {}", n);
     debug_assert!(get_degree::<E::Fr>(&t_poly) <= 3*n);
 
-        t_1.add_assign(&worker, &contrib_z_1);
-
-        
-
-       
+        t_1.add_assign(&worker, &contrib_z_1);       
     }
 
     {
         // TODO: May be optimize number of additions
         let mut contrib_z_2 = z_2_coset_lde_bitreversed.clone();
+        println!("z_2 size: {}", contrib_z_2.coeffs.len());
 
-        let mut a_perm = sigma_1_coset_lde_bitreversed;
+        let mut a_perm = sigma_1_coset_lde_bitreversed.clone();
         a_perm.scale(&worker, beta);
         a_perm.add_constant(&worker, &gamma);
         a_perm.add_assign(&worker, &a_coset_lde_bitreversed);
         contrib_z_2.mul_assign(&worker, &a_perm);
         drop(a_perm);
 
-        let mut b_perm = sigma_2_coset_lde_bitreversed;
+        let mut b_perm = sigma_2_coset_lde_bitreversed.clone();
         b_perm.scale(&worker, beta);
         b_perm.add_constant(&worker, &gamma);
         b_perm.add_assign(&worker, &b_coset_lde_bitreversed);
         contrib_z_2.mul_assign(&worker, &b_perm);
         drop(b_perm);
 
-        let mut c_perm = sigma_3_coset_lde_bitreversed;
+        let mut c_perm = sigma_3_coset_lde_bitreversed.clone();
         c_perm.scale(&worker, beta);
         c_perm.add_constant(&worker, &gamma);
         c_perm.add_assign(&worker, &c_coset_lde_bitreversed);
@@ -662,36 +631,23 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
 
         contrib_z_2.sub_assign(&worker, &z_2_shifted_coset_lde_bitreversed);
 
-        let mut t_1_copy =  contrib_z_2.clone();
-
-        t_1_copy.bitreverse_enumeration(&worker);
-
-        let t_poly = t_1_copy.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
-        println!("n': {}", n);
-        get_degree::<E::Fr>(&t_poly);
-
         vanishing_poly_inverse_bitreversed.scale(&worker, alpha);
 
         contrib_z_2.mul_assign(&worker, &vanishing_poly_inverse_bitreversed);
 
-         let mut t_1_copy =  contrib_z_2.clone();
+        let mut t_1_q = contrib_z_2.clone();
+        t_1_q.bitreverse_enumeration(&worker);
 
-        t_1_copy.bitreverse_enumeration(&worker);
-
-        let t_poly = t_1_copy.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
-        println!("n': {}", n);
+    let t_poly = t_1_q.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
+    println!("z_2: {}", n);
     debug_assert!(get_degree::<E::Fr>(&t_poly) <= 3*n);
 
-        t_1.add_assign(&worker, &contrib_z_2);
-
-         
+        t_1.add_assign(&worker, &contrib_z_2);         
     }
 
     drop(a_coset_lde_bitreversed);
     drop(b_coset_lde_bitreversed);
     drop(c_coset_lde_bitreversed);
-
-    println!("5");
 
     let l_0 = calculate_lagrange_poly::<E>(&worker, required_domain_size.next_power_of_two(), 0)?;
     let l_n_minus_one = calculate_lagrange_poly::<E>(&worker, required_domain_size.next_power_of_two(), n-1)?;
@@ -738,6 +694,8 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
         t_1.add_assign(&worker, &z_1_minus_z_2);
     }
 
+    // TODO add additional constraints are required! Z(g) = Z^(g) = 1
+
     drop(z_1_coset_lde_bitreversed);
     drop(z_2_coset_lde_bitreversed);
     drop(z_1_shifted_coset_lde_bitreversed);
@@ -746,7 +704,7 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
     t_1.bitreverse_enumeration(&worker);
 
     let t_poly = t_1.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
-        println!("n: {}", n);
+    println!("n: {}", n);
     debug_assert!(get_degree::<E::Fr>(&t_poly) <= 3*n);
 
     let mut t_poly_parts = t_poly.break_into_multiples(required_domain_size)?;
@@ -756,9 +714,9 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
     let t_poly_mid = t_poly_parts.pop().expect("mid exists");
     let t_poly_low = t_poly_parts.pop().expect("low exists");
 
-    let t_poly_high_commitment_data = commit_single_poly::<E, CP, I>(&t_poly_high, n, omegas_bitreversed, fri_params, oracle_params, &worker)?;
-    let t_poly_mid_commitment_data = commit_single_poly::<E, CP, I>(&t_poly_mid, n, omegas_bitreversed, fri_params, oracle_params, &worker)?;
-    let t_poly_low_commitment_data = commit_single_poly::<E, CP, I>(&t_poly_low, n, omegas_bitreversed, fri_params, oracle_params, &worker)?;
+    let t_poly_high_commitment_data = commit_single_poly::<E, _, I>(&t_poly_high, n, omegas_bitreversed, fri_params, oracle_params, &worker)?;
+    let t_poly_mid_commitment_data = commit_single_poly::<E, _, I>(&t_poly_mid, n, omegas_bitreversed, fri_params, oracle_params, &worker)?;
+    let t_poly_low_commitment_data = commit_single_poly::<E, _, I>(&t_poly_low, n, omegas_bitreversed, fri_params, oracle_params, &worker)?;
 
     channel.consume(&t_poly_low_commitment_data.oracle.get_commitment());
     channel.consume(&t_poly_mid_commitment_data.oracle.get_commitment());
@@ -835,6 +793,8 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
     //     channel.consume(&z_2_shifted_at_z);
     // }
 
+    println!("before sanity check");
+
     
     // this is a sanity check
     if cfg!(debug_assertions) {
@@ -868,7 +828,7 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
             // add public inputs
             res.add_assign(&PI_at_z);
 
-            inverse_vanishing_at_z.mul_assign(&alpha);
+            //inverse_vanishing_at_z.mul_assign(&alpha);
 
             res.mul_assign(&inverse_vanishing_at_z);
 
@@ -1059,6 +1019,8 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>, CP: CTPrecomputati
             sigma_3_at_z,
         ]
     };
+
+    println!("before multiopening");
 
     let fri_proof_prototype = multiopening::<E, FP, I, T>(
         vec![witness_opening_request_at_z], 
