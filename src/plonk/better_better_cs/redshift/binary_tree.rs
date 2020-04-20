@@ -251,7 +251,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         }
     }
 
-    fn get_commitment(&self) -> H::Output {
+    pub(crate) fn get_commitment(&self) -> H::Output {
         self.nodes[1].clone()
     }
 

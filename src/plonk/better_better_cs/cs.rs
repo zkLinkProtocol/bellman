@@ -211,6 +211,8 @@ pub trait GateEquationInternal: Send
 {
     fn degree(&self) -> usize;
     fn num_constraints(&self) -> usize;
+    fn can_include_public_inputs(&self) -> bool;
+    fn put_public_inputs_into_selector_id(&self) -> Option<usize>;
     fn get_constraint(&self) -> &LinearCombinationOfTerms;
     fn get_constraints(&self) -> &[LinearCombinationOfTerms];
 }
@@ -244,6 +246,14 @@ impl GateEquationInternal for Width4MainGateWithDNextEquation {
 
     fn num_constraints(&self) -> usize {
         1
+    }
+
+    fn can_include_public_inputs(&self) -> bool {
+        true
+    }
+
+    fn put_public_inputs_into_selector_id(&self) -> Option<usize> {
+        Some(5)
     }
 
     fn get_constraint(&self) -> &LinearCombinationOfTerms {
@@ -851,7 +861,8 @@ pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
     pub constraints: std::collections::HashSet<Box<dyn GateEquationInternal>>,
     pub gate_internal_coefficients: GateConstantCoefficientsStorage<E>,
     pub sorted_setup_polynomial_ids: Vec<PolyIdentifier>,
-    pub sorted_gates_for_selectors: Vec<Box<dyn GateEquationInternal>>,
+    pub sorted_gates: Vec<Box<dyn GateEquationInternal>>,
+    pub sorted_gate_constants: Vec<Vec<E::Fr>>,
     pub aux_gate_density: GateDensityStorage,
     _marker: std::marker::PhantomData<P>
 }
@@ -1143,7 +1154,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
             self.add_gate_setup_polys_into_list(gate);
 
-            self.sorted_gates_for_selectors.push(gate.clone().into_internal());
+            self.sorted_gates.push(gate.clone().into_internal());
 
             let degree = gate.degree();
             if self.max_constraint_degree < degree {
@@ -1151,6 +1162,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
             }
 
             let gate_constants = G::output_constant_coefficients::<E>();
+            self.sorted_gate_constants.push(gate_constants.clone());
             self.gate_internal_coefficients.0.insert(Box::from(gate.clone().into_internal()), gate_constants);
         }        
     }
@@ -1180,7 +1192,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
             aux_gate_density: GateDensityStorage::new(),
             sorted_setup_polynomial_ids: vec![],
-            sorted_gates_for_selectors: vec![],
+            sorted_gates: vec![],
+            sorted_gate_constants: vec![],
 
             is_finalized: false,
 
@@ -1239,6 +1252,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
         // expect a small number of inputs
 
         // TODO: handle public inputs
+
+        // for i in 0..self.num_input_gates {
+        //     let gate = self.input_assingments
+        // }
 
         let one = E::Fr::one();
         let mut minus_one = E::Fr::one();
@@ -1461,11 +1478,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         let mut map = std::collections::HashMap::new();
 
-        let setup_poly_ids: Vec<_> = self.inputs_storage.setup_map.keys().collect();
+        let setup_poly_ids: Vec<_> = self.aux_storage.setup_map.keys().collect();
 
         for &id in setup_poly_ids.into_iter() {
             let mut assembled_poly = vec![E::Fr::zero(); total_num_gates];
-            {
+            if num_input_gates != 0 {
                 let input_gates_coeffs = &mut assembled_poly[..num_input_gates];
                 input_gates_coeffs.copy_from_slice(&self.inputs_storage.setup_map.get(&id).unwrap()[..]);
             }
@@ -1487,11 +1504,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
     pub fn output_gate_selectors(&self, worker: &Worker) -> Result<Vec<Polynomial<E::Fr, Values>>, SynthesisError> {
         assert!(self.is_finalized);
-        if self.sorted_gates_for_selectors.len() == 1 {
+        if self.sorted_gates.len() == 1 {
             return Ok(vec![]);
         }
 
-        let num_gate_selectors = self.sorted_gates_for_selectors.len();
+        let num_gate_selectors = self.sorted_gates.len();
 
         let one = E::Fr::one();
         let empty_poly = Polynomial::<E::Fr, Values>::new_for_size(self.n().next_power_of_two())?;
@@ -1513,7 +1530,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
                     let base_idx = i*chunk;
                     for (j, lh) in lh.iter_mut().enumerate() {
                         let idx = base_idx + j;
-                        let id = &self.sorted_gates_for_selectors[idx];
+                        let id = &self.sorted_gates[idx];
                         let density = self.aux_gate_density.0.get(id).unwrap();
                         let poly_mut_slice: &mut [E::Fr] = &mut lh.as_mut()[num_input_gates..];
                         for (i, d) in density.iter().enumerate() {
@@ -1527,6 +1544,56 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
         });
 
         Ok(poly_values)
+    }
+
+    pub fn make_state_and_witness_polynomials(
+        &self,
+        worker: &Worker
+    ) -> Result<(Vec<Vec<E::Fr>>, Vec<Vec<E::Fr>>), SynthesisError>
+    {
+        assert!(self.is_finalized);
+
+        let mut full_assignments = vec![Vec::with_capacity((self.n()+1).next_power_of_two()); P::STATE_WIDTH];
+
+        let num_input_gates = self.num_input_gates;
+        let num_aux_gates = self.num_aux_gates;
+
+        full_assignments[0].extend_from_slice(&self.input_assingments);
+        assert!(full_assignments[0].len() == num_input_gates);
+        for i in 1..P::STATE_WIDTH {
+            full_assignments[i].resize(num_input_gates, E::Fr::zero());
+        }
+
+        worker.scope(full_assignments.len(), |scope, chunk| {
+            for (i, lh) in full_assignments.chunks_mut(chunk)
+                            .enumerate() {
+                scope.spawn(move |_| {
+                    // we take `values_per_leaf` values from each of the polynomial
+                    // and push them into the conbinations
+                    let base_idx = i*chunk;
+                    for (j, lh) in lh.iter_mut().enumerate() {
+                        let idx = base_idx + j;
+                        let id = PolyIdentifier::VariablesPolynomial(idx);
+                        let poly_ref = self.aux_storage.state_map.get(&id).unwrap();
+                        for i in 0..num_aux_gates {
+                            let var = poly_ref[i];
+                            let value = self.get_value(var).unwrap();
+                            lh.push(value);
+                        }
+                    }
+                });
+            }
+        });
+
+        for p in full_assignments.iter_mut() {
+            p.resize((self.n()+1).next_power_of_two() - 1, E::Fr::zero());
+        }
+
+        for a in full_assignments.iter() {
+            assert_eq!(a.len(), (self.n()+1).next_power_of_two() - 1);
+        }
+
+        Ok((full_assignments, vec![]))
     }
 }
 
@@ -1620,6 +1687,40 @@ mod test {
 
             cs.allocate_main_gate(term)?;
 
+            // 2a
+            let mut term = MainGateTerm::<E>::new();
+            term.add_assign(ArithmeticTerm::from_variable_and_coeff(a, two));
+
+            let dummy = CS::get_dummy_variable();
+
+            // 2a - d_next = 0
+
+            let (vars, mut coeffs) = CS::MainGate::format_term(term, dummy)?;
+            *coeffs.last_mut().unwrap() = negative_one;
+
+            // here d is equal = 2a, so we need to place b there
+            // and compensate it with -b somewhere before
+
+            cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
+                &coeffs, 
+                &vars, 
+                &[]
+            )?;
+
+            let mut term = MainGateTerm::<E>::new();
+            term.add_assign(ArithmeticTerm::from_variable(b));
+
+            // b + 0 + 0 - b = 0
+            let (mut vars, mut coeffs) = CS::MainGate::format_term(term, dummy)?;
+            coeffs[3] = negative_one;
+            vars[3] = b;
+
+            cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
+                &coeffs, 
+                &vars, 
+                &[]
+            )?;
+
             Ok(())
         }
     }
@@ -1655,11 +1756,12 @@ mod test {
     }
 
     #[test]
-    fn test_make_setup_for_triival_circuit() {
+    fn test_make_setup_for_trivial_circuit() {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;
 
         use super::super::redshift::setup::*;
+        use super::super::redshift::prover::*;
         use super::super::redshift::tree_hash::*;
         use rescue_hash::bn256::Bn256RescueParams;
 
@@ -1688,10 +1790,80 @@ mod test {
 
         let worker = Worker::new();
 
-        let _ = SetupMultioracle::from_assembly(
+        let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
             assembly,
-            hasher,
+            hasher.clone(),
             &worker
         ).unwrap();
+
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
+
+        let circuit = TestCircuit4::<Bn256> {
+            _marker: PhantomData
+        };
+
+        circuit.synthesize(&mut assembly).expect("must work");
+
+        assembly.finalize();
+
+        let (prover, first_state, first_message) = RedshiftProver::first_step(
+            assembly, 
+            hasher.clone(), 
+            &worker
+        ).unwrap();
+
+        let first_verifier_message = FirstVerifierMessage::<Bn256> {
+            beta: Fr::from_str("123").unwrap(),
+            gamma: Fr::from_str("456").unwrap(),
+        };
+
+        // cut permutations
+
+        for p in permutations.iter_mut() {
+            p.pop_last().unwrap();
+        }
+
+        let (second_state, second_message) = prover.second_step_from_first_step(
+            first_state, 
+            first_verifier_message, 
+            &permutations, 
+            &worker
+        ).unwrap();
+
+        let second_verifier_message = SecondVerifierMessage::<Bn256> {
+            alpha: Fr::from_str("789").unwrap(),
+            beta: Fr::from_str("123").unwrap(),
+            gamma: Fr::from_str("456").unwrap(),
+        };
+
+        let (third_state, third_message) = prover.third_step_from_second_step(
+            second_state, 
+            second_verifier_message, 
+            &setup_multioracle, 
+            &worker
+        ).unwrap();
+
+        let third_verifier_message = ThirdVerifierMessage::<Bn256> {
+            alpha: Fr::from_str("789").unwrap(),
+            beta: Fr::from_str("123").unwrap(),
+            gamma: Fr::from_str("456").unwrap(),
+            z: Fr::from_str("1337").unwrap()
+        };
+
+        let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
+            third_state, 
+            third_verifier_message, 
+            &setup_multioracle, 
+            &worker
+        ).unwrap();
+
+        let fourth_verifier_message = FourthVerifierMessage::<Bn256> {
+            alpha: Fr::from_str("789").unwrap(),
+            beta: Fr::from_str("123").unwrap(),
+            gamma: Fr::from_str("456").unwrap(),
+            z: Fr::from_str("1337").unwrap(),
+            v: Fr::from_str("97531").unwrap(),
+        };
+
     }
 }
