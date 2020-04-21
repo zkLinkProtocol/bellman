@@ -1647,6 +1647,8 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
+    println!("First message");
+
     for input in first_message.input_values.iter() {
         prng.commit_input(input);
     }
@@ -1668,6 +1670,8 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
+    println!("First message");
+
     prng.commit_input(&second_message.grand_product_oracle_commitment);
 
     let alpha = prng.get_challenge();
@@ -1684,6 +1688,8 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &setup_multioracle, 
         &worker
     )?;
+
+    println!("First message");
 
     prng.commit_input(&third_message.quotient_poly_oracle_commitment);
 
@@ -1702,6 +1708,8 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &setup_multioracle, 
         &worker
     )?;
+
+    println!("First message");
 
     let mut wire_values_at_z = fourth_message.wire_values_at_z;
     wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1742,6 +1750,8 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &mut prng,
         &worker
     )?;
+
+    println!("First message");
 
     Ok(())
 }
