@@ -1865,5 +1865,17 @@ mod test {
             v: Fr::from_str("97531").unwrap(),
         };
 
+        use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
+
+        let mut prng = rescue_transcript::RescueTranscript::<Bn256>::from_params(&params);
+        prng.commit_input(&Fr::from_str("97531").unwrap());
+
+        let fifth_message = prover.fifth_step_from_fourth_step(
+            fourth_state, 
+            fourth_verifier_message, 
+            &setup_multioracle, 
+            &mut prng,
+            &worker
+        ).unwrap();
     }
 }

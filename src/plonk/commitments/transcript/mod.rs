@@ -3,6 +3,7 @@ use crate::pairing::ff::{PrimeField, PrimeFieldRepr};
 
 pub mod prng;
 pub mod keccak_transcript;
+pub mod rescue_transcript;
 
 lazy_static! {
     static ref TRANSCRIPT_BLAKE2S_PARAMS: State = {
@@ -14,7 +15,7 @@ lazy_static! {
     };
 }
 
-pub trait Prng<F: PrimeField>: Sized + Clone + 'static {
+pub trait Prng<F: PrimeField>: Sized + Clone {
     type Input;
     fn new() -> Self;
     fn commit_input(&mut self, input: &Self::Input);

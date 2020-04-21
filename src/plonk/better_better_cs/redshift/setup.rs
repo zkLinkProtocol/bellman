@@ -12,6 +12,8 @@ use crate::SynthesisError;
 
 pub struct SetupMultioracle<E: Engine, H: BinaryTreeHasher<E::Fr>> {
     pub polynomials_in_monomial_form: Vec<Polynomial<E::Fr, Coefficients>>,
+    pub setup_poly_values: Vec<E::Fr>,
+    pub setup_point: E::Fr,
     pub polynomial_ldes: Vec<Polynomial<E::Fr, Values>>,
     pub setup_ids: Vec<PolyIdentifier>,
     pub permutations_ranges: Vec<std::ops::Range<usize>>,
@@ -19,7 +21,7 @@ pub struct SetupMultioracle<E: Engine, H: BinaryTreeHasher<E::Fr>> {
     pub tree: BinaryTree<E, H>
 }
 
-pub const LDE_FACTOR: usize = 8;
+pub const LDE_FACTOR: usize = 16;
 pub const FRI_VALUES_PER_LEAF: usize = 8;
 
 impl<E: Engine, H: BinaryTreeHasher<E::Fr>> SetupMultioracle<E, H> {
@@ -94,8 +96,19 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> SetupMultioracle<E, H> {
 
         let tree = multioracle.tree;
 
+        let setup_point = E::Fr::from_str("1234567890").unwrap();
+
+        let mut setup_poly_values = vec![];
+
+        for p in mononial_forms.iter() {
+            let value = p.evaluate_at(&worker, setup_point);
+            setup_poly_values.push(value);
+        }
+
         let setup = Self {
             polynomials_in_monomial_form: mononial_forms,
+            setup_poly_values,
+            setup_point,
             polynomial_ldes: setup_polys,
             tree,
             setup_ids: ids,

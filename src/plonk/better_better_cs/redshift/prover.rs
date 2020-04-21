@@ -13,6 +13,8 @@ use super::setup::*;
 use crate::plonk::better_cs::utils::*;
 use crate::plonk::domains::*;
 use crate::plonk::fft::cooley_tukey_ntt::*;
+use simple_fri::*;
+use crate::plonk::commitments::transcript::Prng;
 
 pub(crate) fn get_precomputed_x_lde<E: Engine>(
     domain_size: usize,
@@ -138,6 +140,7 @@ pub(crate) struct FourthPartialProverState<E: Engine, H: BinaryTreeHasher<E::Fr>
     wire_values_at_z_omega: Vec<(usize, E::Fr)>,
     setup_values_at_z: Vec<E::Fr>,
     permutation_polynomials_at_z: Vec<E::Fr>,
+    gate_selector_polynomials_at_z: Vec<E::Fr>,
     grand_product_at_z: E::Fr,
     grand_product_at_z_omega: E::Fr,
     quotient_polynomial_parts_at_z: Vec<E::Fr>,
@@ -160,12 +163,10 @@ pub(crate) struct FourthVerifierMessage<E: Engine> {
     pub(crate) v: E::Fr,
 }
 
-// pub(crate) struct FifthProverMessage<E: Engine, P: PlonkConstraintSystemParams<E>> {
-//     pub(crate) opening_proof_at_z: E::G1Affine,
-//     pub(crate) opening_proof_at_z_omega: E::G1Affine,
-
-//     _marker: std::marker::PhantomData<P>
-// }
+pub(crate) struct FifthProverMessage<E: Engine, H: BinaryTreeHasher<E::Fr>> {
+    pub(crate) fri_intermediate_roots: Vec<H::Output>,
+    pub(crate) final_coefficients: Vec<E::Fr>,
+}
 
 struct WitnessOpeningRequest<'a, F: PrimeField> {
     polynomials: Vec<&'a Polynomial<F, Values>>,
@@ -868,7 +869,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
         FourthProverMessage<E>
     ), SynthesisError>
     {
-        let ThirdVerifierMessage { alpha, beta, gamma, z, .. } = third_verifier_message;
+        let ThirdVerifierMessage { z, .. } = third_verifier_message;
         let required_domain_size = third_state.required_domain_size;
 
         let domain = Domain::new_for_size(required_domain_size as u64)?;
@@ -890,6 +891,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
             wire_values_at_z_omega: vec![],
             setup_values_at_z: vec![E::Fr::zero(); setup.setup_ids.len() + setup.gate_selectors_indexes.len()],
             permutation_polynomials_at_z: vec![],
+            gate_selector_polynomials_at_z: vec![],
             grand_product_at_z: E::Fr::zero(),
             grand_product_at_z_omega: E::Fr::zero(),
             quotient_polynomial_parts_at_z: vec![],
@@ -902,7 +904,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
 
         let mut dilation_maps = std::collections::HashMap::new();
 
-        for (i, gate) in self.sorted_gates.iter().enumerate() {
+        for gate in self.sorted_gates.iter() {
             for constraint in gate.get_constraints().iter() {
                 for term in constraint.0.iter() {
                     for poly in term.1.iter() {
@@ -913,7 +915,9 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                                 let poly_id = PolyIdentifier::VariablesPolynomial(*poly_num); 
                                 let key = TimeDilation(*dilation);
                                 let entry = dilation_maps.entry(key).or_insert(vec![]);
-                                entry.push(poly_id);
+                                if !entry.contains(&poly_id) {
+                                    entry.push(poly_id);
+                                }                        
                             },
                             PolynomialInConstraint::SetupPolynomial(
                                 str_id, poly_num, TimeDilation(0)
@@ -921,7 +925,9 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                                 let poly_id = PolyIdentifier::SetupPolynomial(str_id, *poly_num); 
                                 let key = TimeDilation(0);
                                 let entry = dilation_maps.entry(key).or_insert(vec![]);
-                                entry.push(poly_id);
+                                if !entry.contains(&poly_id) {
+                                    entry.push(poly_id);
+                                }
                             },
                             _ => {
                                 unimplemented!()
@@ -937,18 +943,23 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
 
         assert!(keys.len() <= 2, "large time dilations are not supported");
 
+        let points_set = vec![z, z_by_omega];
+
         for (i, key) in keys.into_iter().enumerate() {
             let poly_ids = (&mut dilation_maps).remove(&key).unwrap();
             for id in poly_ids.into_iter() {
                 if let Some(setup_poly_idx) = setup.setup_ids.iter().position(|el| el == &id) {
+                    assert!(i == 0, "don't support setup polys with dilation yet");
                     let poly_ref = &setup.polynomials_in_monomial_form[setup_poly_idx];
-                    let value = poly_ref.evaluate_at(&worker, z);
+                    let evaluate_at = points_set[i];
+                    let value = poly_ref.evaluate_at(&worker, evaluate_at);
 
                     state.setup_values_at_z[setup_poly_idx] = value;
                 } else {
                     if let PolyIdentifier::VariablesPolynomial(state_idx) = id {
                         let poly_ref = &state.witness_polys_in_monomial_form[state_idx];
-                        let value = poly_ref.evaluate_at(&worker, z);
+                        let evaluate_at = points_set[i];
+                        let value = poly_ref.evaluate_at(&worker, evaluate_at);
                         if i == 0 {
                             state.wire_values_at_z.push((state_idx, value));
                         } else if i == 1 {
@@ -969,6 +980,13 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                     state.permutation_polynomials_at_z.push(value);
                 }
 
+                for selector_poly_idx in setup.gate_selectors_indexes.iter() {
+                    let poly_ref = &setup.polynomials_in_monomial_form[*selector_poly_idx];
+                    let value = poly_ref.evaluate_at(&worker, z);
+
+                    state.gate_selector_polynomials_at_z.push(value);
+                }
+
                 // let mut quotient_at_z = E::Fr::zero();
                 // let mut current = E::Fr::one();
                 // let mut z_in_domain_size = z.pow(&[required_domain_size as u64]);
@@ -979,6 +997,9 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                 }
             }
         }
+
+        state.grand_product_at_z = state.grand_product_polynomial_in_monomial_form[0].evaluate_at(&worker, z);
+        state.grand_product_at_z_omega = state.grand_product_polynomial_in_monomial_form[0].evaluate_at(&worker, z_by_omega);
 
         let message = FourthProverMessage::<E> {
             wire_values_at_z: state.wire_values_at_z.clone(),
@@ -992,115 +1013,326 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
         Ok((state, message))
     }
 
+    fn perform_fri<P: Prng<E::Fr, Input = H::Output>>
+        ( 
+            &self,
+            aggregation_challenge: E::Fr,
+            witness_opening_requests: Vec<WitnessOpeningRequest<E::Fr>>,
+            setup_opening_requests: Vec<SetupOpeningRequest<E::Fr>>,
+            worker: &Worker,
+            prng: &mut P
+        ) -> Result<FriOraclesSet<E, H>, SynthesisError> {
+            let mut len = 0;
+            for r in witness_opening_requests.iter() {
+                for p in r.polynomials.iter() {
+                    if len == 0 {
+                        len = p.size();
+                    } else {
+                        assert_eq!(p.size(), len);
+                    }
+                }
+            }
 
-//     pub(crate) fn fifth_step_from_fourth_step(
-//         mut fourth_state: FourthPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
-//         fourth_verifier_message: FourthVerifierMessage<E, PlonkCsWidth4WithNextStepParams>,
-//         setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
-//         crs_mons: &Crs<E, CrsForMonomialForm>, 
-//         worker: &Worker
-//     ) -> Result<FifthProverMessage<E, PlonkCsWidth4WithNextStepParams>, SynthesisError>
-//     {
-//         let FourthVerifierMessage { z, v, .. } = fourth_verifier_message;
-//         let required_domain_size = fourth_state.required_domain_size;
+            for r in setup_opening_requests.iter() {
+                for p in r.polynomials.iter() {
+                    if len == 0 {
+                        len = p.size();
+                    } else {
+                        assert_eq!(p.size(), len);
+                    }
+                }
+            }
 
-//         let domain = Domain::new_for_size(required_domain_size as u64)?;
+            assert!(len != 0);
+            let required_divisor_size = len;
 
-//         let mut z_by_omega = z;
-//         z_by_omega.mul_assign(&domain.generator);
+            let mut final_aggregate = Polynomial::from_values(vec![E::Fr::zero(); required_divisor_size])?;
 
-//         // open at z:
-//         // t_i(x) * z^{domain_size*i}
-//         // r(x)
-//         // witnesses
-//         // permutations except of the last one
+            let mut precomputed_bitreversed_coset_divisor = Polynomial::from_values(vec![E::Fr::one(); required_divisor_size])?;
+            precomputed_bitreversed_coset_divisor.distribute_powers(&worker, precomputed_bitreversed_coset_divisor.omega);
+            precomputed_bitreversed_coset_divisor.scale(&worker, E::Fr::multiplicative_generator());
+            precomputed_bitreversed_coset_divisor.bitreverse_enumeration(&worker);
 
-//         // open at z*omega:
-//         // z(x)
-//         // next step witnesses (if any)
+            let mut scratch_space_numerator = final_aggregate.clone();
+            let mut scratch_space_denominator = final_aggregate.clone();
 
-//         let mut multiopening_challenge = E::Fr::one();
+            let mut alpha = E::Fr::one();
 
-//         let mut poly_to_divide_at_z = fourth_state.t_poly_parts.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-//         let z_in_domain_size = z.pow(&[required_domain_size as u64]);
-//         let mut power_of_z = z_in_domain_size;
-//         for t_part in fourth_state.t_poly_parts.into_iter() {
-//             poly_to_divide_at_z.add_assign_scaled(&worker, &t_part, &power_of_z);
-//             power_of_z.mul_assign(&z_in_domain_size);
-//         }
+            for witness_request in witness_opening_requests.iter() {
+                let z = witness_request.opening_point;
+                let mut minus_z = z;
+                minus_z.negate();
+                scratch_space_denominator.reuse_allocation(&precomputed_bitreversed_coset_divisor);
+                scratch_space_denominator.add_constant(&worker, &minus_z);
+                scratch_space_denominator.batch_inversion(&worker)?;
+                for (poly, value) in witness_request.polynomials.iter().zip(witness_request.opening_values.iter()) {
+                    scratch_space_numerator.reuse_allocation(&poly);
+                    let mut v = *value;
+                    v.negate();
+                    scratch_space_numerator.add_constant(&worker, &v);
+                    scratch_space_numerator.mul_assign(&worker, &scratch_space_denominator);
+                    if aggregation_challenge != E::Fr::one() {
+                        scratch_space_numerator.scale(&worker, alpha);
+                    }
 
-//         // linearization polynomial
-//         multiopening_challenge.mul_assign(&v);
-//         poly_to_divide_at_z.add_assign_scaled(&worker, &fourth_state.linearization_polynomial, &multiopening_challenge);
+                    final_aggregate.add_assign(&worker, &scratch_space_numerator);
 
-//         debug_assert_eq!(multiopening_challenge, v.pow(&[1 as u64]));
+                    alpha.mul_assign(&aggregation_challenge);
+                }
+            }
 
-//         // all witness polys
-//         for w in fourth_state.witness_polys_as_coeffs.iter() {
-//             multiopening_challenge.mul_assign(&v);
-//             poly_to_divide_at_z.add_assign_scaled(&worker, &w, &multiopening_challenge);
-//         }
+            for setup_request in setup_opening_requests.iter() {
+                // for now assume a single setup point per poly and setup point is the same for all polys
+                // (omega - y)(omega - z) = omega^2 - (z+y)*omega + zy
+                
+                let setup_point = setup_request.setup_point;
+                let opening_point = setup_request.opening_point;
 
-//         debug_assert_eq!(multiopening_challenge, v.pow(&[(1 + 4) as u64]));
+                let mut t0 = setup_point;
+                t0.add_assign(&opening_point);
+                t0.negate();
 
-//         // all except of the last permutation polys
-//         for p in setup.permutation_polynomials[..(setup.permutation_polynomials.len() - 1)].iter() {
-//             multiopening_challenge.mul_assign(&v);
-//             poly_to_divide_at_z.add_assign_scaled(&worker, &p, &multiopening_challenge);
-//         }
+                let mut t1 = setup_point;
+                t1.mul_assign(&opening_point);
 
-//         debug_assert_eq!(multiopening_challenge, v.pow(&[(1 + 4 + 3) as u64]));
+                scratch_space_denominator.reuse_allocation(&precomputed_bitreversed_coset_divisor);
+                worker.scope(scratch_space_denominator.as_ref().len(), |scope, chunk| {
+                    for den in scratch_space_denominator.as_mut().chunks_mut(chunk) {
+                        scope.spawn(move |_| {
+                            for d in den.iter_mut() {
+                                let mut result = *d;
+                                result.square();
+                                result.add_assign(&t1);
 
-//         multiopening_challenge.mul_assign(&v);
+                                let mut tmp = t0;
+                                tmp.mul_assign(&d);
 
-//         let mut poly_to_divide_at_z_omega = fourth_state.z_in_monomial_form;
-//         poly_to_divide_at_z_omega.scale(&worker, multiopening_challenge);
+                                result.add_assign(&tmp);
 
-//         multiopening_challenge.mul_assign(&v);
+                                *d = result;
+                            }
+                        });
+                    }
+                });
 
-//         // d should be opened at z*omega due to d_next
-//         poly_to_divide_at_z_omega.add_assign_scaled(&worker, &fourth_state.witness_polys_as_coeffs[3], &multiopening_challenge);
-//         fourth_state.witness_polys_as_coeffs.truncate(0); // drop
+                scratch_space_denominator.batch_inversion(&worker)?;
 
-//         debug_assert_eq!(multiopening_challenge, v.pow(&[(1 + 4 + 3 + 1 + 1) as u64]));
+                // each numerator must have a value removed of the polynomial that interpolates the following points:
+                // (setup_x, setup_y)
+                // (opening_x, opening_y)
+                // such polynomial is linear and has a form e.g setup_y + (X - setup_x) * (witness_y - setup_y) / (witness_x - setup_x)
 
-//         // division in monomial form is sequential, so we parallelize the divisions
+                for ((poly, value), setup_value) in setup_request.polynomials.iter().zip(setup_request.opening_values.iter()).zip(setup_request.setup_values.iter()) {
+                    scratch_space_numerator.reuse_allocation(&poly);
 
-//         let mut polys = vec![(poly_to_divide_at_z, z), (poly_to_divide_at_z_omega, z_by_omega)];
+                    let intercept = setup_value;
+                    let mut t0 = opening_point;
+                    t0.sub_assign(&setup_point);
 
-//         worker.scope(polys.len(), |scope, chunk| {
-//             for p in polys.chunks_mut(chunk) {
-//                 scope.spawn(move |_| {
-//                     let (poly, at) = &p[0];
-//                     let at = *at;
-//                     let result = divide_single::<E>(poly.as_ref(), at);
-//                     p[0] = (Polynomial::from_coeffs(result).unwrap(), at);
-//                 });
-//             }
-//         });
+                    let mut slope = t0.inverse().expect("must exist");
+                    
+                    let mut t1 = *value;
+                    t1.sub_assign(&setup_value);
 
-//         let open_at_z_omega = polys.pop().unwrap().0;
-//         let open_at_z = polys.pop().unwrap().0;
+                    slope.mul_assign(&t1);
 
-//         let opening_at_z = commit_using_monomials(
-//             &open_at_z, 
-//             &crs_mons,
-//             &worker
-//         )?;
+                    worker.scope(scratch_space_numerator.as_ref().len(), |scope, chunk| {
+                        for (num, omega) in scratch_space_numerator.as_mut().chunks_mut(chunk).
+                                    zip(precomputed_bitreversed_coset_divisor.as_ref().chunks(chunk)) {
+                            scope.spawn(move |_| {
+                                for (n, omega) in num.iter_mut().zip(omega.iter()) {
+                                    let mut result = *omega;
+                                    result.sub_assign(&setup_point);
+                                    result.mul_assign(&slope);
+                                    result.add_assign(&intercept);
 
-//         let opening_at_z_omega = commit_using_monomials(
-//             &open_at_z_omega, 
-//             &crs_mons,
-//             &worker
-//         )?;
+                                    n.sub_assign(&result);
+                                }
+                            });
+                        }
+                    });
 
-//         let message = FifthProverMessage::<E, PlonkCsWidth4WithNextStepParams> {
-//             opening_proof_at_z: opening_at_z,
-//             opening_proof_at_z_omega: opening_at_z_omega,
+                    scratch_space_numerator.mul_assign(&worker, &scratch_space_denominator);
+                    if aggregation_challenge != E::Fr::one() {
+                        scratch_space_numerator.scale(&worker, alpha);
+                    }
 
-//             _marker: std::marker::PhantomData
-//         };
+                    final_aggregate.add_assign(&worker, &scratch_space_numerator);
 
-//         Ok(message)
-//     }
+                    alpha.mul_assign(&aggregation_challenge);
+                }
+            }
+
+            let fri_combiner = FriCombiner::initialize_for_domain_size(
+                required_divisor_size, 
+                LDE_FACTOR, 
+                1,
+                E::Fr::multiplicative_generator(),
+                FRI_VALUES_PER_LEAF,
+                self.tree_hasher.clone(),
+            );
+
+            let oracles = fri_combiner.perform_fri_assuming_bitreversed(
+                &final_aggregate.as_ref(), 
+                prng, 
+                &worker
+            )?;
+
+            Ok(oracles)
+    }
+
+
+    pub(crate) fn fifth_step_from_fourth_step<P: Prng<E::Fr, Input = H::Output>>(
+        &self,
+        fourth_state: FourthPartialProverState<E, H>,
+        fourth_verifier_message: FourthVerifierMessage<E>,
+        setup: &SetupMultioracle<E, H>,
+        prng: &mut P,
+        worker: &Worker
+    ) -> Result<FifthProverMessage<E, H>, SynthesisError>
+    {
+        let FourthVerifierMessage { z, v, .. } = fourth_verifier_message;
+        let required_domain_size = fourth_state.required_domain_size;
+
+        let domain = Domain::new_for_size(required_domain_size as u64)?;
+
+        let mut z_by_omega = z;
+        z_by_omega.mul_assign(&domain.generator);
+
+
+        // now we need to sort polynomials and gates by
+        // - first filter setup polynomials
+        // - each setup is opened separately at reference point and required point
+        // - then filter witness polys
+        // - open them at every required point
+
+        let mut setup_opening_requests = vec![];
+
+        // TODO: do better
+
+        {
+            let mut setup_values = vec![];
+            let mut setup_poly_refs = vec![];
+
+            for (i, _) in setup.setup_ids.iter().enumerate() {
+                setup_values.push(setup.setup_poly_values[i]);
+                setup_poly_refs.push(&setup.polynomial_ldes[i]);
+            }
+
+            let range_of_permutation_polys = setup.permutations_ranges[0].clone();
+
+            for (value, perm_ref) in setup.setup_poly_values[range_of_permutation_polys.clone()].iter()
+                                    .zip(setup.polynomial_ldes[range_of_permutation_polys].iter()) 
+            {
+                setup_values.push(*value);
+                setup_poly_refs.push(perm_ref);
+            }
+
+            for selector_poly_idx in setup.gate_selectors_indexes.iter() {
+                let poly_ref = &setup.polynomial_ldes[*selector_poly_idx];
+                let value = setup.setup_poly_values[*selector_poly_idx];
+
+                setup_values.push(value);
+                setup_poly_refs.push(poly_ref);
+            }
+
+            let mut opening_values = vec![];
+            opening_values.extend_from_slice(&fourth_state.setup_values_at_z[..]);
+            opening_values.extend_from_slice(&fourth_state.permutation_polynomials_at_z[..]);
+            opening_values.extend_from_slice(&fourth_state.gate_selector_polynomials_at_z[..]);
+
+            assert_eq!(setup_values.len(), opening_values.len());
+
+            let request = SetupOpeningRequest {
+                polynomials: setup_poly_refs,
+                setup_point: setup.setup_point,
+                setup_values: setup_values,
+                opening_point: z,
+                opening_values: opening_values
+            };
+
+            setup_opening_requests.push(request);
+        }
+
+        let mut witness_opening_requests = vec![];
+
+        let opening_points = vec![z, z_by_omega];
+        let storages = vec![&fourth_state.wire_values_at_z, &fourth_state.wire_values_at_z_omega];
+
+        for dilation in 0usize..=1usize {
+            let mut per_dilation_set = vec![];
+            for gate in self.sorted_gates.iter() {
+                for constraint in gate.get_constraints().iter() {
+                    for term in constraint.0.iter() {
+                        for poly in term.1.iter() {
+                            match poly {
+                                PolynomialInConstraint::VariablesPolynomial(
+                                    poly_num, TimeDilation(dil)
+                                ) => {
+                                    if dil == &dilation {
+                                        if !per_dilation_set.contains(poly_num) {
+                                            per_dilation_set.push(*poly_num)
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut opening_values = vec![];
+            let mut opening_refs = vec![];
+            let open_at = opening_points[dilation];
+            let storage = storages[dilation];
+            for id in per_dilation_set.into_iter() {
+                let poly_ref = &fourth_state.witness_polys_ldes[id];
+
+                let mut tmp: Vec<_> = storage.iter().filter(
+                    |el| el.0 == id
+                ).collect();
+
+                assert_eq!(tmp.len(), 1);
+                let value = tmp.pop().unwrap().1;
+
+                opening_values.push(value);
+                opening_refs.push(poly_ref);
+            }
+
+            if dilation == 0 {
+                opening_values.push(fourth_state.grand_product_at_z);
+                opening_refs.push(&fourth_state.grand_product_polynomial_lde[0]);
+            } else if dilation == 1 {
+                opening_values.push(fourth_state.grand_product_at_z_omega);
+                opening_refs.push(&fourth_state.grand_product_polynomial_lde[0]);
+            }
+
+            let request = WitnessOpeningRequest {
+                polynomials: opening_refs,
+                opening_point: open_at,
+                opening_values: opening_values
+            };
+
+            witness_opening_requests.push(request);
+        }
+
+        let fri_oracles_set = self.perform_fri(
+            v,
+            witness_opening_requests,
+            setup_opening_requests,
+            &worker,
+            prng
+        )?;
+
+        let commitments = fri_oracles_set.intermediate_roots.clone();
+        let coeffs = fri_oracles_set.final_coefficients.clone();
+
+        let message = FifthProverMessage {
+            fri_intermediate_roots: commitments,
+            final_coefficients: coeffs,
+        };
+
+        Ok(message)
+    }
 }
