@@ -149,7 +149,9 @@ pub(crate) struct FourthPartialProverState<E: Engine, H: BinaryTreeHasher<E::Fr>
 pub(crate) struct FourthProverMessage<E: Engine> {
     pub(crate) wire_values_at_z: Vec<(usize, E::Fr)>,
     pub(crate) wire_values_at_z_omega: Vec<(usize, E::Fr)>,
+    pub(crate) setup_values_at_z: Vec<E::Fr>,
     pub(crate) permutation_polynomials_at_z: Vec<E::Fr>,
+    pub(crate) gate_selector_polynomials_at_z: Vec<E::Fr>,
     pub(crate) grand_product_at_z: E::Fr,
     pub(crate) grand_product_at_z_omega: E::Fr,
     pub(crate) quotient_polynomial_parts_at_z: Vec<E::Fr>,
@@ -1004,7 +1006,9 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
         let message = FourthProverMessage::<E> {
             wire_values_at_z: state.wire_values_at_z.clone(),
             wire_values_at_z_omega: state.wire_values_at_z_omega.clone(),
+            setup_values_at_z: state.setup_values_at_z.clone(),
             permutation_polynomials_at_z: state.permutation_polynomials_at_z.clone(),
+            gate_selector_polynomials_at_z: state.gate_selector_polynomials_at_z.clone(),
             grand_product_at_z: state.grand_product_at_z,
             grand_product_at_z_omega: state.grand_product_at_z_omega,
             quotient_polynomial_parts_at_z: state.quotient_polynomial_parts_at_z.clone(),
