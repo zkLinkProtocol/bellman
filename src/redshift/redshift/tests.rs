@@ -24,13 +24,28 @@ mod test {
     use crate::multicore::*;
 
     use crate::redshift::redshift::test_assembly::*;
+    use std::mem;
 
     #[derive(Clone)]
     struct BenchmarkCircuit<E: Engine>{
         num_steps: usize,
         a: E::Fr,
         b: E::Fr,
+        output: E::Fr,
         _marker: std::marker::PhantomData<E>
+    }
+
+    fn fibbonacci<F: Field>(a: &F, b: &F, num_steps: usize) -> F {
+
+        let mut a = a.clone();
+        let mut b = b.clone();
+
+        for _ in 0..num_steps {
+            b.add_assign(&a);
+            std::mem::swap(&mut a, &mut b);
+        }
+
+        a
     }
 
     impl<E: Engine> Circuit<E> for BenchmarkCircuit<E> {
@@ -41,29 +56,37 @@ mod test {
             let mut negative_one = one;
             negative_one.negate();
             
-            let mut a_value;
-            let mut b_value = self.b.clone();
-            let mut c_value = self.a.clone();
-            c_value.add_assign(&b_value);
-            let mut c;
+            let mut a = cs.alloc_input(|| {
+                Ok(self.a.clone())
+            })?;
 
-            let one = E::Fr::one();
-            let mut negative_one = one;
-            negative_one.negate();
+            let mut b = cs.alloc_input(|| {
+                Ok(self.b.clone())
+            })?;
+
+            let mut a_value = self.a.clone();
+            let mut b_value = self.b.clone();
 
             for _ in 0..self.num_steps {
+
+                b_value.add_assign(&a_value);
                
-                let c = cs.alloc(|| {
-                    Ok(E::Fr::one())
+                let temp = cs.alloc(|| {
+                    Ok(b_value.clone())
                 })?;
 
-                a = b;
-                b = c;
+                cs.enforce_zero_3((a, b, temp), (one, one, negative_one))?;
+                std::mem::swap(&mut a_value, &mut b_value);
 
-                a_value = b_value;
-                b_value = c_value;
-                c_value.add_assign(&a_value);
+                b = a;
+                a = temp;
             }
+
+            let output = cs.alloc_input(|| {
+                Ok(self.output.clone())
+            })?;
+
+            cs.enforce_zero_2((a, output), (one, negative_one))?;
 
             Ok(())
         }
@@ -79,20 +102,20 @@ mod test {
     ) -> Result<bool, SynthesisError>
     {
 
+        let output = fibbonacci(&a, &b, num_steps);
+        
         let circuit = BenchmarkCircuit::<E> {
             num_steps,
             a,
             b,
+            output,
             _marker: std::marker::PhantomData::<E>
         };
 
         // verify that circuit is satifiable
         let mut test_assembly = TestAssembly::new();
-        let test_circuit = circuit.clone();
-        test_circuit.synthesize(&mut test_assembly)?;
-        println!("test circuit is satisfied: {}", test_assembly.is_satisfied(true));
-
-        let n = 4;
+        circuit.synthesize(&mut test_assembly)?;
+        println!("test circuit is satisfied: {}", test_assembly.is_satisfied(false));
         
         let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
             &circuit,
@@ -111,15 +134,11 @@ mod test {
             &channel_params, 
         )?;
 
-        let one = E::Fr::one();
-        let mut negative_one = one;
-        negative_one.negate();
-
         println!("before verification");
 
         let is_valid = verify_proof::<E, I, T>(
             proof,
-            &[negative_one, E::Fr::zero()],
+            &[a, b, output],
             &setup_precomp,
             &fri_params,
             &oracle_params,
@@ -142,7 +161,7 @@ mod test {
         // prepare parameters
         let a = Fr::one();
         let b = Fr::one();
-        let num_steps = 1000;
+        let num_steps =1000;
 
         let fri_params = FriParams {
             lde_factor : 16,
@@ -192,7 +211,7 @@ mod test {
         // prepare parameters
         let a = Fr::one();
         let b = Fr::one();
-        let num_steps = 3;
+        let num_steps = 10;
 
         let fri_params = FriParams {
             initial_degree_plus_one: std::cell::Cell::new(0),

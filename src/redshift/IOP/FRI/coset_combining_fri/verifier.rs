@@ -126,8 +126,11 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             let natural_idx = CosetCombiner::get_natural_idx_for_coset_index(
                 coset_idx, initial_domain_size, log_initial_domain_size, collapsing_factor);
             println!("natural index: {}", natural_idx);
+
             let mut evaluation_point = omega.pow([natural_idx as u64]);
-            //evaluation_point.mul_assign(&F::multiplicative_generator());
+            evaluation_point.mul_assign(&F::multiplicative_generator());
+            println!("verifier ev-p: {}", evaluation_point);
+
             argument.push(("evaluation_point", &evaluation_point));
             let combined_value = upper_layer_combiner(argument).ok_or(SynthesisError::AssignmentMissing)?;
             values.push(combined_value);
@@ -162,10 +165,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 coset_idx_range.start, collapsing_factor);
             coset_idx_range = temp;
 
-            println!("coset: {}-{}", coset_idx_range.start, coset_idx_range.end);
-            println!("query: {}-{}", query.indexes().start, query.indexes().end);
-            println!("elem tree idx: {}", elem_tree_idx);
-            
             assert_eq!(coset_idx_range.len(), coset_size);
 
             if query.indexes() != coset_idx_range {
@@ -196,10 +195,12 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
 
             if previous_layer_element != query.values()[elem_tree_idx] {
                 println!("coset value wrong");
-                //return Ok(false);
+                return Ok(false);
             }
             previous_layer_element = this_layer_element;
         }
+
+        println!("at th end of FRI!");
 
         // finally we need to get expected value from coefficients
         let (coset_idx_range, elem_tree_idx) = CosetCombiner::get_next_layer_coset_idx_extended(

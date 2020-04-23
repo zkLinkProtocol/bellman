@@ -284,6 +284,7 @@ pub(crate) fn parallel_ct_ntt<F: PrimeField, P: CTPrecomputations<F>>(
     if n == 1 {
         return;
     }
+    
     let pairs_per_group = n / 2;
     let num_groups = 1;
     let distance = n / 2;

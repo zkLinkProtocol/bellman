@@ -296,9 +296,11 @@ where E::Fr : PrimeField
 
     let aggregation_challenge = channel.produce_field_element_challenge();
 
-    let domain_size = n * fri_params.lde_factor;
+    let domain_size = n;
     let domain = Domain::<E::Fr>::new_for_size((domain_size) as u64)?;
     let omega = domain.generator;
+
+    println!("verifier aggregation challenge: {}", aggregation_challenge);
 
     let upper_layer_combiner = |arr: Vec<(Label, &E::Fr)>| -> Option<E::Fr> {
         fn find_poly_value_at_omega<T>(label: Label, arr: &Vec<(Label, T)>) -> Option<&T> {
@@ -343,7 +345,7 @@ where E::Fr : PrimeField
         // y = /sum alpha^i [f_i(x) - U_i(x)]/ [(x - x_1)(x - x_2)]
         // where U_i(t) is the unique linear function, having value f_i(x_1) at x_1 and f_i(x_2) at x_2
         // note that such U_i(t) = f_i(x_1) + [t - x_1]/ [x_2 - x_1] (f_i(x_2) - f_i(x_1))  and hence
-        // U_i(x) = f_i(x_1) + [x - x_1]/ [x_2 - x_1] (f_i(x_2) - f_i(x_1))
+        // U_i(omega) = f_i(x_1) + [omega - x_1]/ [x_2 - x_1] (f_i(x_2) - f_i(x_1))
         // this means that all U_i(x) share the common slope [x - x_1] / [x_2 - x_1]
         // which therefore may be precomputed once and forall
         // funtion returns the pair (y, final_alpha)
@@ -363,8 +365,8 @@ where E::Fr : PrimeField
             for (&f_x, f_x_1, f_x_2) in triples.iter() {
 
                 //evaluate interpolation poly -U_i(x) = -f_x_1 - slope * (f_x_2 - f_x_1) = slope * (f_x_1 - f_x_2) - f_x_1
-                let mut temp = f_x_2.clone();
-                temp.sub_assign(&f_x_1);
+                let mut temp = f_x_1.clone();
+                temp.sub_assign(&f_x_2);
                 temp.mul_assign(&slope);
                 temp.sub_assign(&f_x_1);
 
@@ -380,11 +382,13 @@ where E::Fr : PrimeField
             // (x - x_1)(x - x_2) = x^2 - (x_1 + x_2) * x + x_1 * x_2
             let mut t_0 = *x_1;
             t_0.add_assign(x_2);
+            t_0.mul_assign(x);
+
             let mut t_1 = *x_1;
             t_1.mul_assign(&x_2);
 
             let mut common_denominator = *x;
-            common_denominator.double();
+            common_denominator.square();
             common_denominator.sub_assign(&t_0);
             common_denominator.add_assign(&t_1);
             
@@ -406,11 +410,13 @@ where E::Fr : PrimeField
         ];
 
         let (mut res1, mut alpha1) = combine_at_single_point(pairs, &evaluation_point, &z, &aggregation_challenge);
+        println!("verifier single point: {}", res1);
 
         // combine witness polynomials z_1, z_2, c which are opened at z and z * omega
 
-        let mut z_shifted = z;
+        let mut z_shifted = z.clone();
         z_shifted.mul_assign(&omega);
+        println!("multiplier omega verifier: {}", omega);
 
         let witness_triples : Vec<(&E::Fr, E::Fr, E::Fr)> = vec![
             (find_poly_value_at_omega("z_1", &arr)?, z_1_at_z, z_1_shifted_at_z),
@@ -420,6 +426,10 @@ where E::Fr : PrimeField
 
         let (mut res2, alpha2) = combine_at_two_points(witness_triples, &evaluation_point, &z, &z_shifted, &aggregation_challenge);
 
+        let mut check = res2.clone();
+        check.mul_assign(&alpha1);
+        check.add_assign(&res1);
+        println!("final aggregation''': {}", check);
         // finally combine setup polynomials q_l, q_r, q_o, q_m, q_c, q_add_sel, s_id, sigma_1, sigma_2, sigma_3
         // which are opened at z and z_setup
         // in current implementation we assume that setup point is the same for all circuit-defining polynomials!
@@ -453,7 +463,8 @@ where E::Fr : PrimeField
         alpha1.mul_assign(&alpha2);
         res3.mul_assign(&alpha1);
         res1.add_assign(&res3);
-
+        
+        println!("final aggregation: {}", res1);
         println!("combiner success!");
 
         Some(res1)
@@ -480,7 +491,7 @@ where E::Fr : PrimeField
         &mut channel,
         fri_params,
     ); 
-    let natural_first_element_indexes = (0..fri_params.R).map(|_| channel.produce_uint_challenge() as usize % domain_size).collect();
+    let natural_first_element_indexes = (0..fri_params.R).map(|_| channel.produce_uint_challenge() as usize % (domain_size * fri_params.lde_factor)).collect();
 
     println!("before FRI check!");
 

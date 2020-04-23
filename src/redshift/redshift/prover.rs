@@ -949,6 +949,8 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
     let mut z_by_omega = z;
     z_by_omega.mul_assign(&z_1.omega);
 
+    println!("multiplier omega prover: {}", z_1.omega);
+
     let witness_opening_request_at_z = SinglePointOpeningRequest {
         polynomials: vec![
             &a_commitment_data.poly,

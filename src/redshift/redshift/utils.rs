@@ -318,7 +318,7 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
     // TODO: deal with the case of various degrees
     let required_divisor_size = (common_deg+1) * params.lde_factor;
 
-    // TODO: however after division all of the polynomials are of different and distinct degrees. How to hadne this?
+    // TODO: however after division all of the polynomials are of different and distinct degrees. How to handne this?
 
     // Here we exploit the fact that we open only at omega and g * omega
     // we divide the polynomials in the groups by the same common values
@@ -331,10 +331,13 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
     precomputed_bitreversed_coset_divisor.scale(&worker, E::Fr::multiplicative_generator());
     precomputed_bitreversed_coset_divisor.bitreverse_enumeration(&worker);
 
+    println!("omega: {}", precomputed_bitreversed_coset_divisor.coeffs[66]);
+
     let mut scratch_space_numerator = final_aggregate.clone();
     let mut scratch_space_denominator = final_aggregate.clone();
 
     let aggregation_challenge = channel.produce_field_element_challenge();
+    println!("prover aggregation challenge: {}", aggregation_challenge);
     let mut alpha = E::Fr::one();
 
     for request in single_point_opening_requests.iter() {
@@ -361,6 +364,8 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
             alpha.mul_assign(&aggregation_challenge);
         }
     }
+
+    println!("single element request: {}", final_aggregate.coeffs[66]);
 
     for request in double_point_opening_requests.iter() {
         // (omega - y)(omega - z) = omega^2 - (z+y)*omega + zy
@@ -441,9 +446,15 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
 
             final_aggregate.add_assign(&worker, &scratch_space_numerator);
 
+            
+
             alpha.mul_assign(&aggregation_challenge);
         }
+
+        println!("final aggregation''''': {}", final_aggregate.coeffs[66]);
     }
+
+    
 
     let fri_prototype = FriIop::proof_from_lde(
         final_aggregate,

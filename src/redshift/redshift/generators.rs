@@ -185,7 +185,7 @@ pub fn setup_with_precomputations<E: Engine, C: Circuit<E>, I: Oracle<E::Fr>, T:
     let (q_l, q_r, q_o, q_m, q_c, q_add_sel, s_id, sigma_1, sigma_2, sigma_3) = 
         output_setup_polynomials::<E>(input_gates, aux_gates, num_inputs, num_aux, &worker)?;
 
-    // we prefer to pass degree explicitely (in order to implement hiding later)
+    // we prefer to pass degree explicitely (in order to implement hidings later)
     // we also have plans to hold the case of various degrees polynomials
 
     let q_l_commitment_data = commit_single_poly::<E, _, I>(&q_l, n, omegas_bitreversed, &fir_params, oracle_params, &worker)?;
