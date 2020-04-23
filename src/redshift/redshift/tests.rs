@@ -217,7 +217,7 @@ mod test {
             initial_degree_plus_one: std::cell::Cell::new(0),
             lde_factor: 16,
             R: 4,
-            collapsing_factor: 1,
+            collapsing_factor: 2,
             final_degree_plus_one: 1
         };
 

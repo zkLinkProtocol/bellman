@@ -200,8 +200,8 @@ impl<F: PrimeField, RP: RescueParams<F>> Rescue<F, RP> {
                         }
                     }
                     // We've already squeezed out all available elements
-                    unreachable!("Sponge number is too small");
-                    //self.sponge = SpongeState::Absorbing(vec![]);
+                    //unreachable!("Sponge number is too small");
+                    self.sponge = SpongeState::Absorbing(vec![]);
                 }
             }
         }
