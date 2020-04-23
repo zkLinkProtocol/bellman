@@ -41,47 +41,29 @@ mod test {
             let mut negative_one = one;
             negative_one.negate();
             
-            let mut a = cs.alloc(|| {
-                Ok(negative_one.clone())
-            })?;
+            let mut a_value;
+            let mut b_value = self.b.clone();
+            let mut c_value = self.a.clone();
+            c_value.add_assign(&b_value);
+            let mut c;
 
-            let mut b = cs.alloc(|| {
-                Ok(one.clone())
-            })?;
+            let one = E::Fr::one();
+            let mut negative_one = one;
+            negative_one.negate();
 
-            let mut c = cs.alloc(|| {
-                Ok(E::Fr::zero())
-            })?;
-
-            cs.enforce_zero_3((a, b, c), (one, one, one))?;
-            cs.enforce_zero_2((a, b), (one, one))?;
-
-            //let mut a_value;
-            // let mut b_value = self.b.clone();
-            // let mut c_value = self.a.clone();
-            // c_value.add_assign(&b_value);
-            // //let mut c;
-
-            // let one = E::Fr::one();
-            // let mut negative_one = one;
-            // negative_one.negate();
-
-            // for _ in 0..self.num_steps {
+            for _ in 0..self.num_steps {
                
-            //     let c = cs.alloc(|| {
-            //         Ok(E::Fr::one())
-            //     })?;
+                let c = cs.alloc(|| {
+                    Ok(E::Fr::one())
+                })?;
 
-                //cs.enforce_zero_3(())
-                //cs.enforce_zero_3((a, b, c), (one, one, negative_one))?;
+                a = b;
+                b = c;
 
-                // a = b;
-                // b = c;
-
-                // a_value = b_value;
-                // b_value = c_value;
-                // c_value.add_assign(&a_value);
-            //}
+                a_value = b_value;
+                b_value = c_value;
+                c_value.add_assign(&a_value);
+            }
 
             Ok(())
         }
@@ -108,7 +90,7 @@ mod test {
         let mut test_assembly = TestAssembly::new();
         let test_circuit = circuit.clone();
         test_circuit.synthesize(&mut test_assembly)?;
-        println!("test circuit: {}", test_assembly.is_satisfied(true));
+        println!("test circuit is satisfied: {}", test_assembly.is_satisfied(true));
 
         let n = 4;
         
@@ -119,21 +101,25 @@ mod test {
             &channel_params,
         )?;
 
-        let omegas_inv_bitreversed_for_fri = <CosetOmegasInvBitreversed::<E::Fr> as FriPrecomputations::<E::Fr>>::new_for_domain_size(
-           n * fri_params.lde_factor);
+        println!("before proof");
 
-        let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, CosetOmegasInvBitreversed::<E::Fr>, I, T> (
+        let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, I, T> (
             &circuit,
             &setup_precomp, 
             &fri_params,
             &oracle_params,
             &channel_params, 
-            &omegas_inv_bitreversed_for_fri
         )?;
+
+        let one = E::Fr::one();
+        let mut negative_one = one;
+        negative_one.negate();
+
+        println!("before verification");
 
         let is_valid = verify_proof::<E, I, T>(
             proof,
-            &[a, b],
+            &[negative_one, E::Fr::zero()],
             &setup_precomp,
             &fri_params,
             &oracle_params,
@@ -161,9 +147,9 @@ mod test {
         let fri_params = FriParams {
             lde_factor : 16,
             initial_degree_plus_one: std::cell::Cell::new(0),
-            R : 1,
-            collapsing_factor : 1,
-            final_degree_plus_one : 1,
+            R : 20,
+            collapsing_factor : 3,
+            final_degree_plus_one : 2,
         };
 
         // note the consistency between collapsing_factor and num_elems_per_leaf!
@@ -186,7 +172,7 @@ mod test {
 
         match res {
             Ok(valid) => assert_eq!(valid, true),
-            Err(_) => println!("Some erro has been occured!"),
+            Err(_) => println!("Some error has been occured!"),
         };       
     }
 

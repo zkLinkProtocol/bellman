@@ -415,7 +415,6 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
     #[inline(always)]
     pub fn break_into_multiples(self, size: usize) -> Result<Vec<Polynomial<F, Coefficients>>, SynthesisError> {
         let mut coeffs = self.coeffs;
-        println!("coeffs len: {}", coeffs.len());
 
         let (mut num_parts, last_size) = if coeffs.len() % size == 0 {
             let num_parts = coeffs.len() / size;
@@ -1793,10 +1792,6 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         let mut tmp = F::one();
         for (i, c) in self.coeffs.iter().enumerate() {
-            if i == 0 {
-                println!("grand product first: {}", c);
-            }
-            
             tmp.mul_assign(&c);
             result.push(tmp);
         }
@@ -2159,7 +2154,10 @@ impl<F: PrimeField> Polynomial<F, Values> {
         precomputed_omegas: &P,
         coset_generator: &F
     ) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
-        if self.coeffs.len() <= worker.cpus * 4 {
+
+        // TODO: crashes on tiny circuit size (less than 128 constraints)
+        // need a better estimate for the inequality
+        if self.coeffs.len() as usize <= worker.cpus * 4 {
             return Ok(self.ifft(&worker));
         }
 

@@ -116,23 +116,32 @@ where E::Fr : PrimeField
     let z_1_shifted_at_z = proof.z_1_shifted_opening_value;
     let z_2_shifted_at_z = proof.z_2_shifted_opening_value;
 
+    // TODO: check lagrange interpolation!
+
     let l_0_at_z = evaluate_lagrange_poly::<E>(required_domain_size, 0, z);
     let l_n_minus_one_at_z = evaluate_lagrange_poly::<E>(required_domain_size, n - 1, z);
+
+    println!("verifier l_0_at_z: {}", l_0_at_z);
+    println!("verifier l_n_at_z : {}", l_n_minus_one_at_z);
+    println!("verifier inv_vanishing_poly : {}", inverse_vanishing_at_z);
+    println!("verifier alpha : {}", alpha);
 
     let mut PI_at_z = E::Fr::zero();
     for (i, val) in public_inputs.iter().enumerate() {
         if i == 0 {
             let mut temp = l_0_at_z;
             temp.mul_assign(val);
-            PI_at_z.sub_assign(&temp);
+            PI_at_z.add_assign(&temp);
         }
         else {
             // TODO: maybe make it multithreaded
             let mut temp = evaluate_lagrange_poly::<E>(required_domain_size, i, z);
             temp.mul_assign(val);
-            PI_at_z.sub_assign(&temp);
+            PI_at_z.add_assign(&temp);
         }
     }
+
+    println!("verifier PI_at_z : {}", PI_at_z);
 
     let t_low_at_z = proof.t_low_opening_value;
     let t_mid_at_z = proof.t_mid_opening_value;
@@ -178,7 +187,7 @@ where E::Fr : PrimeField
         res.add_assign(&tmp);
 
         // add public inputs
-        res.add_assign(&PI_at_z);
+        res.sub_assign(&PI_at_z);
 
         // no need for the first one
         //inverse_vanishing_at_z.mul_assign(&alpha);
@@ -283,6 +292,8 @@ where E::Fr : PrimeField
         return Ok(false);
     }
 
+    println!("check passed!");
+
     let aggregation_challenge = channel.produce_field_element_challenge();
 
     let domain_size = n * fri_params.lde_factor;
@@ -352,8 +363,8 @@ where E::Fr : PrimeField
             for (&f_x, f_x_1, f_x_2) in triples.iter() {
 
                 //evaluate interpolation poly -U_i(x) = -f_x_1 - slope * (f_x_2 - f_x_1) = slope * (f_x_1 - f_x_2) - f_x_1
-                let mut temp = f_x_1.clone();
-                temp.sub_assign(&f_x_2);
+                let mut temp = f_x_2.clone();
+                temp.sub_assign(&f_x_1);
                 temp.mul_assign(&slope);
                 temp.sub_assign(&f_x_1);
 
@@ -443,6 +454,8 @@ where E::Fr : PrimeField
         res3.mul_assign(&alpha1);
         res1.add_assign(&res3);
 
+        println!("combiner success!");
+
         Some(res1)
     };
 
@@ -468,6 +481,8 @@ where E::Fr : PrimeField
         fri_params,
     ); 
     let natural_first_element_indexes = (0..fri_params.R).map(|_| channel.produce_uint_challenge() as usize % domain_size).collect();
+
+    println!("before FRI check!");
 
     let is_valid = FriIop::<E::Fr, I, T>::verify_proof_queries(
         &proof.batched_FRI_proof,

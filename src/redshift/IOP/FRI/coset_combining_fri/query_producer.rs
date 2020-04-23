@@ -34,28 +34,32 @@ impl<F: PrimeField, I: Oracle<F>> FriProofPrototype<F, I>
 
         for natural_first_element_index in natural_first_element_indexes.into_iter() {
             
-            let coset_indexes = CosetCombiner::get_coset_idx_for_natural_index(
+            let mut coset_indexes = CosetCombiner::get_coset_idx_for_natural_index(
                 natural_first_element_index, initial_domain_size, log_initial_domain_size, collapsing_factor);
-            let upper_layer_query = upper_layer_oracles.produce_query(coset_indexes, &upper_layer_values, oracle_params);
+
+            println!("coset idx: {}-{}", coset_indexes.start, coset_indexes.end);
+            
+            let upper_layer_query = upper_layer_oracles.produce_query(coset_indexes.clone(), &upper_layer_values, oracle_params);
             upper_layer_queries.push(upper_layer_query);
 
             let mut queries = vec![];
+            //let mut elem_index = ((natural_first_element_index << collapsing_factor) % initial_domain_size) >> collapsing_factor;
             let mut domain_size = initial_domain_size >> collapsing_factor;
             let mut log_domain_size = log_initial_domain_size - collapsing_factor;
-            let mut elem_index = (natural_first_element_index << collapsing_factor) % domain_size;
-
+            
             for (oracle, leaf_values) in self.oracles.iter().zip(&self.intermediate_values) {
 
-                let coset_indexes = CosetCombiner::get_coset_idx_for_natural_index(
-                    elem_index, domain_size, log_domain_size, collapsing_factor);
+                coset_indexes = CosetCombiner::get_next_layer_coset_idx_extended(
+                    coset_indexes.start, collapsing_factor).0;
+
+                println!("coset idx: {}-{}", coset_indexes.start, coset_indexes.end);
                 
                 assert_eq!(coset_indexes.len(), coset_size);
-                let query = oracle.produce_query(coset_indexes, leaf_values.as_ref(), oracle_params);
+                let query = oracle.produce_query(coset_indexes.clone(), leaf_values.as_ref(), oracle_params);
                 queries.push(query);
 
                 domain_size >>= collapsing_factor;
                 log_domain_size -= collapsing_factor;
-                elem_index = (elem_index << collapsing_factor) % domain_size;
             }
 
             rounds.push(queries);

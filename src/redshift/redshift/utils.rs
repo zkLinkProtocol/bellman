@@ -302,21 +302,21 @@ pub(crate) fn output_setup_polynomials<E: Engine>(
 }
 
 pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E::Fr>, C: Channel<E::Fr, Input = I::Commitment>>
-    ( 
-        single_point_opening_requests: Vec<SinglePointOpeningRequest<E::Fr>>,
-        double_point_opening_requests: Vec<DoublePointOpeningRequest<E::Fr>>,
-        common_deg: usize,
-        omegas_inv_bitreversed: &P,
-        params: &FriParams,
-        oracle_params: &I::Params,
-        worker: &Worker,
-        channel: &mut C,
-    ) -> Result<(FriProofPrototype<E::Fr, I>), SynthesisError> 
+( 
+    single_point_opening_requests: Vec<SinglePointOpeningRequest<E::Fr>>,
+    double_point_opening_requests: Vec<DoublePointOpeningRequest<E::Fr>>,
+    common_deg: usize,
+    omegas_inv_bitreversed: &P,
+    params: &FriParams,
+    oracle_params: &I::Params,
+    worker: &Worker,
+    channel: &mut C,
+) -> Result<(FriProofPrototype<E::Fr, I>), SynthesisError> 
 //where E::Fr : PartialTwoBitReductionField
 {
     //we assert that all of the polynomials are of the same degree
     // TODO: deal with the case of various degrees
-    let required_divisor_size = common_deg * params.lde_factor;
+    let required_divisor_size = (common_deg+1) * params.lde_factor;
 
     // TODO: however after division all of the polynomials are of different and distinct degrees. How to hadne this?
 
@@ -326,6 +326,7 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
     let mut final_aggregate = Polynomial::from_values(vec![E::Fr::zero(); required_divisor_size])?;
 
     let mut precomputed_bitreversed_coset_divisor = Polynomial::from_values(vec![E::Fr::one(); required_divisor_size])?;
+
     precomputed_bitreversed_coset_divisor.distribute_powers(&worker, precomputed_bitreversed_coset_divisor.omega);
     precomputed_bitreversed_coset_divisor.scale(&worker, E::Fr::multiplicative_generator());
     precomputed_bitreversed_coset_divisor.bitreverse_enumeration(&worker);
@@ -343,18 +344,20 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
         scratch_space_denominator.reuse_allocation(&precomputed_bitreversed_coset_divisor);
         scratch_space_denominator.add_constant(&worker, &minus_z);
         scratch_space_denominator.batch_inversion(&worker)?;
+
         for (poly, value) in request.polynomials.iter().zip(request.opening_values.iter()) {
+
             scratch_space_numerator.reuse_allocation(&poly);
             let mut v = *value;
             v.negate();
             scratch_space_numerator.add_constant(&worker, &v);
             scratch_space_numerator.mul_assign(&worker, &scratch_space_denominator);
+
             if alpha != E::Fr::one() {
                 scratch_space_numerator.scale(&worker, alpha);
             }
 
-            final_aggregate.add_assign(&worker, &scratch_space_numerator);
-
+            final_aggregate.add_assign(&worker, &scratch_space_numerator);           
             alpha.mul_assign(&aggregation_challenge);
         }
     }
@@ -405,42 +408,42 @@ pub(crate) fn multiopening<E: Engine, P: FriPrecomputations<E::Fr>, I: Oracle<E:
             scratch_space_numerator.reuse_allocation(&poly);
 
             let intercept = setup_value;
-                    let mut t0 = opening_point;
-                    t0.sub_assign(&setup_point);
+            let mut t0 = opening_point;
+            t0.sub_assign(&setup_point);
 
-                    let mut slope = t0.inverse().expect("must exist");
-                    
-                    let mut t1 = *value;
-                    t1.sub_assign(&setup_value);
+            let mut slope = t0.inverse().expect("must exist");
+            
+            let mut t1 = *value;
+            t1.sub_assign(&setup_value);
 
-                    slope.mul_assign(&t1);
+            slope.mul_assign(&t1);
 
-                    worker.scope(scratch_space_numerator.as_ref().len(), |scope, chunk| {
-                        for (num, omega) in scratch_space_numerator.as_mut().chunks_mut(chunk).
-                                    zip(precomputed_bitreversed_coset_divisor.as_ref().chunks(chunk)) {
-                            scope.spawn(move |_| {
-                                for (n, omega) in num.iter_mut().zip(omega.iter()) {
-                                    let mut result = *omega;
-                                    result.sub_assign(&setup_point);
-                                    result.mul_assign(&slope);
-                                    result.add_assign(&intercept);
+            worker.scope(scratch_space_numerator.as_ref().len(), |scope, chunk| {
+                for (num, omega) in scratch_space_numerator.as_mut().chunks_mut(chunk).
+                            zip(precomputed_bitreversed_coset_divisor.as_ref().chunks(chunk)) {
+                    scope.spawn(move |_| {
+                        for (n, omega) in num.iter_mut().zip(omega.iter()) {
+                            let mut result = *omega;
+                            result.sub_assign(&setup_point);
+                            result.mul_assign(&slope);
+                            result.add_assign(&intercept);
 
-                                    n.sub_assign(&result);
-                                }
-                            });
+                            n.sub_assign(&result);
                         }
                     });
-
-                    scratch_space_numerator.mul_assign(&worker, &scratch_space_denominator);
-                    if aggregation_challenge != E::Fr::one() {
-                        scratch_space_numerator.scale(&worker, alpha);
-                    }
-
-                    final_aggregate.add_assign(&worker, &scratch_space_numerator);
-
-                    alpha.mul_assign(&aggregation_challenge);
                 }
+            });
+
+            scratch_space_numerator.mul_assign(&worker, &scratch_space_denominator);
+            if aggregation_challenge != E::Fr::one() {
+                scratch_space_numerator.scale(&worker, alpha);
             }
+
+            final_aggregate.add_assign(&worker, &scratch_space_numerator);
+
+            alpha.mul_assign(&aggregation_challenge);
+        }
+    }
 
     let fri_prototype = FriIop::proof_from_lde(
         final_aggregate,
