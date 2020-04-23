@@ -92,6 +92,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
             });
         }
 
+        println!("Leaf hashes comleted");
+
         // leafs are now encoded and hashed, so let's make a tree
 
         let num_levels = log2_floor(num_leafs) as usize;

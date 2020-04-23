@@ -34,10 +34,11 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> SetupMultioracle<E, H> {
 
         let size = assembly.n().next_power_of_two();
 
+        println!("Using LDE to size {}", size * LDE_FACTOR);
+
         let (mut storage, permutations) = assembly.perform_setup(&worker)?;
         let gate_selectors = assembly.output_gate_selectors(&worker)?;
         let ids = assembly.sorted_setup_polynomial_ids.clone();
-        println!("IDs = {:?}", ids);
         drop(assembly);
 
         let mut setup_polys = vec![];
@@ -57,6 +58,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> SetupMultioracle<E, H> {
             setup_polys.push(lde);
         }
 
+        println!("Setup LDEs completed");
+
         let mut permutations_ranges = vec![];
         let before = setup_polys.len();
 
@@ -73,6 +76,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> SetupMultioracle<E, H> {
 
         permutations_ranges.push(before..after);
 
+        println!("Permutations LDEs completed");
+
         let mut gate_selectors_indexes = vec![];
 
         for mut selector in gate_selectors.into_iter() {
@@ -86,6 +91,10 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> SetupMultioracle<E, H> {
 
             setup_polys.push(lde);
         }
+
+        println!("Num gate selectors: {}", gate_selectors_indexes.len());
+
+        println!("Gate selectors LDEs completed");
 
         let multioracle = Multioracle::<E, H>::new_from_polynomials(
             &setup_polys, 

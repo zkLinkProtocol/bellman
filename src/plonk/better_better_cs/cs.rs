@@ -1616,6 +1616,10 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
     circuit.synthesize(&mut assembly)?;
     assembly.finalize();
 
+    let num_gates = assembly.n();
+
+    println!("Performing setup for {} gates", num_gates);
+
     let params = Bn256RescueParams::new_checked_2_into_1(); 
 
     use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
@@ -1632,6 +1636,8 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
+    println!("Setup is done");
+
     // cut permutations
     for p in permutations.iter_mut() {
         p.pop_last().unwrap();
@@ -1640,6 +1646,10 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
     circuit.synthesize(&mut assembly)?;
     assembly.finalize();
+
+    let num_gates = assembly.n();
+
+    let start = std::time::Instant::now();
 
     let (prover, first_state, first_message) = RedshiftProver::first_step(
         assembly, 
@@ -1670,7 +1680,7 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
-    println!("First message");
+    println!("Second message");
 
     prng.commit_input(&second_message.grand_product_oracle_commitment);
 
@@ -1689,7 +1699,7 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
-    println!("First message");
+    println!("Third message");
 
     prng.commit_input(&third_message.quotient_poly_oracle_commitment);
 
@@ -1709,7 +1719,7 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
-    println!("First message");
+    println!("Fourth message");
 
     let mut wire_values_at_z = fourth_message.wire_values_at_z;
     wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1751,10 +1761,183 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
         &worker
     )?;
 
-    println!("First message");
+    println!("Fifth message");
+
+    println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
 
     Ok(())
 }
+
+
+pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
+    circuit: &C
+) -> Result<(), SynthesisError> {
+    use super::*;
+    use poseidon_hash::PoseidonEngine;
+    use poseidon_hash::bn256::Bn256PoseidonParams;
+
+    use super::redshift::setup::*;
+    use super::redshift::prover::*;
+    use super::redshift::tree_hash::*;
+
+    use crate::worker::Worker;
+
+    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+    circuit.synthesize(&mut assembly)?;
+    assembly.finalize();
+
+    let num_gates = assembly.n();
+
+    println!("Performing setup for {} gates", num_gates);
+
+    let params = Bn256PoseidonParams::new_checked_2_into_1(); 
+
+    use crate::plonk::commitments::transcript::{Prng, poseidon_transcript};
+
+    let mut prng = poseidon_transcript::PoseidonTranscript::<bn256::Bn256>::from_params(&params);
+
+    let hasher = PoseidonBinaryTreeHasher::<bn256::Bn256>::new(&params);
+
+    let worker = Worker::new();
+
+    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
+        assembly,
+        hasher.clone(),
+        &worker
+    )?;
+
+    println!("Setup is done");
+
+    // cut permutations
+    for p in permutations.iter_mut() {
+        p.pop_last().unwrap();
+    }
+
+    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+    circuit.synthesize(&mut assembly)?;
+    assembly.finalize();
+
+    let num_gates = assembly.n();
+
+    let start = std::time::Instant::now();
+
+    let (prover, first_state, first_message) = RedshiftProver::first_step(
+        assembly, 
+        hasher.clone(), 
+        &worker
+    )?;
+
+    println!("First message");
+
+    for input in first_message.input_values.iter() {
+        prng.commit_input(input);
+    }
+
+    prng.commit_input(&first_message.witness_multioracle_commitment);
+
+    let beta = prng.get_challenge();
+    let gamma = prng.get_challenge();
+
+    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
+        beta,
+        gamma,
+    };
+
+    let (second_state, second_message) = prover.second_step_from_first_step(
+        first_state, 
+        first_verifier_message, 
+        &permutations, 
+        &worker
+    )?;
+
+    println!("Second message");
+
+    prng.commit_input(&second_message.grand_product_oracle_commitment);
+
+    let alpha = prng.get_challenge();
+
+    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
+        alpha,
+        beta,
+        gamma,
+    };
+
+    let (third_state, third_message) = prover.third_step_from_second_step(
+        second_state, 
+        second_verifier_message, 
+        &setup_multioracle, 
+        &worker
+    )?;
+
+    println!("Third message");
+
+    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
+
+    let z = prng.get_challenge();
+
+    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
+        alpha,
+        beta,
+        gamma,
+        z,
+    };
+
+    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
+        third_state, 
+        third_verifier_message, 
+        &setup_multioracle, 
+        &worker
+    )?;
+
+    println!("Fourth message");
+
+    let mut wire_values_at_z = fourth_message.wire_values_at_z;
+    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
+
+    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
+    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
+
+    for w in wire_values_at_z.iter()
+        .chain(&wire_values_at_z_omega)
+        .chain(&Some(fourth_message.grand_product_at_z))
+        .chain(&Some(fourth_message.grand_product_at_z_omega))
+        .chain(&fourth_message.quotient_polynomial_parts_at_z)
+        .chain(&fourth_message.setup_values_at_z)
+        .chain(&fourth_message.permutation_polynomials_at_z)
+        .chain(&fourth_message.gate_selector_polynomials_at_z) 
+    {
+        prng.commit_input(&w);
+    }
+
+    let v = prng.get_challenge();
+
+    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
+        alpha,
+        beta,
+        gamma,
+        z,
+        v,
+    };
+
+    let fifth_message = prover.fifth_step_from_fourth_step(
+        fourth_state, 
+        fourth_verifier_message, 
+        &setup_multioracle, 
+        &mut prng,
+        &worker
+    )?;
+
+    println!("Fifth message");
+
+    println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod test {

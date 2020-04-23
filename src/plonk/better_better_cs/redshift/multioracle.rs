@@ -23,7 +23,9 @@ impl<'a, E: Engine, H: BinaryTreeHasher<E::Fr>> Multioracle<'a, E, H> {
         // expect polynomials to be in bitreverse enumeration
         let num_polys = polynomials.len();
         let values_per_leaf = num_polys * num_values_from_one_poly_into_leaf;
+        println!("Placing {} values into single leaf", values_per_leaf);
         let num_leafs = polynomials[0].size() / num_values_from_one_poly_into_leaf;
+        println!("{} leafs total", num_leafs);
         assert!(num_leafs.is_power_of_two());
 
         let tree_params = BinaryTreeParams {
@@ -38,6 +40,8 @@ impl<'a, E: Engine, H: BinaryTreeHasher<E::Fr>> Multioracle<'a, E, H> {
         let poly_refs: Vec<_> = polynomials.iter().map(|el| el.as_ref()).collect();
 
         let poly_refs_ref = &poly_refs;
+
+        println!("Start combining leafs");
 
         worker.scope(leaf_refs_combined.len(), |scope, chunk| {
             for (i, lh) in leaf_refs_combined.chunks_mut(chunk)
@@ -60,11 +64,17 @@ impl<'a, E: Engine, H: BinaryTreeHasher<E::Fr>> Multioracle<'a, E, H> {
             }
         });
 
+        println!("Done combining leafs");
+
+        println!("Start making a tree");
+
         let tree = BinaryTree::create_from_combined_leafs(
             &leaf_refs_combined,
             tree_hasher,
             &tree_params
         );
+
+        println!("Done making a tree");
 
         Self {
             polynomial_values_refs: poly_refs,

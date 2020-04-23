@@ -4,6 +4,7 @@ use crate::pairing::ff::{PrimeField, PrimeFieldRepr};
 pub mod prng;
 pub mod keccak_transcript;
 pub mod rescue_transcript;
+pub mod poseidon_transcript;
 
 lazy_static! {
     static ref TRANSCRIPT_BLAKE2S_PARAMS: State = {

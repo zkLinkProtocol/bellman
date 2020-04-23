@@ -501,6 +501,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
 
         let use_gate_selectors = self.sorted_gates.len() > 1;
         let selectors_indexes = setup.gate_selectors_indexes.clone();
+        println!("Have {} gate selector indexes", selectors_indexes.len());
         let mut selectors_range_it = selectors_indexes.into_iter();
 
         let mut local_scratch_space = if use_gate_selectors {
@@ -659,17 +660,27 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                     }
                 }
 
-                if use_gate_selectors {
-                    let selector_idx = (&mut selectors_range_it).next().unwrap();
-                    let poly_lde_ref = &setup.polynomial_ldes[selector_idx];
-                    let poly_lde_part = poly_lde_ref.clone_subset_assuming_bitreversed(
-                        partition_factor
-                    )?;
-                    global_scratch_space.mul_assign(&worker, &poly_lde_part);
-                    t.add_assign(&worker, &global_scratch_space);
-                }
+                // if use_gate_selectors {
+                //     let selector_idx = (&mut selectors_range_it).next().expect(&format!("must get gate selector for gate {}", i));
+                //     let poly_lde_ref = &setup.polynomial_ldes[selector_idx];
+                //     let poly_lde_part = poly_lde_ref.clone_subset_assuming_bitreversed(
+                //         partition_factor
+                //     )?;
+                //     global_scratch_space.mul_assign(&worker, &poly_lde_part);
+                //     t.add_assign(&worker, &global_scratch_space);
+                // }
 
                 quotient_linearization_challenge.mul_assign(&alpha);
+            }
+
+            if use_gate_selectors {
+                let selector_idx = (&mut selectors_range_it).next().expect(&format!("must get gate selector for gate {}", i));
+                let poly_lde_ref = &setup.polynomial_ldes[selector_idx];
+                let poly_lde_part = poly_lde_ref.clone_subset_assuming_bitreversed(
+                    partition_factor
+                )?;
+                global_scratch_space.mul_assign(&worker, &poly_lde_part);
+                t.add_assign(&worker, &global_scratch_space);
             }
         }
 
@@ -891,7 +902,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
             t_poly_parts_multioracle_tree: third_state.t_poly_parts_multioracle_tree,
             wire_values_at_z: vec![],
             wire_values_at_z_omega: vec![],
-            setup_values_at_z: vec![E::Fr::zero(); setup.setup_ids.len() + setup.gate_selectors_indexes.len()],
+            setup_values_at_z: vec![E::Fr::zero(); setup.setup_ids.len()],
             permutation_polynomials_at_z: vec![],
             gate_selector_polynomials_at_z: vec![],
             grand_product_at_z: E::Fr::zero(),
@@ -1032,7 +1043,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                     if len == 0 {
                         len = p.size();
                     } else {
-                        assert_eq!(p.size(), len);
+                        assert_eq!(p.size(), len, "poly lengths are different!");
                     }
                 }
             }
@@ -1042,7 +1053,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                     if len == 0 {
                         len = p.size();
                     } else {
-                        assert_eq!(p.size(), len);
+                        assert_eq!(p.size(), len, "poly lengths are different!");
                     }
                 }
             }
@@ -1176,6 +1187,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                 self.tree_hasher.clone(),
             );
 
+            println!("Start making FRI oracles");
+
             let oracles = fri_combiner.perform_fri_assuming_bitreversed(
                 &final_aggregate.as_ref(), 
                 prng, 
@@ -1203,12 +1216,13 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
         let mut z_by_omega = z;
         z_by_omega.mul_assign(&domain.generator);
 
-
         // now we need to sort polynomials and gates by
         // - first filter setup polynomials
         // - each setup is opened separately at reference point and required point
         // - then filter witness polys
         // - open them at every required point
+
+        println!("Start making setup opening requests");
 
         let mut setup_opening_requests = vec![];
 
@@ -1245,7 +1259,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
             opening_values.extend_from_slice(&fourth_state.permutation_polynomials_at_z[..]);
             opening_values.extend_from_slice(&fourth_state.gate_selector_polynomials_at_z[..]);
 
-            assert_eq!(setup_values.len(), opening_values.len());
+            assert_eq!(setup_values.len(), opening_values.len(), "number of setup values is not equal to number of opening values");
 
             let request = SetupOpeningRequest {
                 polynomials: setup_poly_refs,
@@ -1257,6 +1271,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
 
             setup_opening_requests.push(request);
         }
+
+        println!("Start making witness opening assignments");
 
         let mut witness_opening_requests = vec![];
 

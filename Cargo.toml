@@ -38,6 +38,7 @@ lazy_static = {version = "1", optional = true}
 blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_const/blake2s/"}
 
 rescue_hash = {git = "https://github.com/shamatar/rescue_hash.git", optional = true }
+poseidon_hash = {path = "../poseidon_hash", optional = true }
 
 hex = "*"
 
@@ -51,7 +52,7 @@ multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []
 nolog = []
-plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const", "rescue_hash"]
+plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const", "rescue_hash", "poseidon_hash"]
 marlin = ["blake2s_simd", "tiny-keccak", "blake2s_const"]
 wasm = ["web-sys"]
 nightly = ["prefetch"]

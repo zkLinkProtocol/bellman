@@ -1,6 +1,8 @@
 use crate::pairing::ff::{Field, PrimeField};
 use rescue_hash::{RescueEngine, RescueHashParams, rescue_hash};
 
+pub use super::poseidon_tree_hash::*;
+
 pub trait BinaryTreeHasher<F: PrimeField>: Sized + Send + Sync + Clone {
     type Output: Sized + Clone + Copy + Send + Sync + PartialEq + Eq; 
 
