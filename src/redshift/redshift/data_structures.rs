@@ -66,7 +66,7 @@ pub struct DoublePointOpeningRequest<'a, F: PrimeField> {
     pub second_opening_values: Vec<F>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RedshiftProof<F: PrimeField, I: Oracle<F>>{
     pub a_opening_value: F,
     pub b_opening_value: F,
@@ -91,6 +91,37 @@ pub struct RedshiftProof<F: PrimeField, I: Oracle<F>>{
     pub t_high_opening_value: F,
     pub batched_FRI_proof: FriProof<F, I>,
     pub commitments: Vec<(Label, I::Commitment)>, 
+}
+
+impl<F: PrimeField, I: Oracle<F>> Clone for RedshiftProof<F, I> {
+
+    fn clone(&self) -> Self {
+        RedshiftProof {
+            a_opening_value: self.a_opening_value.clone(),
+            b_opening_value: self.b_opening_value.clone(),
+            c_opening_value: self.c_opening_value.clone(),
+            c_shifted_opening_value: self.c_shifted_opening_value.clone(),
+            q_l_opening_value: self.q_l_opening_value.clone(),
+            q_r_opening_value: self.q_r_opening_value.clone(),
+            q_o_opening_value: self.q_o_opening_value.clone(),
+            q_m_opening_value: self.q_m_opening_value.clone(),
+            q_c_opening_value: self.q_c_opening_value.clone(),
+            q_add_sel_opening_value: self.q_add_sel_opening_value.clone(),
+            s_id_opening_value: self.s_id_opening_value.clone(),
+            sigma_1_opening_value: self.sigma_1_opening_value.clone(),
+            sigma_2_opening_value: self.sigma_2_opening_value.clone(),
+            sigma_3_opening_value: self.sigma_3_opening_value.clone(),
+            z_1_opening_value: self.z_1_opening_value.clone(),
+            z_2_opening_value: self.z_2_opening_value.clone(),
+            z_1_shifted_opening_value: self.z_1_shifted_opening_value.clone(),
+            z_2_shifted_opening_value: self.z_2_shifted_opening_value.clone(),
+            t_low_opening_value: self.t_low_opening_value.clone(),
+            t_mid_opening_value: self.t_mid_opening_value.clone(),
+            t_high_opening_value: self.t_high_opening_value.clone(),
+            batched_FRI_proof: self.batched_FRI_proof.clone(),
+            commitments: self.commitments.clone(), 
+        }
+    }
 }
 
 

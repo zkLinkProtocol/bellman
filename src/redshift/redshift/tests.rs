@@ -28,7 +28,7 @@ mod test {
     use std::mem;
 
     #[derive(Clone)]
-    struct BenchmarkCircuit<E: Engine>{
+    pub struct BenchmarkCircuit<E: Engine>{
         num_steps: usize,
         a: E::Fr,
         b: E::Fr,
@@ -36,7 +36,7 @@ mod test {
         _marker: std::marker::PhantomData<E>
     }
 
-    fn fibbonacci<F: Field>(a: &F, b: &F, num_steps: usize) -> F {
+    pub fn fibbonacci<F: Field>(a: &F, b: &F, num_steps: usize) -> F {
 
         let mut a = a.clone();
         let mut b = b.clone();
@@ -93,14 +93,14 @@ mod test {
         }
     }
 
-    fn test_redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>>(
+    pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>>(
         a: E::Fr,
         b: E::Fr,
         num_steps: usize,
         fri_params: FriParams,
         oracle_params: I::Params,
         channel_params: T::Params,
-    ) -> Result<bool, SynthesisError>
+    ) -> Result<(bool, RedshiftSetupPrecomputation<E::Fr, I>, RedshiftProof<E::Fr, I>), SynthesisError>
     {
 
         let output = fibbonacci(&a, &b, num_steps);
@@ -118,6 +118,7 @@ mod test {
         circuit.synthesize(&mut test_assembly)?;
         assert!(test_assembly.is_satisfied(false), "some constraints are not satisfied");
         
+        // TODO: setup is never actually used! get rid of this function!
         let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
             &circuit,
             &fri_params,
@@ -134,20 +135,20 @@ mod test {
         )?;
 
         let is_valid = verify_proof::<E, I, T>(
-            proof,
+            proof.clone(),
             &[a, b, output],
             &setup_precomp,
             &fri_params,
             &oracle_params,
             &channel_params,
-        );
+        )?;
 
-        is_valid
+        Ok((is_valid, setup_precomp, proof))
     }
 
     #[test]
-    fn test_redshift_with_blake() {
-
+    pub fn test_redshift_with_blake() 
+    {
         use crate::redshift::IOP::oracle::coset_combining_blake2s_tree::*;
         use crate::redshift::IOP::channel::blake_channel::*;
 
@@ -177,7 +178,7 @@ mod test {
 
         let channel_params = ();
 
-        let res = test_redshift_template::<E, O, T>(
+        let res = redshift_template::<E, O, T>(
             a,
             b,
             num_steps,
@@ -187,7 +188,7 @@ mod test {
         );
 
         match res {
-            Ok(valid) => assert_eq!(valid, true),
+            Ok((valid, _, _)) => assert_eq!(valid, true),
             Err(_) => println!("Some error has been occured!"),
         };       
     }
@@ -231,7 +232,7 @@ mod test {
             _marker: std::marker::PhantomData::<Fr>,
         };
 
-        let res = test_redshift_template::<E, O, T>(
+        let res = redshift_template::<E, O, T>(
             a,
             b,
             num_steps,
@@ -241,7 +242,7 @@ mod test {
         );
 
         match res {
-            Ok(valid) => assert_eq!(valid, true),
+            Ok((valid, _, _)) => assert_eq!(valid, true),
             Err(_) => println!("Some error has been occured!"),
         };       
     }
