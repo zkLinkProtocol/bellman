@@ -263,15 +263,11 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
     let n = input_gates.len() + aux_gates.len();
     let worker = Worker::new();
 
-    println!("here");
-
     let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(n);
     let omegas_bitreversed = &omegas_bitreversed;
 
     let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(n);
     let omegas_inv_bitreversed = &omegas_inv_bitreversed;
-
-    println!("there");
 
     // we need n+1 to be a power of two and can not have n to be power of two
     let required_domain_size = n+1;
@@ -285,17 +281,12 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
     let w_r = Polynomial::<E::Fr, Values>::from_values_unpadded(w_r)?;
     let w_o = Polynomial::<E::Fr, Values>::from_values_unpadded(w_o)?;
 
-    println!("there");
-
     // TODO: replace by ifft_using_bitreversed_ntt_with_partial_reduction
-
     let a_poly = w_l.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
     let b_poly = w_r.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
     let c_poly = w_o.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(&worker, omegas_inv_bitreversed, &E::Fr::one())?;
 
     // polynomials inside of these are values on cosets
-
-    println!("here");
 
     let a_commitment_data = commit_single_poly::<E, _, I>(&a_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
     let b_commitment_data = commit_single_poly::<E, _, I>(&b_poly, n, omegas_bitreversed, &fri_params, oracle_params, &worker)?;
@@ -357,8 +348,6 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
 
         Polynomial::<E::Fr, Values>::from_values(prepadded)?
     };
-
-    println!("here");
 
     let z_2 = {
         let (sigma_1, sigma_2, sigma_3) = 
@@ -534,17 +523,8 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
 
         t_1.mul_assign(&worker, &vanishing_poly_inverse_bitreversed);
 
-        let mut temp = t_1.clone();
-
-        temp.bitreverse_enumeration(&worker);
-
-        let t_poly = temp.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
-    debug_assert!(get_degree::<E::Fr>(&t_poly) <= 3*n);
-
         t_1
     };
-
-    
 
     let z_1_coset_lde_bitreversed = z_1_commitment_data.poly.clone_subset_assuming_bitreversed(partition_factor)?;
     assert!(z_1_coset_lde_bitreversed.size() == required_domain_size*4);
@@ -767,12 +747,6 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
     let l_0_at_z = l_0.evaluate_at(&worker, z);
     let l_n_minus_one_at_z = l_n_minus_one.evaluate_at(&worker, z);
 
-    println!("prover l_0_at_z: {}", l_0_at_z);
-    println!("prover l_n_at_z : {}", l_n_minus_one_at_z);
-    println!("prover inv_vanishing_poly : {}", inverse_vanishing_at_z);
-    println!("prover PI_at_z : {}", PI_at_z);
-    println!("prover alpha : {}", alpha);
-
     // TODO: think twice! Do we really need this additional source of randomness before getting
     // aggregation challenge
     // especially if we are using sponge construction!
@@ -948,8 +922,6 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
 
     let mut z_by_omega = z;
     z_by_omega.mul_assign(&z_1.omega);
-
-    println!("multiplier omega prover: {}", z_1.omega);
 
     let witness_opening_request_at_z = SinglePointOpeningRequest {
         polynomials: vec![

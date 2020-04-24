@@ -108,10 +108,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut coset_idx_range = CosetCombiner::get_coset_idx_for_natural_index(
             natural_first_element_index, initial_domain_size, log_initial_domain_size, collapsing_factor);
 
-        println!("coset: {}-{}", coset_idx_range.start, coset_idx_range.end);
-
-        
-
         //check query cardinality here!
         if upper_layer_queries.iter().any(|x| x.1.indexes() != coset_idx_range) {
             return Ok(false);
@@ -125,11 +121,9 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             let mut argument : Vec<(Label, &F)> = upper_layer_queries.iter().map(|x| (x.0, &x.1.values()[i])).collect();
             let natural_idx = CosetCombiner::get_natural_idx_for_coset_index(
                 coset_idx, initial_domain_size, log_initial_domain_size, collapsing_factor);
-            println!("natural index: {}", natural_idx);
 
             let mut evaluation_point = omega.pow([natural_idx as u64]);
             evaluation_point.mul_assign(&F::multiplicative_generator());
-            println!("verifier ev-p: {}", evaluation_point);
 
             argument.push(("evaluation_point", &evaluation_point));
             let combined_value = upper_layer_combiner(argument).ok_or(SynthesisError::AssignmentMissing)?;
@@ -158,7 +152,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             in queries.into_iter().zip(commitments.iter()).zip(fri_challenges.iter().skip(1)) 
         {
             // TODO: check query cardinality here!
-            println!("On the next iteration!");
 
             //we do also need to check that coset_indexes are consistent with query
             let (temp, elem_tree_idx) = CosetCombiner::get_next_layer_coset_idx_extended(
@@ -168,12 +161,10 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
             assert_eq!(coset_idx_range.len(), coset_size);
 
             if query.indexes() != coset_idx_range {
-                println!("quert index");
                 return Ok(false);
             }
 
             if !<O as Oracle<F>>::verify_query(commitment, query, &oracle_params) {
-                println!("verify query");
                 return Ok(false);
             }
             
@@ -190,17 +181,11 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                 &mut omega_inv,
                 two_inv);
 
-            println!("previous layer elem: {}", previous_layer_element);
-            println!("current elem: {}", query.values()[elem_tree_idx]);
-
             if previous_layer_element != query.values()[elem_tree_idx] {
-                println!("coset value wrong");
                 return Ok(false);
             }
             previous_layer_element = this_layer_element;
         }
-
-        println!("at th end of FRI!");
 
         // finally we need to get expected value from coefficients
         let (coset_idx_range, elem_tree_idx) = CosetCombiner::get_next_layer_coset_idx_extended(
@@ -241,7 +226,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
 
         //let base_omega_idx = bitreverse(coset_idx_range.start, *log_domain_size as usize);
         let mut base_omega_idx = coset_idx_range.start;
-
         //*elem_index = ((*elem_index << collapsing_factor) % *domain_size) >> collapsing_factor;
 
         for wrapping_step in 0..collapsing_factor {
@@ -361,10 +345,6 @@ mod test {
             &oracle_params,
         ).expect("FRI must succeed");
 
-        // upper layer combiner is trivial in our case
-
-        println!("erer");
-
         let proof = FriIop::<Fr, FriSpecificBlake2sTree<Fr>, Blake2sChannel<Fr>>::prototype_into_proof(
             fri_proto,
             &batched_oracle,
@@ -381,12 +361,11 @@ mod test {
             &params,
         );
 
+        // upper layer combiner is trivial in our case
         let upper_layer_combiner = |arr: Vec<(Label, &Fr)>| -> Option<Fr> {
             let res = arr.iter().find(|(l, _)| *l == "starting oracle").map(|(_, c)| (*c).clone());
             res
         };
-
-        println!("Here");
 
         let result = FriIop::<Fr, FriSpecificBlake2sTree<Fr>, Blake2sChannel<Fr>>::verify_proof_queries(
             &proof,

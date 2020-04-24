@@ -193,10 +193,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                                     let omega_idx = base_omega_idx + pair_idx;
                                     let omega_inv = omegas_inv_bitreversed[omega_idx];
 
-                                    // if fri_step == 0 {
-                                    //     println!("idx : {}, divisor: {}", omega_idx, omega_inv);
-                                    // }
-
                                     let f_at_omega = pair[0];
                                     let f_at_minus_omega = pair[1];
                                     let mut v_even_coeffs = f_at_omega;
@@ -225,10 +221,6 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
                     });
                 }
             });
-
-            // if fri_step == 0 {
-            //     println!("values: {:?}", next_values);
-            // }
 
             if fri_step < num_steps - 1 {
                 this_domain_size = next_domain_size;

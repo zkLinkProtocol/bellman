@@ -217,7 +217,7 @@ impl<'a, F: PrimeField, RP: RescueParams<F>> Eq for FriSpecificRescueTree<'a, F,
 pub struct CosetCombinedQuery<F: PrimeField> {
     indexes: Range<usize>,
     values: Vec<F>,
-    path: Vec<F>,
+    pub path: Vec<F>,
 }
 
 

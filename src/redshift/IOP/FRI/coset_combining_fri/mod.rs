@@ -42,7 +42,7 @@ impl<F: PrimeField, I: Oracle<F>> FriProofPrototype<F, I> {
 
 //result of FRI query phase (r iterations)
 //the parameter r is defined in FRI params 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FriProof<F: PrimeField, I: Oracle<F>> {
     //for batched version of FRI
     pub upper_layer_queries: Vec<Vec<(Label, I::Query)>>,
@@ -50,6 +50,18 @@ pub struct FriProof<F: PrimeField, I: Oracle<F>> {
     //excluding the initial one oracle - it is simly the commitment, no need to repeat
     pub commitments: Vec<I::Commitment>,
     pub final_coefficients: Vec<F>,
+}
+
+impl<F: PrimeField, I: Oracle<F>> Clone for FriProof<F, I> {
+
+    fn clone(&self) -> Self {
+        FriProof {
+            upper_layer_queries : self.upper_layer_queries.clone(),
+            queries: self.queries.clone(),
+            commitments: self.commitments.clone(),
+            final_coefficients: self.final_coefficients.clone(),
+        }
+    }
 }
 
 impl<F: PrimeField, I: Oracle<F>> FriProof<F, I> {

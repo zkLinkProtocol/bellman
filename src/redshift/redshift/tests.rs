@@ -13,6 +13,7 @@ mod test {
     use crate::redshift::partial_reduction_field::proth_engine::Transparent252;
     use crate::redshift::partial_reduction_field::proth::Fr;
     use crate::redshift::IOP::oracle::*;
+    use crate::redshift::IOP::oracle::log2_floor;
     use crate::redshift::IOP::channel::*;
     use crate::redshift::fft::cooley_tukey_ntt::*;
 
@@ -115,7 +116,7 @@ mod test {
         // verify that circuit is satifiable
         let mut test_assembly = TestAssembly::new();
         circuit.synthesize(&mut test_assembly)?;
-        println!("test circuit is satisfied: {}", test_assembly.is_satisfied(false));
+        assert!(test_assembly.is_satisfied(false), "some constraints are not satisfied");
         
         let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
             &circuit,
@@ -124,8 +125,6 @@ mod test {
             &channel_params,
         )?;
 
-        println!("before proof");
-
         let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, I, T> (
             &circuit,
             &setup_precomp, 
@@ -133,8 +132,6 @@ mod test {
             &oracle_params,
             &channel_params, 
         )?;
-
-        println!("before verification");
 
         let is_valid = verify_proof::<E, I, T>(
             proof,

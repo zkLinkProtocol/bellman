@@ -7,7 +7,7 @@ use crate::redshift::IOP::oracle::*;
 use crate::redshift::IOP::FRI::coset_combining_fri::*;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RedshiftSetup<F: PrimeField, I: Oracle<F>>{
     pub n: usize,
     pub q_l: I::Commitment,
@@ -22,6 +22,7 @@ pub struct RedshiftSetup<F: PrimeField, I: Oracle<F>>{
     pub sigma_3: I::Commitment,
 }
 
+#[derive(Debug, Clone)]
 pub struct SinglePolySetupData<F: PrimeField, I: Oracle<F>>{
     pub poly: Polynomial<F, Values>,
     pub deg: usize,
@@ -30,13 +31,14 @@ pub struct SinglePolySetupData<F: PrimeField, I: Oracle<F>>{
     pub setup_value: F,
 }
 
+#[derive(Debug, Clone)]
 pub struct SinglePolyCommitmentData<F: PrimeField, I: Oracle<F>>{
     pub poly: Polynomial<F, Values>,
     pub deg: usize,
     pub oracle: I,
 }
 
-// #[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RedshiftSetupPrecomputation<F: PrimeField, I: Oracle<F>>{
     pub q_l_aux: SinglePolySetupData<F, I>,
     pub q_r_aux: SinglePolySetupData<F, I>,
@@ -64,6 +66,7 @@ pub struct DoublePointOpeningRequest<'a, F: PrimeField> {
     pub second_opening_values: Vec<F>,
 }
 
+#[derive(Debug, Clone)]
 pub struct RedshiftProof<F: PrimeField, I: Oracle<F>>{
     pub a_opening_value: F,
     pub b_opening_value: F,

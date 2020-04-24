@@ -121,11 +121,6 @@ where E::Fr : PrimeField
     let l_0_at_z = evaluate_lagrange_poly::<E>(required_domain_size, 0, z);
     let l_n_minus_one_at_z = evaluate_lagrange_poly::<E>(required_domain_size, n - 1, z);
 
-    println!("verifier l_0_at_z: {}", l_0_at_z);
-    println!("verifier l_n_at_z : {}", l_n_minus_one_at_z);
-    println!("verifier inv_vanishing_poly : {}", inverse_vanishing_at_z);
-    println!("verifier alpha : {}", alpha);
-
     let mut PI_at_z = E::Fr::zero();
     for (i, val) in public_inputs.iter().enumerate() {
         if i == 0 {
@@ -140,8 +135,6 @@ where E::Fr : PrimeField
             PI_at_z.add_assign(&temp);
         }
     }
-
-    println!("verifier PI_at_z : {}", PI_at_z);
 
     let t_low_at_z = proof.t_low_opening_value;
     let t_mid_at_z = proof.t_mid_opening_value;
@@ -292,15 +285,11 @@ where E::Fr : PrimeField
         return Ok(false);
     }
 
-    println!("check passed!");
-
     let aggregation_challenge = channel.produce_field_element_challenge();
 
     let domain_size = n;
     let domain = Domain::<E::Fr>::new_for_size((domain_size) as u64)?;
     let omega = domain.generator;
-
-    println!("verifier aggregation challenge: {}", aggregation_challenge);
 
     let upper_layer_combiner = |arr: Vec<(Label, &E::Fr)>| -> Option<E::Fr> {
         fn find_poly_value_at_omega<T>(label: Label, arr: &Vec<(Label, T)>) -> Option<&T> {
@@ -410,13 +399,11 @@ where E::Fr : PrimeField
         ];
 
         let (mut res1, mut alpha1) = combine_at_single_point(pairs, &evaluation_point, &z, &aggregation_challenge);
-        println!("verifier single point: {}", res1);
 
         // combine witness polynomials z_1, z_2, c which are opened at z and z * omega
 
         let mut z_shifted = z.clone();
         z_shifted.mul_assign(&omega);
-        println!("multiplier omega verifier: {}", omega);
 
         let witness_triples : Vec<(&E::Fr, E::Fr, E::Fr)> = vec![
             (find_poly_value_at_omega("z_1", &arr)?, z_1_at_z, z_1_shifted_at_z),
@@ -426,10 +413,6 @@ where E::Fr : PrimeField
 
         let (mut res2, alpha2) = combine_at_two_points(witness_triples, &evaluation_point, &z, &z_shifted, &aggregation_challenge);
 
-        let mut check = res2.clone();
-        check.mul_assign(&alpha1);
-        check.add_assign(&res1);
-        println!("final aggregation''': {}", check);
         // finally combine setup polynomials q_l, q_r, q_o, q_m, q_c, q_add_sel, s_id, sigma_1, sigma_2, sigma_3
         // which are opened at z and z_setup
         // in current implementation we assume that setup point is the same for all circuit-defining polynomials!
@@ -464,9 +447,6 @@ where E::Fr : PrimeField
         res3.mul_assign(&alpha1);
         res1.add_assign(&res3);
         
-        println!("final aggregation: {}", res1);
-        println!("combiner success!");
-
         Some(res1)
     };
 
@@ -492,8 +472,6 @@ where E::Fr : PrimeField
         fri_params,
     ); 
     let natural_first_element_indexes = (0..fri_params.R).map(|_| channel.produce_uint_challenge() as usize % (domain_size * fri_params.lde_factor)).collect();
-
-    println!("before FRI check!");
 
     let is_valid = FriIop::<E::Fr, I, T>::verify_proof_queries(
         &proof.batched_FRI_proof,
