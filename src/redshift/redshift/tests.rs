@@ -1,156 +1,161 @@
+use crate::redshift::redshift::cs::*;
+use crate::redshift::redshift::generators::*;
+use crate::redshift::redshift::prover::*;
+use crate::redshift::redshift::verifier::*;
+use crate::redshift::redshift::data_structures::*;
+use crate::redshift::redshift::utils::*;
+
+use crate::redshift::IOP::FRI::coset_combining_fri::*;
+use crate::redshift::IOP::FRI::coset_combining_fri::precomputation::*;
+use crate::redshift::IOP::oracle::*;
+use crate::redshift::IOP::oracle::log2_floor;
+use crate::redshift::IOP::channel::*;
+use crate::redshift::fft::cooley_tukey_ntt::*;
+
+use crate::pairing::ff::{Field, PrimeField};
+use crate::pairing::{Engine};
+
+use crate::{SynthesisError};
+use std::marker::PhantomData;
+use crate::multicore::*;
+
+use crate::redshift::redshift::test_assembly::*;
+use std::mem;
+
+#[derive(Clone)]
+pub struct BenchmarkCircuit<E: Engine>{
+    num_steps: usize,
+    a: E::Fr,
+    b: E::Fr,
+    output: E::Fr,
+    _marker: std::marker::PhantomData<E>
+}
+
+pub fn fibbonacci<F: Field>(a: &F, b: &F, num_steps: usize) -> F {
+
+    let mut a = a.clone();
+    let mut b = b.clone();
+
+    for _ in 0..num_steps {
+        b.add_assign(&a);
+        std::mem::swap(&mut a, &mut b);
+    }
+
+    a
+}
+
+impl<E: Engine> Circuit<E> for BenchmarkCircuit<E> {
+    fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+        // yeah, fibonacci...
+
+        let one = E::Fr::one();
+        let mut negative_one = one;
+        negative_one.negate();
+        
+        let mut a = cs.alloc_input(|| {
+            Ok(self.a.clone())
+        })?;
+
+        let mut b = cs.alloc_input(|| {
+            Ok(self.b.clone())
+        })?;
+
+        let mut a_value = self.a.clone();
+        let mut b_value = self.b.clone();
+
+        for _ in 0..self.num_steps {
+
+            b_value.add_assign(&a_value);
+            
+            let temp = cs.alloc(|| {
+                Ok(b_value.clone())
+            })?;
+
+            cs.enforce_zero_3((a, b, temp), (one, one, negative_one))?;
+            std::mem::swap(&mut a_value, &mut b_value);
+
+            b = a;
+            a = temp;
+        }
+
+        let output = cs.alloc_input(|| {
+            Ok(self.output.clone())
+        })?;
+
+        cs.enforce_zero_2((a, output), (one, negative_one))?;
+
+        Ok(())
+    }
+}
+
+pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>>(
+    a: E::Fr,
+    b: E::Fr,
+    num_steps: usize,
+    fri_params: FriParams,
+    oracle_params: I::Params,
+    channel_params: T::Params,
+) -> Result<(bool, RedshiftSetupPrecomputation<E::Fr, I>, RedshiftProof<E::Fr, I>), SynthesisError>
+{
+
+    let output = fibbonacci(&a, &b, num_steps);
+    
+    let circuit = BenchmarkCircuit::<E> {
+        num_steps,
+        a,
+        b,
+        output,
+        _marker: std::marker::PhantomData::<E>
+    };
+
+    // verify that circuit is satifiable
+    let mut test_assembly = TestAssembly::new();
+    circuit.synthesize(&mut test_assembly)?;
+    assert!(test_assembly.is_satisfied(false), "some constraints are not satisfied");
+    
+    // TODO: setup is never actually used! get rid of this function!
+    let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
+        &circuit,
+        &fri_params,
+        &oracle_params,
+        &channel_params,
+    )?;
+
+    let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, I, T> (
+        &circuit,
+        &setup_precomp, 
+        &fri_params,
+        &oracle_params,
+        &channel_params, 
+    )?;
+
+    let is_valid = verify_proof::<E, I, T>(
+        proof.clone(),
+        &[a, b, output],
+        &setup_precomp,
+        &fri_params,
+        &oracle_params,
+        &channel_params,
+    )?;
+
+    Ok((is_valid, setup_precomp, proof))
+}
+
+
 #[cfg(test)]
 mod test {
-    use crate::redshift::redshift::cs::*;
-    use crate::redshift::redshift::generators::*;
-    use crate::redshift::redshift::prover::*;
-    use crate::redshift::redshift::verifier::*;
-    use crate::redshift::redshift::data_structures::*;
-    use crate::redshift::redshift::utils::*;
-
-    use crate::redshift::IOP::FRI::coset_combining_fri::*;
-    use crate::redshift::IOP::FRI::coset_combining_fri::precomputation::*;
-    use crate::redshift::partial_reduction_field::*;
-    use crate::redshift::partial_reduction_field::proth_engine::Transparent252;
-    use crate::redshift::partial_reduction_field::proth::Fr;
-    use crate::redshift::IOP::oracle::*;
-    use crate::redshift::IOP::oracle::log2_floor;
-    use crate::redshift::IOP::channel::*;
-    use crate::redshift::fft::cooley_tukey_ntt::*;
-
-    use crate::pairing::ff::{Field, PrimeField};
-    use crate::pairing::{Engine};
-
-    use crate::{SynthesisError};
-    use std::marker::PhantomData;
-    use crate::multicore::*;
-
-    use crate::redshift::redshift::test_assembly::*;
-    use std::mem;
-
-    #[derive(Clone)]
-    pub struct BenchmarkCircuit<E: Engine>{
-        num_steps: usize,
-        a: E::Fr,
-        b: E::Fr,
-        output: E::Fr,
-        _marker: std::marker::PhantomData<E>
-    }
-
-    pub fn fibbonacci<F: Field>(a: &F, b: &F, num_steps: usize) -> F {
-
-        let mut a = a.clone();
-        let mut b = b.clone();
-
-        for _ in 0..num_steps {
-            b.add_assign(&a);
-            std::mem::swap(&mut a, &mut b);
-        }
-
-        a
-    }
-
-    impl<E: Engine> Circuit<E> for BenchmarkCircuit<E> {
-        fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-            // yeah, fibonacci...
-
-            let one = E::Fr::one();
-            let mut negative_one = one;
-            negative_one.negate();
-            
-            let mut a = cs.alloc_input(|| {
-                Ok(self.a.clone())
-            })?;
-
-            let mut b = cs.alloc_input(|| {
-                Ok(self.b.clone())
-            })?;
-
-            let mut a_value = self.a.clone();
-            let mut b_value = self.b.clone();
-
-            for _ in 0..self.num_steps {
-
-                b_value.add_assign(&a_value);
-               
-                let temp = cs.alloc(|| {
-                    Ok(b_value.clone())
-                })?;
-
-                cs.enforce_zero_3((a, b, temp), (one, one, negative_one))?;
-                std::mem::swap(&mut a_value, &mut b_value);
-
-                b = a;
-                a = temp;
-            }
-
-            let output = cs.alloc_input(|| {
-                Ok(self.output.clone())
-            })?;
-
-            cs.enforce_zero_2((a, output), (one, negative_one))?;
-
-            Ok(())
-        }
-    }
-
-    pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = I::Commitment>>(
-        a: E::Fr,
-        b: E::Fr,
-        num_steps: usize,
-        fri_params: FriParams,
-        oracle_params: I::Params,
-        channel_params: T::Params,
-    ) -> Result<(bool, RedshiftSetupPrecomputation<E::Fr, I>, RedshiftProof<E::Fr, I>), SynthesisError>
-    {
-
-        let output = fibbonacci(&a, &b, num_steps);
-        
-        let circuit = BenchmarkCircuit::<E> {
-            num_steps,
-            a,
-            b,
-            output,
-            _marker: std::marker::PhantomData::<E>
-        };
-
-        // verify that circuit is satifiable
-        let mut test_assembly = TestAssembly::new();
-        circuit.synthesize(&mut test_assembly)?;
-        assert!(test_assembly.is_satisfied(false), "some constraints are not satisfied");
-        
-        // TODO: setup is never actually used! get rid of this function!
-        let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
-            &circuit,
-            &fri_params,
-            &oracle_params,
-            &channel_params,
-        )?;
-
-        let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, I, T> (
-            &circuit,
-            &setup_precomp, 
-            &fri_params,
-            &oracle_params,
-            &channel_params, 
-        )?;
-
-        let is_valid = verify_proof::<E, I, T>(
-            proof.clone(),
-            &[a, b, output],
-            &setup_precomp,
-            &fri_params,
-            &oracle_params,
-            &channel_params,
-        )?;
-
-        Ok((is_valid, setup_precomp, proof))
-    }
 
     #[test]
     pub fn test_redshift_with_blake() 
     {
         use crate::redshift::IOP::oracle::coset_combining_blake2s_tree::*;
         use crate::redshift::IOP::channel::blake_channel::*;
+
+        use crate::redshift::partial_reduction_field::*;
+        use crate::redshift::partial_reduction_field::proth_engine::Transparent252;
+        use crate::redshift::partial_reduction_field::proth::Fr;
+
+        use super::*;
 
         type E = Transparent252;
         type O = FriSpecificBlake2sTree<Fr>;
@@ -201,6 +206,8 @@ mod test {
         use crate::redshift::IOP::hashes::rescue::bn256_rescue_params::BN256Rescue;
         use crate::redshift::IOP::hashes::rescue::RescueParams;
         use crate::pairing::bn256::Fr as Fr;
+
+        use super::*;
 
         type E = crate::pairing::bn256::Bn256;
         type O<'a> = FriSpecificRescueTree<'a, Fr, BN256Rescue>;
