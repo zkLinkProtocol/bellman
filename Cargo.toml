@@ -19,8 +19,10 @@ futures = "0.1"
 cfg-if = "0.1"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
-# pairing = {package = "pairing_ce", version = "0.19" }
-pairing = {package = "pairing_ce", git = "https://github.com/matter-labs/pairing.git", branch = "affine-ops", rev = "af828bd2fb1c83c49fe202a0b2b3cc5d177d4d18" }
+#pairing = {package = "pairing_ce", version = "0.19" }
+pairing = {package = "pairing_ce", git = "https://github.com/matter-labs/pairing.git", rev = "af828bd" }
+
+
 byteorder = "1"
 
 futures-cpupool = {version = "0.1", optional = true}
