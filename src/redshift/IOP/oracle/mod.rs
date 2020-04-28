@@ -33,6 +33,8 @@ pub trait IopQuery<F: PrimeField>: 'static + PartialEq + Eq + Clone + std::fmt::
     // to protect orselves we will remember the size of oracle from which the query was borrowed 
     //and then compare it explicitely against the size of corresponding oracke during verify_query protocol
     // fn card(&self) -> usize;
+
+    // used in serialization
 }
 
 pub type Label = &'static str;

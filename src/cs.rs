@@ -50,6 +50,12 @@ pub enum Index {
 #[derive(Clone)]
 pub struct LinearCombination<E: Engine>(pub(crate) Vec<(Variable, E::Fr)>);
 
+impl<E: Engine> Default for LinearCombination<E> {
+    fn default() -> Self {
+        LinearCombination(vec![])
+    }
+}
+
 impl<E: Engine> AsRef<[(Variable, E::Fr)]> for LinearCombination<E> {
     fn as_ref(&self) -> &[(Variable, E::Fr)] {
         &self.0

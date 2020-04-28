@@ -1,3 +1,5 @@
+use crate::pairing::GroupDecodingError;
+
 macro_rules! transparent_engine_impl {
     (
         $engine:ident,
@@ -192,6 +194,14 @@ macro_rules! transparent_engine_impl {
 
             fn from_xy_unchecked(x: Self::Base, y: Self::Base) -> Self {
                 <$fr as crate::ff::Field>::zero()
+            }
+
+            fn as_xy(&self) -> (&Self::Base, &Self::Base) {
+                unimplemented!();
+            }
+
+            fn from_xy_checked(x: Self::Base, y: Self::Base) -> Result<Self, pairing::GroupDecodingError> {
+                unimplemented!();
             }
         }
 

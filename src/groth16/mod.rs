@@ -13,8 +13,6 @@ use std::io::{self, Read, Write};
 use std::sync::Arc;
 use byteorder::{BigEndian, WriteBytesExt, ReadBytesExt};
 
-#[cfg(test)]
-mod tests;
 
 mod generator;
 mod prover;

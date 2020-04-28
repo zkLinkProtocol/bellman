@@ -37,15 +37,13 @@ mod group;
 mod source;
 mod multiexp;
 
-#[cfg(test)]
-mod tests;
 
 cfg_if! {
     if #[cfg(feature = "multicore")] {
         #[cfg(feature = "wasm")]
         compile_error!("Multicore feature is not yet compatible with wasm target arch");
 
-        mod multicore;
+        pub mod multicore;
         mod worker {
             pub use crate::multicore::*;
         }

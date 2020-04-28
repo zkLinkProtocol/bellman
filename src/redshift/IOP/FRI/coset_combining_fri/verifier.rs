@@ -196,6 +196,8 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut expected_value_from_coefficients = F::zero();
         let mut power = F::one();
         let mut evaluation_point = omega.pow([(elem_index) as u64]);
+
+        // TODO: investigate why this additional multiplication by generator is required
         evaluation_point.mul_assign(&F::multiplicative_generator());
 
         for c in final_coefficients.iter() {
@@ -224,9 +226,7 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let mut this_level_values = Vec::with_capacity(coset_size/2);
         let mut next_level_values = vec![F::zero(); coset_size / 2];
 
-        //let base_omega_idx = bitreverse(coset_idx_range.start, *log_domain_size as usize);
         let mut base_omega_idx = coset_idx_range.start;
-        //*elem_index = ((*elem_index << collapsing_factor) % *domain_size) >> collapsing_factor;
 
         for wrapping_step in 0..collapsing_factor {
             let inputs = if wrapping_step == 0 {

@@ -105,7 +105,7 @@ where I::Query : ToStream<F, (CosetSize, OracleHeight)>
         
         let mut num_of_iters = log2_floor(fri_params.initial_degree_plus_one.get() / fri_params.final_degree_plus_one) / fri_params.collapsing_factor;
         // we do not count the very first and the last iterations
-        num_of_iters -= 2;
+        num_of_iters -= 1;
        
         self.commitments.to_stream(container, num_of_iters as usize);
         self.final_coefficients.to_stream(container, fri_params.final_degree_plus_one);

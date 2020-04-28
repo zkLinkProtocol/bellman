@@ -1778,12 +1778,84 @@ impl<'a, E: Engine, C: crate::Circuit<E>> PlonkCircuit<E> for AdaptorCircuit<'a,
 
 #[test]
 fn transpile_xor_using_new_adaptor() {
-    use crate::tests::XORDemo;
     use crate::cs::Circuit;
     use crate::pairing::bn256::Bn256;
     use super::test_assembly::*;
     // use crate::plonk::plonk::generator::*;
     // use crate::plonk::plonk::prover::*;
+
+    pub(crate) struct XORDemo<E: Engine> {
+        pub(crate) a: Option<bool>,
+        pub(crate) b: Option<bool>,
+        pub(crate) _marker: PhantomData<E>
+    }
+
+    impl<E: Engine> Circuit<E> for XORDemo<E> {
+        fn synthesize<CS: ConstraintSystem<E>>(
+            self,
+            cs: &mut CS
+        ) -> Result<(), SynthesisError>
+        {
+            let a_var = cs.alloc(|| "a", || {
+                if self.a.is_some() {
+                    if self.a.unwrap() {
+                        Ok(E::Fr::one())
+                    } else {
+                        Ok(E::Fr::zero())
+                    }
+                } else {
+                    Err(SynthesisError::AssignmentMissing)
+                }
+            })?;
+
+            cs.enforce(
+                || "a_boolean_constraint",
+                |lc| lc + CS::one() - a_var,
+                |lc| lc + a_var,
+                |lc| lc
+            );
+
+            let b_var = cs.alloc(|| "b", || {
+                if self.b.is_some() {
+                    if self.b.unwrap() {
+                        Ok(E::Fr::one())
+                    } else {
+                        Ok(E::Fr::zero())
+                    }
+                } else {
+                    Err(SynthesisError::AssignmentMissing)
+                }
+            })?;
+
+            cs.enforce(
+                || "b_boolean_constraint",
+                |lc| lc + CS::one() - b_var,
+                |lc| lc + b_var,
+                |lc| lc
+            );
+
+            let c_var = cs.alloc_input(|| "c", || {
+                if self.a.is_some() && self.b.is_some() {
+                    if self.a.unwrap() ^ self.b.unwrap() {
+                        Ok(E::Fr::one())
+                    } else {
+                        Ok(E::Fr::zero())
+                    }
+                } else {
+                    Err(SynthesisError::AssignmentMissing)
+                }
+            })?;
+
+            cs.enforce(
+                || "c_xor_constraint",
+                |lc| lc + a_var + a_var,
+                |lc| lc + b_var,
+                |lc| lc + a_var + b_var - c_var
+            );
+
+            Ok(())
+        }
+    }
 
     let c = XORDemo::<Bn256> {
         a: None,

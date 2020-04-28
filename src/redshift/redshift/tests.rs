@@ -92,9 +92,9 @@ pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = 
     a: E::Fr,
     b: E::Fr,
     num_steps: usize,
-    fri_params: FriParams,
-    oracle_params: I::Params,
-    channel_params: T::Params,
+    fri_params: &FriParams,
+    oracle_params: &I::Params,
+    channel_params: &T::Params,
 ) -> Result<(bool, RedshiftSetupPrecomputation<E::Fr, I>, RedshiftProof<E::Fr, I>), SynthesisError>
 {
 
@@ -116,26 +116,26 @@ pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = 
     // TODO: setup is never actually used! get rid of this function!
     let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
         &circuit,
-        &fri_params,
-        &oracle_params,
-        &channel_params,
+        fri_params,
+        oracle_params,
+        channel_params,
     )?;
 
     let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, I, T> (
         &circuit,
         &setup_precomp, 
-        &fri_params,
-        &oracle_params,
-        &channel_params, 
+        fri_params,
+        oracle_params,
+        channel_params, 
     )?;
 
     let is_valid = verify_proof::<E, I, T>(
         proof.clone(),
         &[a, b, output],
         &setup_precomp,
-        &fri_params,
-        &oracle_params,
-        &channel_params,
+        fri_params,
+        oracle_params,
+        channel_params,
     )?;
 
     Ok((is_valid, setup_precomp, proof))
@@ -187,9 +187,9 @@ mod test {
             a,
             b,
             num_steps,
-            fri_params,
-            oracle_params,
-            channel_params,
+            &fri_params,
+            &oracle_params,
+            &channel_params,
         );
 
         match res {
@@ -243,9 +243,9 @@ mod test {
             a,
             b,
             num_steps,
-            fri_params,
-            oracle_params,
-            channel_params,
+            &fri_params,
+            &oracle_params,
+            &channel_params,
         );
 
         match res {
