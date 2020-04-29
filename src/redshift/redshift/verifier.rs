@@ -186,7 +186,6 @@ where E::Fr : PrimeField
         //inverse_vanishing_at_z.mul_assign(&alpha);
 
         res.mul_assign(&inverse_vanishing_at_z);
-
         res
     };
 
@@ -222,7 +221,6 @@ where E::Fr : PrimeField
         inverse_vanishing_at_z.mul_assign(&alpha);
 
         res.mul_assign(&inverse_vanishing_at_z);
-
         t_1.add_assign(&res);
     }
 
@@ -252,7 +250,6 @@ where E::Fr : PrimeField
         inverse_vanishing_at_z.mul_assign(&alpha);
 
         res.mul_assign(&inverse_vanishing_at_z);
-
         t_1.add_assign(&res);
     }
 
@@ -264,7 +261,6 @@ where E::Fr : PrimeField
         inverse_vanishing_at_z.mul_assign(&alpha);
 
         res.mul_assign(&inverse_vanishing_at_z);
-
         t_1.add_assign(&res);
     }
 
@@ -276,7 +272,6 @@ where E::Fr : PrimeField
         inverse_vanishing_at_z.mul_assign(&alpha);
 
         res.mul_assign(&inverse_vanishing_at_z);
-
         t_1.add_assign(&res);
     }
 
@@ -287,7 +282,8 @@ where E::Fr : PrimeField
 
     let aggregation_challenge = channel.produce_field_element_challenge();
 
-    let domain_size = n;
+    // NB!
+    let domain_size = (n+1);
     let domain = Domain::<E::Fr>::new_for_size((domain_size) as u64)?;
     let omega = domain.generator;
 
@@ -323,6 +319,8 @@ where E::Fr : PrimeField
             temp.sub_assign(x_1);
             temp = temp.inverse().expect("must exist");
             res.mul_assign(&temp);
+
+            println!("at single points: {}", res);
 
             (res, aggr_mult)
         }
@@ -382,11 +380,16 @@ where E::Fr : PrimeField
             common_denominator.add_assign(&t_1);
             
             res.mul_assign(&common_denominator.inverse().expect("must exist"));
+
+            println!("first sum: {}", res);
             (res, aggr_mult)
 
         }
 
         let evaluation_point = find_poly_value_at_omega("evaluation_point", &arr)?;
+
+        println!("ev_p: {}", evaluation_point);
+        println!("aggregation challenge: {}", aggregation_challenge);
 
         // combine polynomials a, b, t_low, t_mid, t_high,
         // which are opened only at z
@@ -471,6 +474,7 @@ where E::Fr : PrimeField
         &mut channel,
         fri_params,
     ); 
+    
     let natural_first_element_indexes = (0..fri_params.R).map(|_| channel.produce_uint_challenge() as usize % (domain_size * fri_params.lde_factor)).collect();
 
     let is_valid = FriIop::<E::Fr, I, T>::verify_proof_queries(

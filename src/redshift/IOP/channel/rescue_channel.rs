@@ -53,12 +53,12 @@ where F: PrimeField, RP: RescueParams<F> {
 
                 let repr = element.into_repr();
                 if o.len() == Self::REP_SIZE {
-                    repr.write_be(o).expect("should write");       
+                    repr.write_le(o).expect("should write");       
                 }
                 else {
                     //because rust sucks!
                     let mut scratch_space = [0u8; 32];
-                    repr.write_be(& mut scratch_space[..]).expect("should write");  
+                    repr.write_le(& mut scratch_space[..]).expect("should write");  
                     o.copy_from_slice(&scratch_space[0..o.len()]);  
                 }
             }

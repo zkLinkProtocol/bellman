@@ -1018,7 +1018,7 @@ pub fn prove_with_setup_precomputed<E: Engine, C: Circuit<E>,
     )?;
 
     // now we need to generate FRI query challenges!
-    let domain_size = n * fri_params.lde_factor;
+    let domain_size = (n+1) * fri_params.lde_factor;
     let natural_first_element_indexes = (0..fri_params.R).map(|_| channel.produce_uint_challenge() as usize % domain_size).collect();
     let batched_oracle = BatchedOracle::create(vec![
         // witness polynomials

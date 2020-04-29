@@ -72,7 +72,9 @@ impl<'a, F: PrimeField, I: Oracle<F>> BatchedOracle<'a, F, I>
 
     pub fn verify_query(commitment: &Vec<(Label, I::Commitment)>, query: &Vec<(Label, I::Query)>, params: &I::Params) -> bool {
         for (label, sub_query) in query.iter() {
+
             let sub_commitment = commitment.iter().find(|(l, c)| l == label);
+           
             let result = match sub_commitment {
                 None => false,
                 Some((l,c)) => I::verify_query(c, sub_query, params),
