@@ -10,6 +10,10 @@ use crate::ff::{PrimeField};
 
 pub mod bn256_rescue_params;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+pub(crate) static NUM_RESCUE_PERMUTATIONS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 
 pub trait RescueParams<F: PrimeField> : Sync {
     
@@ -173,6 +177,7 @@ impl<F: PrimeField, RP: RescueParams<F>> Rescue<F, RP> {
                 }
 
                 // We've already absorbed as many elements as we can
+                NUM_RESCUE_PERMUTATIONS_COUNTER.fetch_add(1, Ordering::SeqCst);
                 let _ = rescue_duplex(&mut self.state, input, params);
                 self.sponge = SpongeState::absorb(val);
             }
@@ -187,6 +192,7 @@ impl<F: PrimeField, RP: RescueParams<F>> Rescue<F, RP> {
         loop {
             match self.sponge {
                 SpongeState::Absorbing(ref mut input) => {
+                    NUM_RESCUE_PERMUTATIONS_COUNTER.fetch_add(1, Ordering::SeqCst);
                     self.sponge = SpongeState::Squeezing(rescue_duplex(
                         &mut self.state,
                         input,

@@ -22,6 +22,10 @@ use crate::multicore::*;
 use crate::redshift::redshift::test_assembly::*;
 use std::mem;
 
+use std::time::{Duration, Instant};
+use crate::redshift::IOP::hashes::rescue::NUM_RESCUE_PERMUTATIONS_COUNTER;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 #[derive(Clone)]
 pub struct BenchmarkCircuit<E: Engine>{
     num_steps: usize,
@@ -114,13 +118,18 @@ pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = 
     assert!(test_assembly.is_satisfied(false), "some constraints are not satisfied");
     
     // TODO: setup is never actually used! get rid of this function!
+    
+    let now = Instant::now();
     let (_setup, setup_precomp) = setup_with_precomputations::<E, BenchmarkCircuit<E>, I, T>(
         &circuit,
         fri_params,
         oracle_params,
         channel_params,
     )?;
+    
+    println!("SETUP PRECOMPUTATION took {}s", now.elapsed().as_secs());
 
+    let now = Instant::now();
     let proof = prove_with_setup_precomputed::<E, BenchmarkCircuit<E>, I, T> (
         &circuit,
         &setup_precomp, 
@@ -128,7 +137,11 @@ pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = 
         oracle_params,
         channel_params, 
     )?;
+    println!("PROOF took {}s", now.elapsed().as_secs());
+    println!("NUM OF RESCUE PERMUTATIONS in PROVER: {}", NUM_RESCUE_PERMUTATIONS_COUNTER.load(Ordering::SeqCst));
 
+    NUM_RESCUE_PERMUTATIONS_COUNTER.store(0, Ordering::SeqCst);
+    let now = Instant::now();
     let is_valid = verify_proof::<E, I, T>(
         proof.clone(),
         &[a, b, output],
@@ -137,6 +150,9 @@ pub fn redshift_template<E: Engine, I: Oracle<E::Fr>, T: Channel<E::Fr, Input = 
         oracle_params,
         channel_params,
     )?;
+    
+    println!("PROOF VERIFICATION took {}s", now.elapsed().as_secs());
+    println!("NUM OF RESCUE PERMUTATIONS in VERIFIER: {}", NUM_RESCUE_PERMUTATIONS_COUNTER.load(Ordering::SeqCst));
 
     Ok((is_valid, setup_precomp, proof))
 }
@@ -216,7 +232,7 @@ mod test {
         // prepare parameters
         let a = Fr::one();
         let b = Fr::one();
-        let num_steps = 10;
+        let num_steps = 1000000;
 
         let fri_params = FriParams {
             initial_degree_plus_one: std::cell::Cell::new(0),

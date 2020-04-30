@@ -15,7 +15,7 @@ pub struct Bn256PoseidonParams {
     pub(crate) round_constants: Vec<bn256::Fr>,
     pub(crate) mds_matrix: Vec<bn256::Fr>,
     pub(crate) security_level: u32,
-    pub(crate) sbox: QuinticSBox<bn256::Bn256>,
+    pub(crate) sbox: QuinticSBox<bn256::Fr>,
 }
 
 
@@ -23,14 +23,14 @@ pub const GH_FIRST_BLOCK: &'static [u8; 64]
           = b"096b36a5804bfacef1691e173c366a47ff5ba84a44f26ddd7e8d9f79d5b42df0";
 
 
-fn batch_inversion<E: Engine>(v: &mut [E::Fr]) {
+fn batch_inversion<F: PrimeField>(v: &mut [F]) {
     // Montgomery’s Trick and Fast Implementation of Masked AES
     // Genelle, Prouff and Quisquater
     // Section 3.2
 
     // First pass: compute [a, ab, abc, ...]
     let mut prod = Vec::with_capacity(v.len());
-    let mut tmp = E::Fr::one();
+    let mut tmp = F::one();
     for g in v.iter()
         // Ignore zero elements
         .filter(|g| !g.is_zero())
@@ -49,7 +49,7 @@ fn batch_inversion<E: Engine>(v: &mut [E::Fr]) {
                     // Ignore normalized elements
                     .filter(|g| !g.is_zero())
                     // Backwards, skip last element, fill in one for last term.
-                    .zip(prod.into_iter().rev().skip(1).chain(Some(E::Fr::one())))
+                    .zip(prod.into_iter().rev().skip(1).chain(Some(F::one())))
     {
         // tmp := tmp * g.z; g.z := tmp * s = 1/z
         let mut newtmp = tmp;
@@ -63,10 +63,10 @@ fn batch_inversion<E: Engine>(v: &mut [E::Fr]) {
 
 // For simplicity we'll not generate a matrix using a way from the paper and sampling
 // an element with some zero MSBs and instead just sample and retry
-fn generate_mds_matrix<E: Engine, R: Rng>(t: u32, rng: &mut R) -> Vec<E::Fr> {
+fn generate_mds_matrix<Fr: PrimeField, R: Rng>(t: u32, rng: &mut R) -> Vec<Fr> {
     loop {
-        let x: Vec<E::Fr> = (0..t).map(|_| rng.gen()).collect();
-        let y: Vec<E::Fr> = (0..t).map(|_| rng.gen()).collect();
+        let x: Vec<Fr> = (0..t).map(|_| rng.gen()).collect();
+        let y: Vec<Fr> = (0..t).map(|_| rng.gen()).collect();
 
         let mut invalid = false;
 
@@ -125,7 +125,7 @@ fn generate_mds_matrix<E: Engine, R: Rng>(t: u32, rng: &mut R) -> Vec<E::Fr> {
         }
 
         // by previous checks we can be sure in uniqueness and perform subtractions easily
-        let mut mds_matrix = vec![E::Fr::zero(); (t*t) as usize];
+        let mut mds_matrix = vec![Fr::zero(); (t*t) as usize];
         for (i, x) in x.into_iter().enumerate() {
             for (j, y) in y.iter().enumerate() {
                 let place_into = i*(t as usize) + j;
@@ -136,7 +136,7 @@ fn generate_mds_matrix<E: Engine, R: Rng>(t: u32, rng: &mut R) -> Vec<E::Fr> {
         }
 
         // now we need to do the inverse
-        batch_inversion::<E>(&mut mds_matrix[..]);
+        batch_inversion::<Fr>(&mut mds_matrix[..]);
 
         return mds_matrix;
     }
@@ -216,7 +216,7 @@ impl Bn256PoseidonParams {
                 ChaChaRng::from_seed(&seed)
             };
 
-            generate_mds_matrix::<bn256::Bn256, _>(state_width, &mut rng)
+            generate_mds_matrix::<bn256::Fr, _>(state_width, &mut rng)
         };
 
         Self {
@@ -233,8 +233,8 @@ impl Bn256PoseidonParams {
 }
 
 
-impl PoseidonHashParams<bn256::Bn256> for Bn256PoseidonParams {
-    type SBox = QuinticSBox<bn256::Bn256>;
+impl PoseidonHashParams<bn256::Fr> for Bn256PoseidonParams {
+    type SBox = QuinticSBox<bn256::Fr>;
 
     fn capacity(&self) -> u32 {
         self.c

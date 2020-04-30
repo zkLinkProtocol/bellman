@@ -17,6 +17,7 @@ rand = "0.4"
 bit-vec = "0.4.4"
 futures = "0.1"
 cfg-if = "0.1"
+global_counter = "0.1.4"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
 #pairing = {package = "pairing_ce", version = "0.19" }
@@ -42,6 +43,8 @@ num = {package = "num", version = "0.2.1"}
 blake2s_simd = {version = "0.5", optional = true}
 blake2s_const = {version = "0.6", optional = true, path = "./src/redshift/IOP/hashes/blake2_const/blake2s"}
 
+
+
 [features]
 default = ["multicore", "redshift"]
 multicore = ["futures-cpupool", "num_cpus", "crossbeam"]
@@ -51,3 +54,4 @@ redshift = ["lazy_static", "blake2s_simd", "blake2s_const"]
 wasm = ["web-sys"]
 nightly = ["prefetch"]
 #derive_serde = ["pairing/derive_serde"]
+

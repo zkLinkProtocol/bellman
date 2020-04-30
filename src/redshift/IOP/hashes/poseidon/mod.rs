@@ -9,17 +9,17 @@ pub mod params;
 mod specialization;
 
 
-pub trait SBox<E: Engine>: Sized + Clone {
-    fn apply(&self, elements: &mut [E::Fr]);
+pub trait SBox<Fr: PrimeField>: Sized + Clone {
+    fn apply(&self, elements: &mut [Fr]);
 }
 
 #[derive(Clone)]
-pub struct CubicSBox<E: Engine> {
-    pub _marker: PhantomData<E>
+pub struct CubicSBox<Fr: PrimeField> {
+    pub _marker: PhantomData<Fr>
 }
 
-impl<E: Engine>SBox<E> for CubicSBox<E> {
-    fn apply(&self, elements: &mut [E::Fr]) {
+impl<Fr: PrimeField> SBox<Fr> for CubicSBox<Fr> {
+    fn apply(&self, elements: &mut [Fr]) {
         for element in elements.iter_mut() {
             let mut squared = *element;
             squared.square();
@@ -29,12 +29,12 @@ impl<E: Engine>SBox<E> for CubicSBox<E> {
 }
 
 #[derive(Clone)]
-pub struct QuinticSBox<E: Engine> {
-    pub _marker: PhantomData<E>
+pub struct QuinticSBox<Fr: PrimeField> {
+    pub _marker: PhantomData<Fr>
 }
 
-impl<E: Engine>SBox<E> for QuinticSBox<E> {
-    fn apply(&self, elements: &mut [E::Fr]) {
+impl<Fr: PrimeField> SBox<Fr> for QuinticSBox<Fr> {
+    fn apply(&self, elements: &mut [Fr]) {
         for element in elements.iter_mut() {
             let mut quad = *element;
             quad.square();
@@ -45,8 +45,8 @@ impl<E: Engine>SBox<E> for QuinticSBox<E> {
 }
 
 
-pub trait PoseidonHashParams<E: Engine> {
-    type SBox: SBox<E>;
+pub trait PoseidonHashParams<Fr: PrimeField> {
+    type SBox: SBox<Fr>;
     fn capacity(&self) -> u32;
     fn rate(&self) -> u32;
     fn state_width(&self) -> u32 {
@@ -54,8 +54,8 @@ pub trait PoseidonHashParams<E: Engine> {
     }
     fn num_full_rounds(&self) -> u32;
     fn num_partial_rounds(&self) -> u32;
-    fn round_constants(&self, round: u32) -> &[E::Fr];
-    fn mds_matrix_row(&self, row: u32) -> &[E::Fr];
+    fn round_constants(&self, round: u32) -> &[Fr];
+    fn mds_matrix_row(&self, row: u32) -> &[Fr];
     fn security_level(&self) -> u32;
     fn output_len(&self) -> u32 {
         self.capacity()
@@ -72,9 +72,9 @@ pub trait PoseidonHashParams<E: Engine> {
 
 
 #[inline]
-pub fn scalar_product<E: Engine> (input: &[E::Fr], by: &[E::Fr]) -> E::Fr {
+pub fn scalar_product<Fr: PrimeField> (input: &[Fr], by: &[Fr]) -> Fr {
     debug_assert!(input.len() == by.len());
-    let mut result = E::Fr::zero();
+    let mut result = Fr::zero();
     for (a, b) in input.iter().zip(by.iter()) {
         let mut tmp = *a;
         tmp.mul_assign(b);
@@ -84,6 +84,11 @@ pub fn scalar_product<E: Engine> (input: &[E::Fr], by: &[E::Fr]) -> E::Fr {
     result
 }
 
+
+construct_sponge! {
+    pub struct PoseidonR2C1(2, 1);
+}
+
 #[cfg(test)]
 mod test {
     use rand::{Rng, thread_rng};
@@ -91,10 +96,6 @@ mod test {
     use super::*;
     use group_hash::BlakeHasher;
     use params::Bn256PoseidonParams;
-
-    construct_sponge! {
-	    pub struct PoseidonR2C1(2, 1);
-    }
 
     #[test]
     fn test_generate_bn256_params() {

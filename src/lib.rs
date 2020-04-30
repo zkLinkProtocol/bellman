@@ -11,6 +11,9 @@ extern crate rand;
 extern crate bit_vec;
 extern crate byteorder;
 
+#[macro_use]
+extern crate global_counter;
+
 pub use pairing::*;
 
 use crate::pairing::ff as ff;

@@ -3,6 +3,7 @@ use std::ops::Range;
 
 pub mod coset_combining_blake2s_tree;
 pub mod coset_combining_rescue_tree;
+pub mod coset_combinint_poseidon_tree;
 
 pub trait Commitment: Clone + Eq + PartialEq + std::fmt::Debug {}
 

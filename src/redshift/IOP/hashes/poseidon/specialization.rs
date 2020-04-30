@@ -1,4 +1,3 @@
-use crate::pairing::Engine;
 use crate::ff::{Field, PrimeField};
 use super::{PoseidonHashParams, SBox, scalar_product};
 
@@ -8,22 +7,22 @@ macro_rules! construct_sponge {
 	( $(#[$attr:meta])* $visibility:vis struct $name:ident ( $n_rate:tt, $n_capacity: tt ); ) => {
 		/// Little-endian large integer type
 		$(#[$attr])*
-        $visibility struct $name<'a, E: Engine, Params: PoseidonHashParams<E>> 
+        $visibility struct $name<'a, Fr: PrimeField, Params: PoseidonHashParams<Fr>> 
         {
             params: &'a Params,
-            internal_state: [E::Fr; $n_rate + $n_capacity],
-            mode: OpMode<E>
+            internal_state: [Fr; $n_rate + $n_capacity],
+            mode: OpMode<Fr>
         }
 
         #[derive(Clone)]
-        enum OpMode<E: Engine> {
-            AccumulatingToAbsorb(usize, [E::Fr; $n_rate]),
-            SqueezedInto(usize, [E::Fr; $n_rate])
+        enum OpMode<Fr: PrimeField> {
+            AccumulatingToAbsorb(usize, [Fr; $n_rate]),
+            SqueezedInto(usize, [Fr; $n_rate])
         }
 
-        impl<E: Engine> Copy for OpMode<E> {}
+        impl<Fr: PrimeField> Copy for OpMode<Fr> {}
 
-        impl<'a, E: Engine, Params: PoseidonHashParams<E>> Clone for $name<'a, E, Params> {
+        impl<'a, Fr: PrimeField, Params: PoseidonHashParams<Fr>> Clone for $name<'a, Fr, Params> {
             fn clone(&self) -> Self {
                 Self {
                     params: self.params,
@@ -33,7 +32,7 @@ macro_rules! construct_sponge {
             }
         }
 
-        impl<'a, E: Engine, Params: PoseidonHashParams<E>> $name<'a, E, Params> {
+        impl<'a, Fr: PrimeField, Params: PoseidonHashParams<Fr>> $name<'a, Fr, Params> {
             pub fn new(
                 params: &'a Params
             ) -> Self 
@@ -41,24 +40,24 @@ macro_rules! construct_sponge {
                 assert!(params.rate() == $n_rate, "rate is invalid for specialization");
                 assert!(params.capacity() == $n_capacity, "capacity is invalid for specialization");
                 
-                let op = OpMode::AccumulatingToAbsorb(0, [E::Fr::zero(); $n_rate]);
+                let op = OpMode::AccumulatingToAbsorb(0, [Fr::zero(); $n_rate]);
 
                 Self {
                     params,
-                    internal_state: [E::Fr::zero(); $n_rate + $n_capacity],
+                    internal_state: [Fr::zero(); $n_rate + $n_capacity],
                     mode: op
                 }
             }
 
             fn poseidon_duplex(
                 params: &Params,
-                internal_state: [E::Fr; $n_rate + $n_capacity],
-            ) -> [E::Fr; $n_rate + $n_capacity] 
+                internal_state: [Fr; $n_rate + $n_capacity],
+            ) -> [Fr; $n_rate + $n_capacity] 
             {
                 let mut state = internal_state;
                 debug_assert!(params.num_full_rounds() % 2 == 0);
                 let half_of_full_rounds = params.num_full_rounds() / 2;
-                let mut mds_application_scratch = [E::Fr::zero(); $n_rate + $n_capacity];
+                let mut mds_application_scratch = [Fr::zero(); $n_rate + $n_capacity];
                 debug_assert_eq!(state.len(), params.state_width() as usize);
 
                 const LAST_ELEM_IDX: usize = $n_rate + $n_capacity - 1;
@@ -78,7 +77,7 @@ macro_rules! construct_sponge {
                     // mul state by MDS
                     for (row, place_into) in mds_application_scratch.iter_mut()
                                                     .enumerate() {
-                        let tmp = scalar_product::<E>(& state[..], params.mds_matrix_row(row as u32));                           
+                        let tmp = scalar_product::<Fr>(& state[..], params.mds_matrix_row(row as u32));                           
                         *place_into = tmp;
                     }
 
@@ -101,7 +100,7 @@ macro_rules! construct_sponge {
                     // mul state by MDS
                     for (row, place_into) in mds_application_scratch.iter_mut()
                                                     .enumerate() {
-                        let tmp = scalar_product::<E>(& state[..], params.mds_matrix_row(row as u32));
+                        let tmp = scalar_product::<Fr>(& state[..], params.mds_matrix_row(row as u32));
                         *place_into = tmp;                               
                     }
 
@@ -123,7 +122,7 @@ macro_rules! construct_sponge {
                     // mul state by MDS
                     for (row, place_into) in mds_application_scratch.iter_mut()
                                                     .enumerate() {
-                        let tmp = scalar_product::<E>(& state[..], params.mds_matrix_row(row as u32));                           
+                        let tmp = scalar_product::<Fr>(& state[..], params.mds_matrix_row(row as u32));                           
                         *place_into = tmp;
                     }
 
@@ -135,7 +134,7 @@ macro_rules! construct_sponge {
 
             pub fn absorb(
                 &mut self,
-                value: E::Fr
+                value: Fr
             ) {
                 match self.mode {
                     OpMode::AccumulatingToAbsorb(ref mut len, ref mut into) => {
@@ -158,7 +157,7 @@ macro_rules! construct_sponge {
                     OpMode::SqueezedInto(_, _) => {
                         // we don't need anything from the output, so it's dropped
 
-                        let mut s = [E::Fr::zero(); $n_rate];
+                        let mut s = [Fr::zero(); $n_rate];
                         s[0] = value;
 
                         let op = OpMode::AccumulatingToAbsorb(1, s);
@@ -169,7 +168,7 @@ macro_rules! construct_sponge {
 
             pub fn squeeze(
                 &mut self,
-            ) -> E::Fr {
+            ) -> Fr {
                 match self.mode {
                     OpMode::AccumulatingToAbsorb(len, ref mut into) => {
                         if len < $n_rate {
@@ -188,7 +187,7 @@ macro_rules! construct_sponge {
                         self.internal_state = Self::poseidon_duplex(&*self.params, self.internal_state);
 
                         // we don't take full internal state, but only the rate
-                        let mut sponge_output = [E::Fr::zero(); $n_rate];
+                        let mut sponge_output = [Fr::zero(); $n_rate];
                         sponge_output.copy_from_slice(&self.internal_state[0..$n_rate]);
 
                         let output = sponge_output[0];
@@ -203,7 +202,7 @@ macro_rules! construct_sponge {
                         if *len == $n_rate {
                             self.internal_state = Self::poseidon_duplex(&*self.params, self.internal_state);
 
-                            let mut sponge_output = [E::Fr::zero(); $n_rate];
+                            let mut sponge_output = [Fr::zero(); $n_rate];
                             sponge_output.copy_from_slice(&self.internal_state[0..$n_rate]);
 
                             let output = sponge_output[0];
@@ -223,8 +222,4 @@ macro_rules! construct_sponge {
             }
         }
     }
-}
-
-construct_sponge! {
-	pub struct PosendonR2C1(2, 1);
 }
