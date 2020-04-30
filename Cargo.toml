@@ -33,8 +33,8 @@ prefetch = {version = "0.2", optional = true}
 
 web-sys = {version = "0.3", optional = true, features = ["console", "Performance", "Window"]}
 
-tiny-keccak = {version = "1.5", optional = true}
-blake2-rfc = {version = "0.2.18", optional = true}
+tiny-keccak = {version = "1.5"}
+blake2-rfc = {version = "0.2.18"}
 
 lazy_static = {version = "1", optional = true}
 num = {package = "num", version = "0.2.1"}
@@ -45,9 +45,9 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/redshift/IOP/ha
 [features]
 default = ["multicore", "redshift"]
 multicore = ["futures-cpupool", "num_cpus", "crossbeam"]
-sonic = ["tiny-keccak", "blake2-rfc"]
+sonic = []
 gm17 = []
-redshift = ["lazy_static", "tiny-keccak", "blake2s_simd", "blake2s_const"]
+redshift = ["lazy_static", "blake2s_simd", "blake2s_const"]
 wasm = ["web-sys"]
 nightly = ["prefetch"]
 #derive_serde = ["pairing/derive_serde"]
