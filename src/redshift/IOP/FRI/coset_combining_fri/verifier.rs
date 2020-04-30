@@ -46,13 +46,14 @@ impl<F: PrimeField, O: Oracle<F>, C: Channel<F, Input = O::Commitment>> FriIop<F
         let coset_size = 1 << collapsing_factor;
         let initial_domain_size = domain.size as usize;
         let log_initial_domain_size = log2_floor(initial_domain_size);
+        let final_degree_plus_one = params.final_degree_plus_one.get();
 
-        if natural_element_indexes.len() != params.R || proof.final_coefficients.len() > params.final_degree_plus_one {
+        if natural_element_indexes.len() != params.R || proof.final_coefficients.len() > final_degree_plus_one {
             return Ok(false);
         }
 
         let num_steps = 
-            log2_floor(params.initial_degree_plus_one.get() / params.final_degree_plus_one) / params.collapsing_factor as u32;
+            log2_floor(params.initial_degree_plus_one.get() / final_degree_plus_one) / params.collapsing_factor as u32;
         
         for ((round, natural_first_element_index), upper_layer_query) in 
             proof.queries.iter().zip(natural_element_indexes.into_iter()).zip(proof.upper_layer_queries.iter()) {
@@ -312,8 +313,9 @@ mod test {
             R: 4,
             initial_degree_plus_one: std::cell::Cell::new(SIZE),
             lde_factor: 4,
-            final_degree_plus_one: 4,
+            final_degree_plus_one: std::cell::Cell::new(3),
         };
+        params.recompute_final_degree(true);
 
         let oracle_params = FriSpecificBlake2sTreeParams {
             values_per_leaf: 1 << params.collapsing_factor

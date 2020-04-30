@@ -102,13 +102,14 @@ where I::Query : ToStream<F, (CosetSize, OracleHeight)>
         let coset_size = 1 << fri_params.collapsing_factor;
         let top_level_oracle_size = (fri_params.initial_degree_plus_one.get() * fri_params.lde_factor) / coset_size;
         let top_leve_height = log2_floor(top_level_oracle_size);
+        let final_degree_plus_one = fri_params.final_degree_plus_one.get();
         
-        let mut num_of_iters = log2_floor(fri_params.initial_degree_plus_one.get() / fri_params.final_degree_plus_one) / fri_params.collapsing_factor;
+        let mut num_of_iters = log2_floor(fri_params.initial_degree_plus_one.get() / final_degree_plus_one) / fri_params.collapsing_factor;
         // we do not count the very first and the last iterations
         num_of_iters -= 1;
        
         self.commitments.to_stream(container, num_of_iters as usize);
-        self.final_coefficients.to_stream(container, fri_params.final_degree_plus_one);
+        self.final_coefficients.to_stream(container, final_degree_plus_one);
 
         let labels = ["q_l", "q_r", "q_o", "q_m", "q_c", "q_add_sel", "s_id", "sigma_1", "sigma_2", "sigma_3",
             "a", "b", "c", "z_1", "z_2", "t_low", "t_mid", "t_high"];

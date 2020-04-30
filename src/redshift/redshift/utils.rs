@@ -545,7 +545,7 @@ pub(crate) fn calculate_lagrange_poly<E: Engine>(worker: &Worker, poly_size:usiz
     Ok(poly.ifft(&worker))
 }
 
-pub fn evaluate_lagrange_poly<E: Engine>(vahisning_size:usize, poly_number: usize, at: E::Fr) -> E::Fr {
+pub fn evaluate_lagrange_poly<E: Engine>(vahisning_size: usize, poly_number: usize, at: E::Fr) -> E::Fr {
     assert!(vahisning_size.is_power_of_two());
 
     let mut repr = E::Fr::zero().into_repr();

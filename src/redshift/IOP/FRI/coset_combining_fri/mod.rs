@@ -91,7 +91,29 @@ pub struct FriParams {
     pub initial_degree_plus_one : Cell<usize>,
     pub lde_factor: usize,
     //the degree of the resulting polynomial at the bottom level of FRI
-    pub final_degree_plus_one : usize,
+    pub final_degree_plus_one : Cell<usize>,
+}
+
+
+impl FriParams 
+{
+    pub fn recompute_final_degree(&self, print_recomputed: bool) {
+        
+        let mut cur_degree = self.initial_degree_plus_one.get();
+        let mut next_degree = cur_degree >> self.collapsing_factor;
+        let supposed_final_degree_plus_one = self.final_degree_plus_one.get();
+
+        while next_degree >= supposed_final_degree_plus_one
+        {
+            cur_degree = next_degree;
+            next_degree >>= self.collapsing_factor;
+        }
+        self.final_degree_plus_one.set(cur_degree);
+
+        if print_recomputed {
+            println!("Old final_degree_plus_one {} is recomputed to {}", supposed_final_degree_plus_one, cur_degree);
+        }
+    }
 }
 
 //TODO: paranetrize FriIop with coset combiner also

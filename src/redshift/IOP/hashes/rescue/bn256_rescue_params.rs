@@ -255,7 +255,7 @@ impl RescueParams<Fr> for BN256Rescue {
     }
     
     fn c(&self) -> usize {
-        Self::C
+        Self::R
     }
     
     fn r(&self) -> usize {

@@ -171,7 +171,7 @@ mod test {
             initial_degree_plus_one: std::cell::Cell::new(0),
             R : 20,
             collapsing_factor : 3,
-            final_degree_plus_one : 2,
+            final_degree_plus_one : std::cell::Cell::new(2),
         };
 
         // note the consistency between collapsing_factor and num_elems_per_leaf!
@@ -223,7 +223,7 @@ mod test {
             lde_factor: 16,
             R: 4,
             collapsing_factor: 2,
-            final_degree_plus_one: 1
+            final_degree_plus_one: std::cell::Cell::new(1),
         };
 
         let bn256_rescue_params = BN256Rescue::default();

@@ -319,9 +319,6 @@ where E::Fr : PrimeField
             temp.sub_assign(x_1);
             temp = temp.inverse().expect("must exist");
             res.mul_assign(&temp);
-
-            println!("at single points: {}", res);
-
             (res, aggr_mult)
         }
 
@@ -381,15 +378,11 @@ where E::Fr : PrimeField
             
             res.mul_assign(&common_denominator.inverse().expect("must exist"));
 
-            println!("first sum: {}", res);
             (res, aggr_mult)
 
         }
 
         let evaluation_point = find_poly_value_at_omega("evaluation_point", &arr)?;
-
-        println!("ev_p: {}", evaluation_point);
-        println!("aggregation challenge: {}", aggregation_challenge);
 
         // combine polynomials a, b, t_low, t_mid, t_high,
         // which are opened only at z
