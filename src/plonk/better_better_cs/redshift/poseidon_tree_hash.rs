@@ -24,6 +24,7 @@ impl<'a, E: PoseidonEngine> Clone for PoseidonBinaryTreeHasher<'a, E> {
     }
 }
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 impl<'a, E: PoseidonEngine> BinaryTreeHasher<E::Fr> for PoseidonBinaryTreeHasher<'a, E> {
     type Output = E::Fr;
@@ -34,12 +35,21 @@ impl<'a, E: PoseidonEngine> BinaryTreeHasher<E::Fr> for PoseidonBinaryTreeHasher
     }
 
     fn leaf_hash(&self, input: &[E::Fr]) -> Self::Output {
+        let mut num_invocations = input.len() / 2;
+        if input.len() % 2 != 0 {
+            num_invocations += 1;
+        }
+
+        super::tree_hash::COUNTER.fetch_add(num_invocations, Ordering::SeqCst);
+
         let mut as_vec = poseidon_hash::<E>(self.params, input);
 
         as_vec.pop().unwrap()
     }
 
     fn node_hash(&self, input: &[Self::Output; 2], _level: usize) -> Self::Output {
+        super::tree_hash::COUNTER.fetch_add(2, Ordering::SeqCst);
+
         let mut as_vec = poseidon_hash::<E>(self.params, &input[..]);
 
         as_vec.pop().unwrap()

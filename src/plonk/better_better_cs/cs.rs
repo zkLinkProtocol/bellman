@@ -289,6 +289,32 @@ impl GateEquation for Width4MainGateWithDNextEquation {
     }
 }
 
+
+struct SimpleBitmap(u64, usize);
+impl SimpleBitmap {
+    fn new() -> Self {
+        Self(0u64, 0)
+    }
+
+    fn get_next_unused(&mut self) -> usize {
+        for i in 0..64 {
+            if self.get(i) == false {
+                return i;
+            }
+        }
+
+        unreachable!()
+    }
+
+    fn get(&self, idx: usize) -> bool{
+        1u64 << idx & self.0 > 0
+    }
+
+    fn set(&mut self, idx: usize) {
+        self.0 |= 1u64 << idx;
+    }
+}
+
 impl MainGateEquation for Width4MainGateWithDNextEquation {
     const NUM_LINEAR_TERMS: usize = 4;
     const NUM_VARIABLES: usize = 4;
@@ -312,6 +338,7 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
     fn format_term<E: Engine>(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
         let mut flattened_variables = vec![padding; Self::NUM_VARIABLES];
         let mut flattened_coefficients = vec![E::Fr::zero(); 7];
+        let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
         let allowed_multiplications = 1;
@@ -339,6 +366,8 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
                     flattened_variables[0] = vars[0];
                     flattened_variables[1] = vars[1];
                     flattened_coefficients[4] = coeff;
+                    bitmap.set(0);
+                    bitmap.set(1);
                 },
                 _ => {
                     unreachable!("must be multiplicative term");
@@ -367,27 +396,8 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
             }
         }
 
-        let mut idx = 0;
-        for i in 0..flattened_variables.len() {
-            if flattened_variables[i] == padding {
-                break
-            } else {
-                idx += 1;
-            }
-        }
-
         // only additions left
         for term in instance.terms.into_iter() {
-            loop {
-                debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
-
-                if flattened_variables[idx] == padding {
-                    break
-                } else {
-                    idx += 1;
-                }
-            }
-            debug_assert!(idx < Self::NUM_VARIABLES, "somehow all variables are filled");
             match term {
                 ArithmeticTerm::SingleVariable(var, coeff) => {
                     let index = flattened_variables.iter().position(
@@ -397,9 +407,10 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
                         // there is some variable there already,
                         flattened_coefficients[index] = coeff;
                     } else {
+                        let idx = bitmap.get_next_unused();
                         flattened_variables[idx] = var;
                         flattened_coefficients[idx] = coeff;
-                        idx += 1;
+                        bitmap.set(idx);
                     }
                 },
                 _ => {

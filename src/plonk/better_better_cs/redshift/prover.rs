@@ -1353,6 +1353,131 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
             final_coefficients: coeffs,
         };
 
+        let num_queries = 32;
+
+        use super::multioracle::Multioracle;
+
+        {
+            let idx_start = 0;
+            let indexes: Vec<usize> = (idx_start..(idx_start+FRI_VALUES_PER_LEAF)).collect();
+
+            let setup_tree_params = setup.tree.params.clone();
+            let witness_tree_params = fourth_state.witness_multioracle_tree.params.clone();
+            let grand_product_tree_params = fourth_state.grand_product_polynomial_multioracle_tree.params.clone();
+            let t_poly_tree_params = fourth_state.t_poly_parts_multioracle_tree.params.clone();
+            let mut fri_subtrees_params = vec![];
+            for s in fri_oracles_set.intermediate_oracles.iter() {
+                fri_subtrees_params.push(s.params.clone());
+            }
+
+            let setup_query = setup.tree.produce_multiquery(
+                indexes.clone(),
+                setup.polynomial_ldes.len(), 
+                &Multioracle::<E, H>::combine_leafs(
+                    &setup.polynomial_ldes, 
+                    FRI_VALUES_PER_LEAF,
+                    &worker,
+                )
+            );
+
+            let witness_query = fourth_state.witness_multioracle_tree.produce_multiquery(
+                indexes.clone(),
+                fourth_state.witness_polys_ldes.len(), 
+                &Multioracle::<E, H>::combine_leafs(
+                    &fourth_state.witness_polys_ldes, 
+                    FRI_VALUES_PER_LEAF,
+                    &worker,
+                )
+            );
+
+            let grand_product_query = fourth_state.grand_product_polynomial_multioracle_tree.produce_multiquery(
+                indexes.clone(),
+                fourth_state.grand_product_polynomial_lde.len(), 
+                &Multioracle::<E, H>::combine_leafs(
+                    &fourth_state.grand_product_polynomial_lde, 
+                    FRI_VALUES_PER_LEAF,
+                    &worker,
+                )
+            );
+
+            let quotient_query = fourth_state.t_poly_parts_multioracle_tree.produce_multiquery(
+                indexes.clone(),
+                fourth_state.t_poly_parts_ldes.len(), 
+                &Multioracle::<E, H>::combine_leafs(
+                    &fourth_state.t_poly_parts_ldes, 
+                    FRI_VALUES_PER_LEAF,
+                    &worker,
+                )
+            );
+
+            let mut fri_queries = vec![];
+            for ((vals, tree), params) in fri_oracles_set.intermediate_leaf_values.iter()
+                .zip(fri_oracles_set.intermediate_oracles.iter())
+                .zip(fri_subtrees_params.iter()) 
+                {
+
+                    let idx_start = 0;
+                    let indexes: Vec<usize> = (idx_start..(idx_start + params.values_per_leaf)).collect();
+    
+                    let query = tree.produce_query(
+                        indexes,
+                        &vals
+                    );
+
+                    fri_queries.push(query);
+            }
+
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            let value = super::tree_hash::COUNTER.load(Ordering::SeqCst);
+            super::tree_hash::COUNTER.fetch_sub(value, Ordering::SeqCst);
+
+            let hasher = setup.tree.tree_hasher.clone();
+
+            let _ = BinaryTree::verify_multiquery(
+                &setup.tree.get_commitment(), 
+                &setup_query, 
+                &setup_tree_params, 
+                &hasher
+            );
+
+            let _ = BinaryTree::verify_multiquery(
+                &setup.tree.get_commitment(), 
+                &witness_query, 
+                &witness_tree_params, 
+                &hasher
+            );
+
+            let _ = BinaryTree::verify_multiquery(
+                &setup.tree.get_commitment(), 
+                &grand_product_query, 
+                &grand_product_tree_params, 
+                &hasher
+            );
+
+
+            let _ = BinaryTree::verify_multiquery(
+                &setup.tree.get_commitment(), 
+                &quotient_query, 
+                &t_poly_tree_params, 
+                &hasher
+            );
+
+            for (query, params) in fri_queries.into_iter()
+                .zip(fri_subtrees_params.iter()) {
+                    let _ = BinaryTree::verify_query(
+                        &setup.tree.get_commitment(), 
+                        &query, 
+                        &params, 
+                        &hasher
+                    );
+            }
+
+            let value = super::tree_hash::COUNTER.load(Ordering::SeqCst);
+
+            println!("Single query taken {} hashes", value);
+        }
+
         Ok(message)
     }
 }

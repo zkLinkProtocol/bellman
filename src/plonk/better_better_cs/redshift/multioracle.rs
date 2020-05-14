@@ -13,24 +13,15 @@ pub struct Multioracle<'a, E: Engine, H: BinaryTreeHasher<E::Fr> > {
 }
 
 impl<'a, E: Engine, H: BinaryTreeHasher<E::Fr>> Multioracle<'a, E, H> {
-    pub fn new_from_polynomials(
-        polynomials: &'a [Polynomial<E::Fr, Values>],
-        tree_hasher: H,
+    pub fn combine_leafs<'p>(
+        polynomials: &'p [Polynomial<E::Fr, Values>],
         num_values_from_one_poly_into_leaf: usize,
         worker: &Worker
-    ) -> Self {
-        // first make combinations of leaf values
-        // expect polynomials to be in bitreverse enumeration
+    ) -> Vec<Vec<&'p [E::Fr]>> {
         let num_polys = polynomials.len();
-        let values_per_leaf = num_polys * num_values_from_one_poly_into_leaf;
-        println!("Placing {} values into single leaf", values_per_leaf);
         let num_leafs = polynomials[0].size() / num_values_from_one_poly_into_leaf;
         println!("{} leafs total", num_leafs);
         assert!(num_leafs.is_power_of_two());
-
-        let tree_params = BinaryTreeParams {
-            values_per_leaf: values_per_leaf
-        };
 
         // we need vector (over leafs)
         // of vectors(over individual polys)
@@ -66,15 +57,46 @@ impl<'a, E: Engine, H: BinaryTreeHasher<E::Fr>> Multioracle<'a, E, H> {
 
         println!("Done combining leafs");
 
+        leaf_refs_combined
+    }
+
+    pub fn new_from_polynomials(
+        polynomials: &'a [Polynomial<E::Fr, Values>],
+        tree_hasher: H,
+        num_values_from_one_poly_into_leaf: usize,
+        worker: &Worker
+    ) -> Self {
+        // first make combinations of leaf values
+        // expect polynomials to be in bitreverse enumeration
+        let num_polys = polynomials.len();
+        let values_per_leaf = num_polys * num_values_from_one_poly_into_leaf;
+        println!("Placing {} values into single leaf", values_per_leaf);
+
+        let tree_params = BinaryTreeParams {
+            values_per_leaf: values_per_leaf
+        };
+
+        // we need vector (over leafs)
+        // of vectors(over individual polys)
+        // of references
+        let mut leaf_refs_combined = Self::combine_leafs(
+            polynomials, 
+            num_values_from_one_poly_into_leaf, 
+            &worker
+        );
+
         println!("Start making a tree");
 
         let tree = BinaryTree::create_from_combined_leafs(
             &leaf_refs_combined,
+            num_polys,
             tree_hasher,
             &tree_params
         );
 
         println!("Done making a tree");
+
+        let poly_refs: Vec<_> = polynomials.iter().map(|el| el.as_ref()).collect();
 
         Self {
             polynomial_values_refs: poly_refs,

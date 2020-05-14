@@ -7,10 +7,12 @@ use super::tree_hash::*;
 
 #[derive(Debug)]
 pub struct BinaryTree<E: Engine, H: BinaryTreeHasher<E::Fr>> {
-    size: usize,
-    nodes: Vec<H::Output>,
-    params: BinaryTreeParams,
-    tree_hasher: H,
+    pub (crate) size: usize,
+    pub (crate) num_leafs: usize,
+    pub (crate) num_combined: usize,
+    pub (crate) nodes: Vec<H::Output>,
+    pub (crate) params: BinaryTreeParams,
+    pub (crate) tree_hasher: H,
     _marker: std::marker::PhantomData<E>
 }
 
@@ -52,16 +54,26 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         self.size
     }
 
-    pub(crate) fn create_from_combined_leafs(leafs: &[Vec<&[E::Fr]>], tree_hasher: H, params: &BinaryTreeParams) -> Self {
+    pub(crate) fn num_leafs(&self) -> usize {
+        self.num_leafs
+    }
+
+    pub(crate) fn create_from_combined_leafs(
+        leafs: &[Vec<&[E::Fr]>],
+        num_combined: usize, 
+        tree_hasher: H, 
+        params: &BinaryTreeParams
+    ) -> Self {
         let values_per_leaf = params.values_per_leaf;
         let num_leafs = leafs.len();
         let values_per_leaf_supplied = leafs[0].len() * leafs[0][0].len();
+        assert!(num_combined == leafs[0].len());
         assert!(values_per_leaf == values_per_leaf_supplied);
         assert!(num_leafs.is_power_of_two());
 
         let num_nodes = num_leafs;
 
-        let size = num_leafs;
+        let size = num_leafs * values_per_leaf;
 
         let mut nodes = vec![H::placeholder_output(); num_nodes];
 
@@ -79,11 +91,13 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
                         let mut scratch_space = Vec::with_capacity(values_per_leaf);
                         let base_idx = i*chunk;
                         for (j, lh) in lh.iter_mut().enumerate() {
+                            // idx is index of the leaf
                             let idx = base_idx + j;
                             let leaf_values_ref = &leafs[idx];
                             for &lv in leaf_values_ref.iter() {
                                 scratch_space.extend_from_slice(lv);
                             }
+                            debug_assert_eq!(scratch_space.len(), values_per_leaf);
                             *lh = hasher_ref.leaf_hash(&scratch_space[..]);
                             scratch_space.truncate(0);
                         }
@@ -148,7 +162,9 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
 
         Self {
             size: size,
+            num_leafs: num_leafs,
             nodes: nodes,
+            num_combined,
             tree_hasher: tree_hasher,
             params: params.clone(),
             _marker: std::marker::PhantomData
@@ -165,7 +181,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
 
         let num_nodes = num_leafs;
 
-        let size = num_leafs;
+        // size is a total number of elements
+        let size = values.len();
 
         let mut nodes = vec![H::placeholder_output(); num_nodes];
 
@@ -247,6 +264,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         Self {
             size: size,
             nodes: nodes,
+            num_leafs: num_leafs,
+            num_combined: 1,
             tree_hasher: tree_hasher,
             params: params.clone(),
             _marker: std::marker::PhantomData
@@ -257,7 +276,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         self.nodes[1].clone()
     }
 
-    fn produce_query(&self, indexes: Vec<usize>, values: &[E::Fr]) -> Query<E, H> {
+    pub fn produce_query(&self, indexes: Vec<usize>, values: &[E::Fr]) -> Query<E, H> {
         // we never expect that query is mis-alligned, so check it
         debug_assert!(indexes[0] % self.params.values_per_leaf == 0);
         debug_assert!(indexes.len() == self.params.values_per_leaf);
@@ -282,7 +301,51 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         }
     }
 
-    fn verify_query(
+    pub fn produce_multiquery(
+        &self, 
+        indexes: Vec<usize>, 
+        num_combined: usize,
+        leafs: &[Vec<&[E::Fr]>]
+    ) -> MultiQuery<E, H> {
+        // debug_assert!(indexes[0] % self.params.values_per_leaf == 0);
+        // debug_assert!(indexes.len() == self.params.values_per_leaf);
+        debug_assert!(indexes == (indexes[0]..(indexes[0]+(self.params.values_per_leaf/self.num_combined))).collect::<Vec<_>>());
+        debug_assert!(*indexes.last().expect("is some") < self.size());
+        debug_assert!(leafs[0].len() == num_combined);
+
+        let leaf_index = indexes[0] / (self.params.values_per_leaf / num_combined);
+
+        let mut query_values = Vec::with_capacity(indexes.len());
+        let this_leaf = &leafs[leaf_index];
+
+        for part in this_leaf.iter() {
+            query_values.push(part.to_vec());
+        }
+
+        let pair_index = leaf_index ^ 1;
+
+        let mut scratch_space = Vec::with_capacity(self.params.values_per_leaf);
+
+        let pair_leaf_combination = &leafs[pair_index];
+
+        for r in pair_leaf_combination.iter() {
+            // walk over the polynomials
+            scratch_space.extend_from_slice(r);
+        }
+
+        let leaf_pair_hash = self.tree_hasher.leaf_hash(&scratch_space);
+
+        let path = self.make_full_path(leaf_index, leaf_pair_hash);
+
+        MultiQuery::<E, H> {
+            indexes: indexes,
+            values: query_values,
+            num_combined,
+            path: path,
+        }
+    }
+
+    pub fn verify_query(
         commitment: &H::Output, 
         query: &Query<E, H>, 
         params: &BinaryTreeParams, 
@@ -294,6 +357,40 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
 
         let mut hash = tree_hasher.leaf_hash(query.values());
         let mut idx = query.indexes()[0] / params.values_per_leaf;
+        let mut hash_input = [H::placeholder_output(); 2];
+
+        for el in query.path.iter() {
+            {
+                if idx & 1usize == 0 {
+                    hash_input[0] = hash;
+                    hash_input[1] = *el;
+                } else {
+                    hash_input[0] = *el;
+                    hash_input[1] = hash;
+                }
+            }
+            hash = tree_hasher.node_hash(&hash_input, 0);
+            idx >>= 1;
+        }
+
+        &hash == commitment
+    }
+
+    pub fn verify_multiquery(
+        commitment: &H::Output, 
+        query: &MultiQuery<E, H>, 
+        params: &BinaryTreeParams, 
+        tree_hasher: &H
+    ) -> bool {
+        let values = query.values_flattened();
+        if values.len() != params.values_per_leaf {
+            return false;
+        }
+
+        let num_combined = query.num_combined();
+
+        let mut hash = tree_hasher.leaf_hash(&values);
+        let mut idx = query.indexes()[0] / (params.values_per_leaf / num_combined);
         let mut hash_input = [H::placeholder_output(); 2];
 
         for el in query.path.iter() {
@@ -329,6 +426,14 @@ pub struct Query<E: Engine, H: BinaryTreeHasher<E::Fr>> {
     path: Vec<H::Output>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultiQuery<E: Engine, H: BinaryTreeHasher<E::Fr>> {
+    indexes: Vec<usize>,
+    values: Vec<Vec<E::Fr>>,
+    num_combined: usize,
+    path: Vec<H::Output>,
+}
+
 impl<E: Engine, H: BinaryTreeHasher<E::Fr>> Query<E, H> {
     fn indexes(&self) -> Vec<usize> {
         self.indexes.clone()
@@ -336,6 +441,27 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> Query<E, H> {
 
     fn values(&self) -> &[E::Fr] {
         &self.values
+    }
+}
+
+impl<E: Engine, H: BinaryTreeHasher<E::Fr>> MultiQuery<E, H> {
+    fn indexes(&self) -> Vec<usize> {
+        self.indexes.clone()
+    }
+
+    fn values_flattened(&self) -> Vec<E::Fr> {
+        let mut concat = Vec::with_capacity(self.values.len() + self.values[0].len());
+        for v in self.values.iter() {
+            concat.extend_from_slice(&v[..]);
+        }
+
+        concat
+    }
+
+    fn num_combined(&self) -> usize {
+        debug_assert_eq!(self.num_combined, self.values.len());
+
+        self.num_combined
     }
 }
 
@@ -348,7 +474,7 @@ mod test {
 
     // const SIZE: usize = 16;
     // const VALUES_PER_LEAF: usize = 4;
-    const SIZE: usize = 24;
+    const SIZE: usize = 32;
     const VALUES_PER_LEAF: usize = 8;
 
     #[test]
@@ -370,12 +496,69 @@ mod test {
         let iop = BinaryTree::create(&inputs, hasher.clone(), &tree_params);
         let commitment = iop.get_commitment();
         let tree_size = iop.size();
-        assert!(tree_size == SIZE);
-        assert!(iop.nodes.len() == (SIZE / VALUES_PER_LEAF));
+        assert_eq!(tree_size, SIZE);
+        assert_eq!(iop.num_leafs(), SIZE / VALUES_PER_LEAF);
         for i in 0..(SIZE / VALUES_PER_LEAF) {
             let indexes: Vec<_> = ((i*VALUES_PER_LEAF)..(VALUES_PER_LEAF + i*VALUES_PER_LEAF)).collect();
             let query = iop.produce_query(indexes, &inputs);
             let valid = BinaryTree::<Bn256, RescueBinaryTreeHasher<Bn256>>::verify_query(
+                &commitment, 
+                &query, 
+                &tree_params,
+                &hasher
+            );
+            assert!(valid, "invalid query for leaf index {}", i);
+        }
+    }
+
+    const VALUES_FROM_ONE_POLY_PER_LEAF: usize = 8;
+
+    #[test]
+    fn make_binary_multitree() {
+        let mut inputs = vec![];
+        let mut subpoly = vec![];
+        let mut f = Fr::one();
+        for _ in 0..SIZE {
+            subpoly.push(f);
+            f.double();
+        }
+
+        inputs.push(subpoly.clone());
+        inputs.push(subpoly.clone());
+
+        let params = Bn256RescueParams::new_checked_2_into_1();
+        let hasher = RescueBinaryTreeHasher::new(&params);
+
+        let tree_params = BinaryTreeParams {
+            values_per_leaf: VALUES_FROM_ONE_POLY_PER_LEAF * inputs.len()
+        };
+
+        let mut leafs = vec![];
+        for leaf_idx in 0..inputs[0].len() / VALUES_FROM_ONE_POLY_PER_LEAF {
+            let mut combination = vec![];
+            for sub in inputs.iter() {
+                let start = leaf_idx * VALUES_FROM_ONE_POLY_PER_LEAF;
+                let end = start + VALUES_FROM_ONE_POLY_PER_LEAF;
+                combination.push(&sub[start..end]);
+            }
+            leafs.push(combination);
+        }
+
+        let iop = BinaryTree::<Bn256, RescueBinaryTreeHasher<Bn256>>::create_from_combined_leafs(
+            &leafs, 
+            inputs.len(),
+            hasher.clone(), 
+            &tree_params
+        );
+
+        let commitment = iop.get_commitment();
+        let tree_size = iop.size();
+        assert_eq!(tree_size, SIZE * inputs.len());
+        assert_eq!(iop.num_leafs(), SIZE / VALUES_FROM_ONE_POLY_PER_LEAF);
+        for i in 0..(SIZE / VALUES_PER_LEAF) {
+            let indexes: Vec<_> = ((i*VALUES_PER_LEAF)..(VALUES_PER_LEAF + i*VALUES_PER_LEAF)).collect();
+            let query = iop.produce_multiquery(indexes, inputs.len(), &leafs);
+            let valid = BinaryTree::<Bn256, RescueBinaryTreeHasher<Bn256>>::verify_multiquery(
                 &commitment, 
                 &query, 
                 &tree_params,
