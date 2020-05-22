@@ -11,6 +11,7 @@ use crate::plonk::polynomials::*;
 
 pub use crate::plonk::cs::variable::*;
 use crate::plonk::better_cs::utils::*;
+pub use super::lookup_tables::*;
 
 pub trait Circuit<E: Engine> {
     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
@@ -49,6 +50,82 @@ impl PolynomialMultiplicativeTerm {
     }
 }
 
+pub trait GateInternal<E: Engine>: Send 
+    + Sync 
+    + 'static 
+    + std::any::Any 
+    + std::fmt::Debug
+{
+    fn name(&self) -> &'static str;
+    fn degree(&self) -> usize;
+    fn can_include_public_inputs(&self) -> bool;
+    fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint>;
+    fn setup_polynomials(&self) -> Vec<PolyIdentifier>;
+    fn variable_polynomials(&self) -> Vec<PolyIdentifier>;
+    fn witness_polynomials(&self) -> Vec<PolyIdentifier> {
+        vec![]
+    }
+    fn benefits_from_linearization(&self) -> bool;
+    fn linearizes_over(&self) -> Vec<PolyIdentifier>;
+    fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint>;
+    // fn compute_linearization_contribution(&self, values: &[E::Fr]) -> Vec<E::Fr> {
+    //     vec![]
+    // } 
+    fn num_quotient_terms(&self) -> usize;
+    fn verify_on_row(&self, row: usize, poly_storage: &AssembledPolynomialStorage<E>, last_row: bool) -> E::Fr;
+    fn contribute_into_quotient(
+        &self, 
+        poly_storage: &AssembledPolynomialStorage<E>,
+        challenges: &[E::Fr],
+        lde_factor: usize,
+    ) -> Result<Polynomial<E::Fr, Values>, SynthesisError>;
+    fn put_public_inputs_into_selector_id(&self) -> Option<usize>;
+}
+
+pub trait Gate<E: Engine>: GateInternal<E>
+    + Sized
+    + Clone
+    + std::hash::Hash
+    + std::default::Default 
+{
+    fn as_internal(&self) -> &dyn GateInternal<E> {
+        self as &dyn GateInternal<E>
+    }
+
+    fn into_internal(self) -> Box<dyn GateInternal<E>> {
+        Box::from(self) as Box<dyn GateInternal<E>>
+    }
+}
+
+pub trait MainGate<E: Engine>: Gate<E> {
+    const NUM_LINEAR_TERMS: usize;
+    const NUM_VARIABLES: usize;
+    const NUM_VARIABLES_ON_NEXT_STEP: usize;
+    fn range_of_multiplicative_term() -> std::ops::Range<usize>;
+    fn range_of_linear_terms() -> std::ops::Range<usize>;
+    fn index_for_constant_term() -> usize;
+    fn range_of_next_step_linear_terms() -> std::ops::Range<usize>;
+    fn format_term(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
+}
+
+impl<E: Engine> std::hash::Hash for dyn GateInternal<E> {
+    fn hash<H>(&self, state: &mut H) where H: std::hash::Hasher {
+        self.type_id().hash(state);
+        self.name().hash(state);
+        self.degree().hash(state);
+    }
+}
+
+impl<E: Engine> PartialEq for dyn GateInternal<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id() == other.type_id() &&
+        self.name() == other.name() &&
+        self.degree() == other.degree()
+    }
+}
+
+impl<E: Engine> Eq for dyn GateInternal<E> {}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct LinearCombinationOfTerms(pub Vec<PolynomialMultiplicativeTerm>);
 
@@ -58,6 +135,7 @@ impl LinearCombinationOfTerms {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum ArithmeticTerm<E: Engine>{
     Product(Vec<Variable>, E::Fr),
     SingleVariable(Variable, E::Fr),
@@ -112,6 +190,7 @@ impl<E: Engine> ArithmeticTerm<E> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct MainGateTerm<E: Engine>{
     terms: Vec<ArithmeticTerm<E>>,
     num_multiplicative_terms: usize,
@@ -170,152 +249,159 @@ impl<E: Engine> MainGateTerm<E> {
     }
 }
 
-pub trait MainGateEquation: GateEquation {
-    const NUM_LINEAR_TERMS: usize;
-    const NUM_VARIABLES: usize;
-    const NUM_VARIABLES_ON_NEXT_STEP: usize;
-    fn range_of_multiplicative_term() -> std::ops::Range<usize>;
-    fn range_of_linear_terms() -> std::ops::Range<usize>;
-    fn index_for_constant_term() -> usize;
-    fn range_of_next_step_linear_terms() -> std::ops::Range<usize>;
-    fn format_term<E: Engine>(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
-}
 
-pub trait GateEquation: GateEquationInternal
-    + Sized
-    + Clone
-    + std::hash::Hash
-    + std::default::Default 
-{
-    const HAS_NONTRIVIAL_CONSTANTS: bool;
-    const NUM_CONSTANTS: usize;
+#[derive(Clone, Debug, Hash, Default)]
+pub struct Width4MainGateWithDNext;
 
-    fn as_internal(&self) -> &dyn GateEquationInternal {
-        self as &dyn GateEquationInternal
+impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
+    fn name(&self) -> &'static str {
+        "main gate of width 4"
     }
 
-    fn into_internal(self) -> Box<dyn GateEquationInternal> {
-        Box::from(self) as Box<dyn GateEquationInternal>
-    }
-
-    fn static_description() -> &'static Self;
-
-    fn output_constant_coefficients<E: Engine>() -> Vec<E::Fr>;
-}
-
-pub trait GateEquationInternal: Send 
-    + Sync 
-    + 'static 
-    + std::any::Any 
-    + std::fmt::Debug
-{
-    fn degree(&self) -> usize;
-    fn num_constraints(&self) -> usize;
-    fn can_include_public_inputs(&self) -> bool;
-    fn put_public_inputs_into_selector_id(&self) -> Option<usize>;
-    fn get_constraint(&self) -> &LinearCombinationOfTerms;
-    fn get_constraints(&self) -> &[LinearCombinationOfTerms];
-}
-
-impl std::hash::Hash for dyn GateEquationInternal {
-    fn hash<H>(&self, state: &mut H) where H: std::hash::Hasher {
-        self.type_id().hash(state);
-        self.degree().hash(state);
-        for t in self.get_constraints().iter() {
-            t.hash(state);
-        }
-    }
-}
-
-impl PartialEq for dyn GateEquationInternal {
-    fn eq(&self, other: &Self) -> bool {
-        self.degree() == other.degree() &&
-        self.get_constraints() == other.get_constraints()
-    }
-}
-
-impl Eq for dyn GateEquationInternal {}
-
-#[derive(Clone, Debug, Hash)]
-pub struct Width4MainGateWithDNextEquation(pub [LinearCombinationOfTerms; 1]);
-
-impl GateEquationInternal for Width4MainGateWithDNextEquation {
     fn degree(&self) -> usize {
         3
-    }
-
-    fn num_constraints(&self) -> usize {
-        1
     }
 
     fn can_include_public_inputs(&self) -> bool {
         true
     }
 
+    fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
+        vec![
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 0, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 1, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 2, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 3, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 4, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 5, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial("main gate of width 4", 6, TimeDilation(0)),
+
+            PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)),
+        ]
+    }
+
+    fn setup_polynomials(&self) -> Vec<PolyIdentifier> {
+        vec![
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 0),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 1),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 2),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 3),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 4),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 5),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 6),
+        ]
+    }
+
+    fn variable_polynomials(&self) -> Vec<PolyIdentifier> {
+        vec![
+            PolyIdentifier::VariablesPolynomial(0),
+            PolyIdentifier::VariablesPolynomial(1),
+            PolyIdentifier::VariablesPolynomial(2),
+            PolyIdentifier::VariablesPolynomial(3),
+        ]
+    }
+
+    fn benefits_from_linearization(&self) -> bool {
+        true
+    }
+
+    fn linearizes_over(&self) -> Vec<PolyIdentifier> {
+        vec![
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 0),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 1),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 2),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 3),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 4),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 5),
+            PolyIdentifier::SetupPolynomial("main gate of width 4", 6),
+        ]
+    }
+
+    fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint> {
+        vec![
+            PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(0)),
+            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)),
+        ]
+    }
+
+    fn num_quotient_terms(&self) -> usize {
+        1
+    }
+
+    fn verify_on_row(&self, row: usize, poly_storage: &AssembledPolynomialStorage<E>, last_row: bool) -> E::Fr {
+        let q_a = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 0), row);
+        let q_b = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 1), row);
+        let q_c = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 2), row);
+        let q_d = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 3), row);
+        let q_m = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 4), row);
+        let q_const = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 5), row);
+        let q_d_next = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 6), row);
+
+        let a_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(0), row);
+        let b_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(1), row);
+        let c_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(2), row);
+        let d_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row);
+        let d_next_value = if last_row == false {
+            Some(poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row+1))
+        } else {
+            None
+        }; 
+
+        let mut total = E::Fr::zero();
+
+        for (q, v) in [a_value, b_value, c_value, d_value].iter()
+                    .zip([q_a, q_b, q_c, q_d].iter())
+        {
+            let mut tmp = *q;
+            tmp.mul_assign(v);
+            total.add_assign(&tmp);
+        }
+
+        total.add_assign(&q_const);
+
+        let mut tmp = q_m;
+        tmp.mul_assign(&a_value);
+        tmp.mul_assign(&b_value);
+        total.add_assign(&tmp);
+
+        if last_row == false {
+            let mut tmp = d_next_value.expect("must be able to get d_next");
+            tmp.mul_assign(&q_d_next);
+
+            total.add_assign(&tmp);
+        } else {
+            assert!(q_d_next.is_zero());
+        }
+
+        total
+    }
+
+    fn contribute_into_quotient(
+        &self, 
+        poly_storage: &AssembledPolynomialStorage<E>,
+        challenges: &[E::Fr],
+        lde_factor: usize,
+    ) -> Result<Polynomial<E::Fr, Values>, SynthesisError> {
+        unimplemented!()
+    }
+
     fn put_public_inputs_into_selector_id(&self) -> Option<usize> {
         Some(5)
     }
-
-    fn get_constraint(&self) -> &LinearCombinationOfTerms {
-        &(self.0[0])
-    }
-
-    fn get_constraints(&self) -> &[LinearCombinationOfTerms] {
-        &self.0[..]
-    }
 }
 
-impl GateEquation for Width4MainGateWithDNextEquation {
-    const HAS_NONTRIVIAL_CONSTANTS: bool = false;
-    const NUM_CONSTANTS: usize = 7;
+impl<E: Engine> Gate<E> for Width4MainGateWithDNext {
 
-    // Width4MainGateWithDNextEquation is NOT generic, so this is fine
-    // and safe since it's sync!
-    fn static_description() -> &'static Self {
-        static mut VALUE: Option<Width4MainGateWithDNextEquation> = None;
-        static INIT: std::sync::Once = std::sync::Once::new();
-
-        unsafe {
-            INIT.call_once(||{
-                VALUE = Some(Width4MainGateWithDNextEquation::default());
-            });
-
-            VALUE.as_ref().unwrap()
-        }
-    }
-
-    fn output_constant_coefficients<E: Engine>() -> Vec<E::Fr> {
-        vec![E::Fr::one(); 7]
-    }
 }
 
-
-struct SimpleBitmap(u64, usize);
-impl SimpleBitmap {
-    fn new() -> Self {
-        Self(0u64, 0)
-    }
-
-    fn get_next_unused(&mut self) -> usize {
-        for i in 0..64 {
-            if self.get(i) == false {
-                return i;
-            }
-        }
-
-        unreachable!()
-    }
-
-    fn get(&self, idx: usize) -> bool{
-        1u64 << idx & self.0 > 0
-    }
-
-    fn set(&mut self, idx: usize) {
-        self.0 |= 1u64 << idx;
-    }
-}
-
-impl MainGateEquation for Width4MainGateWithDNextEquation {
+impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
     const NUM_LINEAR_TERMS: usize = 4;
     const NUM_VARIABLES: usize = 4;
     const NUM_VARIABLES_ON_NEXT_STEP: usize = 1;
@@ -335,8 +421,8 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
         6..7
     }
 
-    fn format_term<E: Engine>(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
-        let mut flattened_variables = vec![padding; Self::NUM_VARIABLES];
+    fn format_term(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
+        let mut flattened_variables = vec![padding; 4];
         let mut flattened_coefficients = vec![E::Fr::zero(); 7];
         let mut bitmap = SimpleBitmap::new();
 
@@ -423,242 +509,29 @@ impl MainGateEquation for Width4MainGateWithDNextEquation {
     }
 }
 
-impl std::default::Default for Width4MainGateWithDNextEquation {
-    fn default() -> Self {
-        Self::get_equation()
+struct SimpleBitmap(u64, usize);
+impl SimpleBitmap {
+    fn new() -> Self {
+        Self(0u64, 0)
     }
-}
 
-impl Width4MainGateWithDNextEquation {
-    pub fn get_equation() -> Self {
-        let mut terms: Vec<PolynomialMultiplicativeTerm> = Vec::with_capacity(7);
-        // linear terms
-        for i in 0..4 {
-            // N * Q_n
-            terms.push(
-                PolynomialMultiplicativeTerm(
-                    Coefficient::PlusOne,
-                    vec![
-                        PolynomialInConstraint::VariablesPolynomial(i, TimeDilation(0)), 
-                        PolynomialInConstraint::SetupPolynomial("main gate of width 4", i, TimeDilation(0))
-                    ]
-                )
-            );
-        }
-
-        // multiplication
-        terms.push(
-            PolynomialMultiplicativeTerm(
-                Coefficient::PlusOne,
-                vec![
-                    PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)), 
-                    PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)), 
-                    PolynomialInConstraint::SetupPolynomial("main gate of width 4", 4, TimeDilation(0))
-                ]
-            )
-        );
-
-        // constant
-        terms.push(
-            PolynomialMultiplicativeTerm(
-                Coefficient::PlusOne,
-                vec![
-                    PolynomialInConstraint::SetupPolynomial("main gate of width 4", 5, TimeDilation(0))
-                ]
-            )
-        );
-
-        terms.push(
-            PolynomialMultiplicativeTerm(
-                Coefficient::PlusOne,
-                vec![
-                    PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)), 
-                    PolynomialInConstraint::SetupPolynomial("main gate of width 4", 6, TimeDilation(0))
-                ]
-            )
-        );
-
-        Self([LinearCombinationOfTerms(terms)])
-    }
-}
-
-fn check_gate_to_support_public_inputs<G: GateEquation>(gate: &G) -> bool {
-    for t in gate.get_constraints() {
-        for c in t.0.iter() {
-            if c.1.len() != 1 {
-                continue;
-            }
-            for s in c.1.iter() {
-                match s {
-                    PolynomialInConstraint::SetupPolynomial(..) => {
-                        return true;
-                    },
-                    _ => {}
-                }
+    fn get_next_unused(&mut self) -> usize {
+        for i in 0..64 {
+            if self.get(i) == false {
+                return i;
             }
         }
+
+        unreachable!()
     }
 
-    false
-}
-
-fn has_access_to_next_step<G: GateEquation>(gate: &G) -> bool {
-    for t in gate.get_constraints() {
-        for c in t.0.iter() {
-            for s in c.1.iter() {
-                match s {
-                    PolynomialInConstraint::VariablesPolynomial(_, TimeDilation(shift)) => {
-                        if shift != &0usize {
-                            return true;
-                        }
-                    },
-                    PolynomialInConstraint::WitnessPolynomial(_, TimeDilation(shift)) => {
-                        if shift != &0usize {
-                            return true;
-                        }
-                    },
-                    PolynomialInConstraint::SetupPolynomial(_, _, TimeDilation(shift)) => {
-                        if shift != &0usize {
-                            return true;
-                        }
-                    },
-                }
-            }
-        }
+    fn get(&self, idx: usize) -> bool{
+        1u64 << idx & self.0 > 0
     }
 
-    false
-}
-
-fn max_addressed_state_poly<G: GateEquation>(gate: &G) -> Option<usize> {
-    let mut max: Option<usize> = None;
-
-    for t in gate.get_constraints() {
-        for c in t.0.iter() {
-            for s in c.1.iter() {
-                match s {
-                    PolynomialInConstraint::VariablesPolynomial(idx, _) => {
-                        let new_max = match max.take() {
-                            Some(value) => {
-                                if value < *idx {
-                                    Some(*idx)
-                                } else {
-                                    Some(value)
-                                }
-                            },
-                            None => {
-                                Some(*idx)
-                            }
-                        };
-
-                        max = new_max;
-                    },
-                    _ => {}
-                }
-            }
-        }
+    fn set(&mut self, idx: usize) {
+        self.0 |= 1u64 << idx;
     }
-
-    max
-}
-
-fn max_addressed_witness_poly<G: GateEquation>(gate: &G) -> Option<usize> {
-    let mut max: Option<usize> = None;
-
-    for t in gate.get_constraints() {
-        for c in t.0.iter() {
-            for s in c.1.iter() {
-                match s {
-                    PolynomialInConstraint::WitnessPolynomial(idx, _) => {
-                        let new_max = match max.take() {
-                            Some(value) => {
-                                if value < *idx {
-                                    Some(*idx)
-                                } else {
-                                    Some(value)
-                                }
-                            },
-                            None => {
-                                Some(*idx)
-                            }
-                        };
-
-                        max = new_max;
-                    },
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    max
-}
-
-// fn max_addressed_setup_poly<G: GateEquation>(gate: &G) -> Option<(usize, &'static str)> {
-//     let mut max: Option<usize> = None;
-
-//     let mut setup_tag = None;
-
-//     for t in gate.get_constraints() {
-//         for c in t.0.iter() {
-//             for s in c.0.iter() {
-//                 match s {
-//                     PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
-//                         let new_max = match max.take() {
-//                             Some(value) => {
-//                                 if value < *idx {
-//                                     Some(*idx)
-//                                 } else {
-//                                     Some(value)
-//                                 }
-//                             },
-//                             None => {
-//                                 Some(*idx)
-//                             }
-//                         };
-
-//                         max = new_max;
-//                     },
-//                     _ => {}
-//                 }
-//             }
-//         }
-//     }
-
-//     max
-// }
-
-fn check_gate_is_allowed_for_params<E: Engine, P: PlonkConstraintSystemParams<E>, G: GateEquation>(
-    gate: &G
-) -> bool {
-    let mut max_state = max_addressed_state_poly(gate);
-    let mut max_witness = max_addressed_witness_poly(gate);
-    // let max_setup = max_addressed_setup_poly(gate);
-
-    let accesses_other_rows = has_access_to_next_step(gate);
-    if accesses_other_rows && P::CAN_ACCESS_NEXT_TRACE_STEP == false {
-        return false;
-    }
-
-    match max_state.take() {
-        Some(m) => {
-            if m > P::STATE_WIDTH {
-                return false;
-            }
-        },
-        _ => {}
-    }
-
-    match max_witness.take() {
-        Some(m) => {
-            if m > P::WITNESS_WIDTH {
-                return false;
-            }
-        },
-        _ => {}
-    }
-
-    true
 }
 
 pub trait PlonkConstraintSystemParams<E: Engine>: Sized + Copy + Clone + Send + Sync {
@@ -669,9 +542,11 @@ pub trait PlonkConstraintSystemParams<E: Engine>: Sized + Copy + Clone + Send + 
     const CAN_ACCESS_NEXT_TRACE_STEP: bool;
 }
 
+use std::sync::Arc;
+
 pub trait ConstraintSystem<E: Engine> {
     type Params: PlonkConstraintSystemParams<E>;
-    type MainGate: MainGateEquation;
+    type MainGate: MainGate<E>;
 
     // allocate a variable
     fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
@@ -683,7 +558,7 @@ pub trait ConstraintSystem<E: Engine> {
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError>;
 
-    fn new_single_gate_for_trace_step<G: GateEquation>(&mut self, 
+    fn new_single_gate_for_trace_step<G: Gate<E>>(&mut self, 
         equation: &G,
         coefficients_assignments: &[E::Fr],
         variables_assignments: &[Variable],
@@ -701,13 +576,13 @@ pub trait ConstraintSystem<E: Engine> {
 
     fn get_main_gate(&self) -> &Self::MainGate;
 
-    fn allocate_main_gate(&mut self, gate: MainGateTerm<E>) -> Result<(), SynthesisError> {
-        let (vars, coeffs) = Self::MainGate::format_term(gate, Self::get_dummy_variable())?;
+    fn allocate_main_gate(&mut self, term: MainGateTerm<E>) -> Result<(), SynthesisError> {
+        let (vars, coeffs) = Self::MainGate::format_term(term, Self::get_dummy_variable())?;
 
-        let mg = Self::MainGate::static_description();
+        let mg = Self::MainGate::default();
 
         self.new_single_gate_for_trace_step(
-            mg,
+            &mg,
             &coeffs,
             &vars,
             &[]
@@ -715,7 +590,7 @@ pub trait ConstraintSystem<E: Engine> {
     }
 
     fn begin_gates_batch_for_step(&mut self) -> Result<(), SynthesisError>;
-    fn new_gate_in_batch<G: GateEquation>(&mut self, 
+    fn new_gate_in_batch<G: Gate<E>>(&mut self, 
         equation: &G,
         coefficients_assignments: &[E::Fr],
         variables_assignments: &[Variable],
@@ -728,6 +603,18 @@ pub trait ConstraintSystem<E: Engine> {
     }
 
     fn get_dummy_variable() -> Variable;
+
+    fn get_explicit_zero(&mut self) -> Result<Variable, SynthesisError>;
+    fn get_explicit_one(&mut self) -> Result<Variable, SynthesisError>;
+
+    fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<(), SynthesisError>;
+    fn get_table(&self, name: &str) -> Result<Arc<LookupTableApplication<E>>, SynthesisError>; 
+
+    fn add_multitable(&mut self, table: MultiTableApplication<E>) -> Result<(), SynthesisError>;
+    fn get_multitable(&self, name: &str) -> Result<Arc<MultiTableApplication<E>>, SynthesisError>; 
+
+    fn apply_single_lookup_gate(&mut self, variables: &[Variable], gate: Arc<LookupTableApplication<E>>) -> Result<(), SynthesisError>;
+    fn apply_multi_lookup_gate(&mut self, variables: &[Variable], gate: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError>;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -803,52 +690,47 @@ impl<E: Engine> PolynomialStorage<E> {
             }
         }
     }
-
-    // pub fn sort_by_public_inputs(&mut self, inputs_map: &[usize]) {
-    //     for (_, storage) in self.state_map.iter_mut() {
-    //         for (input_idx, gate_idx) in inputs_map.iter().enumerate() {
-    //             storage.swap(*gate_idx, input_idx);
-    //         }
-    //     }
-    //     for (_, storage) in self.setup_map.iter_mut() {
-    //         for (input_idx, gate_idx) in inputs_map.iter().enumerate() {
-    //             storage.swap(*gate_idx, input_idx);
-    //         }
-    //     }
-    //     for (_, storage) in self.witness_map.iter_mut() {
-    //         for (input_idx, gate_idx) in inputs_map.iter().enumerate() {
-    //             storage.swap(*gate_idx, input_idx);
-    //         }
-    //     }
-    // }
 }
 
-pub struct GateDensityStorage(pub std::collections::HashMap<Box<dyn GateEquationInternal>, BitVec>);
+pub struct AssembledPolynomialStorage<E: Engine> {
+    pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub is_bitreversed: bool,
+    pub lde_factor: usize
+}
 
-impl GateDensityStorage {
+impl<E: Engine> AssembledPolynomialStorage<E> {
+    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values> {
+        match id {
+            p @ PolyIdentifier::VariablesPolynomial(..) => {
+                self.state_map.get(&p).expect("poly must exist")
+            },
+            p @ PolyIdentifier::WitnessPolynomial(..) => {
+                self.witness_map.get(&p).expect("poly must exist")
+            },
+            p @ PolyIdentifier::SetupPolynomial(..) => {
+                self.setup_map.get(&p).expect("poly must exist")
+            }
+        }
+    }
+    pub fn get_poly_at_step(&self, id: PolyIdentifier, step: usize) -> E::Fr {
+        assert!(self.is_bitreversed == false);
+        assert!(self.lde_factor == 1);
+        let p = self.get_poly(id);
+        p.as_ref()[step]
+    }
+}
+
+pub struct GateDensityStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateInternal<E>>, BitVec>);
+
+impl<E: Engine> GateDensityStorage<E> {
     pub fn new() -> Self {
         Self(std::collections::HashMap::new())
     }
-
-    // pub fn sort_by_public_inputs(&mut self, inputs_map: &[usize]) {
-    //     if self.0.is_empty() {
-    //         return;
-    //     }
-
-    //     for (_, density) in self.0.iter_mut() {
-    //         for (input_idx, gate_idx) in inputs_map.iter().enumerate() {
-    //             let value_at_n = density[*gate_idx];
-    //             assert!(value_at_n, "main gate must be set at public input");
-    //             let value_at_input_index = density[input_idx];
-
-    //             density.set(*gate_idx, value_at_input_index);
-    //             density.set(input_idx, value_at_n);
-    //         }
-    //     }
-    // }
 }
 
-pub struct GateConstantCoefficientsStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateEquationInternal>, Vec<E::Fr>>);
+pub struct GateConstantCoefficientsStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateInternal<E>>, Vec<E::Fr>>);
 
 impl<E: Engine> GateConstantCoefficientsStorage<E> {
     pub fn new() -> Self {
@@ -856,7 +738,7 @@ impl<E: Engine> GateConstantCoefficientsStorage<E> {
     }
 }
 
-pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> {
+pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> {
     pub inputs_storage: PolynomialStorage<E>,
     pub aux_storage: PolynomialStorage<E>,
     pub num_input_gates: usize,
@@ -869,16 +751,28 @@ pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
     pub num_aux: usize,
     pub trace_step_for_batch: Option<usize>,
     pub is_finalized: bool,
-    pub constraints: std::collections::HashSet<Box<dyn GateEquationInternal>>,
-    pub gate_internal_coefficients: GateConstantCoefficientsStorage<E>,
+    pub gates: std::collections::HashSet<Box<dyn GateInternal<E>>>,
+    // pub gate_internal_coefficients: GateConstantCoefficientsStorage<E>,
     pub sorted_setup_polynomial_ids: Vec<PolyIdentifier>,
-    pub sorted_gates: Vec<Box<dyn GateEquationInternal>>,
-    pub sorted_gate_constants: Vec<Vec<E::Fr>>,
-    pub aux_gate_density: GateDensityStorage,
+    pub sorted_gates: Vec<Box<dyn GateInternal<E>>>,
+    // pub sorted_gate_constants: Vec<Vec<E::Fr>>,
+    pub aux_gate_density: GateDensityStorage<E>,
+    pub explicit_zero_variable: Option<Variable>,
+    pub explicit_one_variable: Option<Variable>,
+
+    pub tables: Vec<Arc<LookupTableApplication<E>>>,
+    pub multitables: Vec<Arc<MultiTableApplication<E>>>,
+    pub table_selectors: std::collections::HashMap<String, BitVec>,
+    pub multitable_selectors: std::collections::HashMap<String, BitVec>,
+    pub table_ids_poly: Vec<E::Fr>,
+    pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
+    pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
+    pub known_table_ids: Vec<E::Fr>,
+
     _marker: std::marker::PhantomData<P>
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> ConstraintSystem<E> for TrivialAssembly<E, P, MG> {
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSystem<E> for TrivialAssembly<E, P, MG> {
     type Params = P;
     type MainGate = MG;
 
@@ -919,7 +813,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
 
         let n = self.num_input_gates;
         Self::allocate_into_storage(
-            MG::static_description(), 
+            &MG::default(), 
             &mut self.inputs_storage, 
             n, 
             &coefficients_assignments, 
@@ -945,14 +839,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
         Ok(())
     }
 
-    fn new_gate_in_batch<G: GateEquation>(&mut self, 
+    fn new_gate_in_batch<G: Gate<E>>(&mut self, 
         gate: &G,
         coefficients_assignments: &[E::Fr],
         variables_assignments: &[Variable],
         witness_assignments: &[E::Fr]
     ) -> Result<(), SynthesisError> {
         // check that gate is ok for config
-        debug_assert!(check_gate_is_allowed_for_params::<E, P, G>(&gate), format!("supplied params do not work with gate {:?}", gate));
+        // debug_assert!(check_gate_is_allowed_for_params::<E, P, G>(&gate), format!("supplied params do not work with gate {:?}", gate));
 
         let n = self.trace_step_for_batch.unwrap();
         // make zero-enumerated index
@@ -969,7 +863,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
 
         self.add_gate_into_list(gate);
 
-        if let Some(tracker) = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateEquationInternal) {
+        if let Some(tracker) = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>) {
             if tracker.len() != n {
                 let padding = n - tracker.len();
                 tracker.grow(padding, false);
@@ -978,7 +872,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
             debug_assert_eq!(n+1, tracker.len());
         } else {
             self.aux_gate_density.0.insert(gate.clone().into_internal(), BitVec::new());
-            let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateEquationInternal).unwrap();
+            let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
             tracker.grow(n, false);
             tracker.push(true);
         }
@@ -1017,13 +911,136 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Constra
     fn get_dummy_variable() -> Variable {
         Self::dummy_variable()
     }
+
+    fn get_explicit_zero(&mut self) -> Result<Variable, SynthesisError> {
+        if let Some(var) = self.explicit_zero_variable {
+            return Ok(var);
+        }
+
+        let zero = self.alloc(|| Ok(E::Fr::zero()))?;
+
+        self.explicit_zero_variable = Some(zero);
+
+        Ok(zero)
+    }
+
+    fn get_explicit_one(&mut self) -> Result<Variable, SynthesisError> {
+        if let Some(var) = self.explicit_one_variable {
+            return Ok(var);
+        }
+
+        let one = self.alloc(|| Ok(E::Fr::one()))?;
+
+        self.explicit_one_variable = Some(one);
+
+        Ok(one)
+    }
+
+    fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<(), SynthesisError> {
+        assert!(table.applies_over().len() == 3, "only support tables of width 3");
+        assert!(table.can_be_combined(), "can only add tables that are combinable");
+        assert!(!self.known_table_ids.contains(&table.table_id()));
+        let table_name = table.name();
+        let table_id = table.table_id();
+        self.tables.push(Arc::from(table));
+        self.table_selectors.insert(table_name, BitVec::new());
+        self.known_table_ids.push(table_id);
+
+        Ok(())
+    }
+
+    fn get_table(&self, name: &str) -> Result<Arc<LookupTableApplication<E>>, SynthesisError> {
+        for t in self.tables.iter() {
+            if t.name() == name {
+                return Ok(Arc::clone(t));
+            }
+        }
+
+        Err(SynthesisError::AssignmentMissing)
+    }
+
+    fn add_multitable(&mut self, table: MultiTableApplication<E>) -> Result<(), SynthesisError> {
+        let table_name = table.name();
+        self.multitables.push(Arc::from(table));
+        self.multitable_selectors.insert(table_name, BitVec::new());
+
+        Ok(())
+    }
+
+    fn get_multitable(&self, name: &str) -> Result<Arc<MultiTableApplication<E>>, SynthesisError> {
+        for t in self.multitables.iter() {
+            if t.name() == name {
+                return Ok(Arc::clone(t));
+            }
+        }
+
+        Err(SynthesisError::AssignmentMissing)
+    }
+
+    fn apply_single_lookup_gate(&mut self, variables: &[Variable], table: Arc<LookupTableApplication<E>>) -> Result<(), SynthesisError> {
+        self.num_aux_gates += 1;
+        let n = self.num_aux_gates;
+
+        debug_assert!(self.tables.contains(&table));
+
+        let table_name = table.name();
+
+        // we need to:
+        // - mark that this table applies at this row
+        // - add values into the list to later on make a sorted polynomial
+
+        // make zero-enumerated index
+        let n = n - 1;
+
+        if let Some(tracker) = self.table_selectors.get_mut(&table_name) {
+            if tracker.len() != n {
+                let padding = n - tracker.len();
+                tracker.grow(padding, false);
+            }
+            tracker.push(true);
+            debug_assert_eq!(n+1, tracker.len());
+        } else {
+            self.table_selectors.insert(table_name.clone(), BitVec::new());
+            self.individual_table_entries.insert(table_name.clone(), vec![]);
+            let tracker = self.table_selectors.get_mut(&table_name).unwrap();
+            tracker.grow(n, false);
+            tracker.push(true);
+        }
+
+        let mut table_entries = Vec::with_capacity(table.applies_over().len());
+        for v in variables.iter() {
+            if let Ok(value) = self.get_value(*v) {
+                table_entries.push(value);
+            } else {
+                panic!("value must exist");
+            }
+        }
+
+        let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
+        assert_eq!(variables.len(), table.applies_over().len());
+
+        assert!(table.is_valid_entry(&table_entries));
+
+        self.table_ids_poly.resize(n, E::Fr::zero());
+        self.table_ids_poly.push(table.table_id());
+
+        entries.push(table_entries);
+
+
+        Ok(())
+    }
+    
+    fn apply_multi_lookup_gate(&mut self, variables: &[Variable], table: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError> {
+        unimplemented!()
+    }
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> TrivialAssembly<E, P, MG> {
-    fn allocate_into_storage<G: GateEquation>(
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssembly<E, P, MG> {
+    fn allocate_into_storage<G: Gate<E>>(
         gate: &G,
         storage: &mut PolynomialStorage<E>, 
-        n: usize,coefficients_assignments: &[E::Fr],
+        n: usize,
+        coefficients_assignments: &[E::Fr],
         variables_assignments: &[Variable],
         witness_assignments: &[E::Fr]
     ) -> Result<(), SynthesisError> {
@@ -1032,67 +1049,26 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         let mut coeffs_it = coefficients_assignments.iter();
 
-        let mut setup_index: Option<(&'static str, usize)> = None;
-        for t in gate.get_constraints() {
-            for c in t.0.iter() {
-                for s in c.1.iter() {
-                    match s {
-                        PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
-                            setup_index = Some((name, *idx));
-                        },
-                        _ => {}
-                    }
-
-                    match setup_index.take() {
-                        Some((name, idx)) => {
-                            let key = PolyIdentifier::SetupPolynomial(name, idx);
-                            let poly_ref = storage.setup_map.entry(key).or_insert(vec![]);
-                            if poly_ref.len() < n {
-                                poly_ref.resize(n, E::Fr::zero());
-                            }
-                            poly_ref.push(*coeffs_it.next().unwrap_or(&zero));
-                        },
-                        _ => {}
-                    }
-                }
+        for setup_poly in gate.setup_polynomials().into_iter() {
+            let poly_ref = storage.setup_map.entry(setup_poly).or_insert(vec![]);
+            if poly_ref.len() < n {
+                poly_ref.resize(n, E::Fr::zero());
             }
+            poly_ref.push(*coeffs_it.next().unwrap_or(&zero));
         }
 
         debug_assert!(coeffs_it.next().is_none(), "must consume all the coefficients for gate");
 
-        let mut variable_index: Option<usize> = None;
-
         let mut variable_it = variables_assignments.iter();
 
-        // go through all used variables to place them into the STATE
-        for t in gate.get_constraints() {
-            for c in t.0.iter() {
-                for s in c.1.iter() {
-                    match s {
-                        PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)) => {
-                            variable_index = Some(*idx);
-                        }
-                        PolynomialInConstraint::VariablesPolynomial(_, TimeDilation(_)) => {
-                            // gate can only have power over the current step
-                        },
-                        _ => {}
-                    }
-
-                    match variable_index.take() {
-                        Some(idx) => {
-                            let key = PolyIdentifier::VariablesPolynomial(idx);
-                            let poly_ref = storage.state_map.entry(key).or_insert(vec![]);
-                            if poly_ref.len() < n {
-                                poly_ref.resize(n, dummy);
-                            } else if poly_ref.len() == n {
-                                // we consume variable only ONCE
-                                let var = *variable_it.next().unwrap_or(&dummy);
-                                poly_ref.push(var);
-                            }
-                        },
-                        _ => {}
-                    }
-                }
+        for var_poly in gate.variable_polynomials().into_iter() {
+            let poly_ref = storage.state_map.entry(var_poly).or_insert(vec![]);
+            if poly_ref.len() < n {
+                poly_ref.resize(n, dummy);
+            } else if poly_ref.len() == n {
+                // we consume variable only ONCE
+                let var = *variable_it.next().unwrap_or(&dummy);
+                poly_ref.push(var);
             }
         }
 
@@ -1100,32 +1076,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         let mut witness_it = witness_assignments.iter();
 
-        let mut witness_index: Option<usize> = None;
-
-        // go through all used variables to place them into the STATE
-        for t in gate.get_constraints() {
-            for c in t.0.iter() {
-                for s in c.1.iter() {
-                    match s {
-                        PolynomialInConstraint::WitnessPolynomial(idx, TimeDilation(0)) => {
-                            witness_index = Some(*idx);
-                        },
-                        _ => {}
-                    }
-
-                    match witness_index.take() {
-                        Some(idx) => {
-                            let key = PolyIdentifier::VariablesPolynomial(idx);
-                            let poly_ref = storage.witness_map.entry(key).or_insert(vec![]);
-                            if poly_ref.len() < n {
-                                poly_ref.resize(n, E::Fr::zero());
-                            } 
-                            poly_ref.push(*witness_it.next().unwrap_or(&zero));
-                        },
-                        _ => {}
-                    }
-                }
-            }
+        for key in gate.witness_polynomials().into_iter() {
+            let poly_ref = storage.witness_map.entry(key).or_insert(vec![]);
+            if poly_ref.len() < n {
+                poly_ref.resize(n, E::Fr::zero());
+            } 
+            poly_ref.push(*witness_it.next().unwrap_or(&zero));
         }
 
         Ok(())
@@ -1135,33 +1091,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
         self.num_input_gates + self.num_aux_gates
     }
 
-    fn add_gate_setup_polys_into_list<G: GateEquation>(&mut self, gate: &G) {
-        let mut setup_index: Option<(&'static str, usize)> = None;
-        for t in gate.get_constraints() {
-            for c in t.0.iter() {
-                for s in c.1.iter() {
-                    match s {
-                        PolynomialInConstraint::SetupPolynomial(name, idx, _) => {
-                            setup_index = Some((name, *idx));
-                        },
-                        _ => {}
-                    }
-
-                    match setup_index.take() {
-                        Some((name, idx)) => {
-                            let key = PolyIdentifier::SetupPolynomial(name, idx);
-                            self.sorted_setup_polynomial_ids.push(key);
-                        },
-                        _ => {}
-                    }
-                }
-            }
+    fn add_gate_setup_polys_into_list<G: Gate<E>>(&mut self, gate: &G) {
+        for key in gate.setup_polynomials().into_iter() {
+            self.sorted_setup_polynomial_ids.push(key);
         }
     }
 
-    fn add_gate_into_list<G: GateEquation>(&mut self, gate: &G) {
-        if !self.constraints.contains(gate.as_internal() as &dyn GateEquationInternal) {
-            self.constraints.insert(gate.clone().into_internal());
+    fn add_gate_into_list<G: Gate<E>>(&mut self, gate: &G) {
+        if !self.gates.contains(gate.as_internal() as &dyn GateInternal<E>) {
+            self.gates.insert(gate.clone().into_internal());
 
             self.add_gate_setup_polys_into_list(gate);
 
@@ -1172,9 +1110,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
                 self.max_constraint_degree = degree;
             }
 
-            let gate_constants = G::output_constant_coefficients::<E>();
-            self.sorted_gate_constants.push(gate_constants.clone());
-            self.gate_internal_coefficients.0.insert(Box::from(gate.clone().into_internal()), gate_constants);
+            // let gate_constants = G::output_constant_coefficients::<E>();
+            // self.sorted_gate_constants.push(gate_constants.clone());
+            // self.gate_internal_coefficients.0.insert(Box::from(gate.clone().into_internal()), gate_constants);
         }        
     }
 
@@ -1198,22 +1136,34 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
             trace_step_for_batch: None,
 
-            constraints: std::collections::HashSet::new(),
-            gate_internal_coefficients: GateConstantCoefficientsStorage::<E>::new(),
+            gates: std::collections::HashSet::new(),
+            // gate_internal_coefficients: GateConstantCoefficientsStorage::<E>::new(),
 
             aux_gate_density: GateDensityStorage::new(),
             sorted_setup_polynomial_ids: vec![],
             sorted_gates: vec![],
-            sorted_gate_constants: vec![],
+            // sorted_gate_constants: vec![],
 
             is_finalized: false,
+
+            explicit_zero_variable: None,
+            explicit_one_variable: None,
+
+            tables: vec![],
+            multitables: vec![],
+            table_selectors: std::collections::HashMap::new(),
+            multitable_selectors: std::collections::HashMap::new(),
+            table_ids_poly: vec![],
+
+            individual_table_entries: std::collections::HashMap::new(),
+            individual_multitable_entries: std::collections::HashMap::new(),
+
+            known_table_ids: vec![],
 
             _marker: std::marker::PhantomData
         };
 
         tmp.add_gate_into_list(&MG::default());
-
-        assert!(check_gate_to_support_public_inputs(&tmp.main_gate), "default gate must support making public inputs");
 
         tmp
     }
@@ -1238,9 +1188,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
         let empty_gate = MainGateTerm::<E>::new();
         let (vars, coeffs) = MG::format_term(empty_gate, dummmy).expect("must make empty padding gate");
 
+        let mg = MG::default();
+
         for _ in self.n()..(self.n().next_power_of_two() - 1) {
             self.new_single_gate_for_trace_step(
-                MG::static_description(), 
+                &mg, 
                 &coeffs, 
                 &vars,
                 &[]
@@ -1274,11 +1226,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         let n = self.n() - 1;
 
-        for (gate_type, density) in self.aux_gate_density.0.iter() {
-            let constraints = gate_type.as_ref().get_constraints();
-            let constants = self.gate_internal_coefficients.0.get(gate_type.as_ref()).expect(&format!("must get internal coefficients for the gate {:?}", gate_type.as_ref()));
-            let mut constants_iter = constants.iter();
+        let worker = Worker::new();
 
+        let storage = self.make_assembled_poly_storage(&worker).unwrap();
+
+        for (gate_type, density) in self.aux_gate_density.0.iter() {
             for (gate_index, is_applicable) in density.iter().enumerate() {
                 if is_applicable == false {
                     continue;
@@ -1286,63 +1238,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
                 let trace_index = self.num_input_gates + gate_index;
 
-                for constraint in constraints.iter() {
-                    let mut constraint_value = E::Fr::zero();
-                    for term in constraint.0.iter() {
-                        let mut base = match term.0 {
-                            Coefficient::PlusOne => one,
-                            Coefficient::MinusOne => minus_one,
-                            Coefficient::Other => *constants_iter.next().unwrap()
-                        };
+                let last = trace_index == n;
 
-                        let storage = self.get_storage_for_trace_step(trace_index);
+                let value = gate_type.verify_on_row(trace_index, &storage, last);
 
-                        for poly in term.1.iter() {
-                            let value = match poly {
-                                PolynomialInConstraint::VariablesPolynomial(_, TimeDilation(dilation)) => {
-                                    debug_assert!(*dilation <= 1, "only handles variables on this and next step");
-                                    if trace_index == n && *dilation > 0 {
-                                        continue;
-                                    }
-                                    let variable = storage.get_variable(poly, gate_index).expect(&format!("must get a variable for poly {:?} for aux gate {}", poly, gate_index));
-                                    let value = self.get_value(variable).expect("must get a state variable value");
-
-                                    value
-                                },
-                                PolynomialInConstraint::SetupPolynomial(_, _, TimeDilation(dilation)) => {
-                                    debug_assert_eq!(*dilation, 0, "only handles setup polys on this step for now");
-                                    if trace_index == n && *dilation > 0 {
-                                        continue;
-                                    }
-
-                                    let value = storage.get_value(poly, gate_index).expect(&format!("must get a setup value for poly {:?} for aux gate {}", poly, gate_index));
-                                    
-                                    value
-                                },
-                                PolynomialInConstraint::WitnessPolynomial(_, TimeDilation(dilation)) => {
-                                    debug_assert_eq!(*dilation, 0, "only handles witness polys on this step for now");
-                                    if trace_index == n && *dilation > 0 {
-                                        continue;
-                                    }
-
-                                    let value = storage.get_value(poly, gate_index).expect(&format!("must get a witness value for poly {:?} for aux gate {}", poly, gate_index));
-                                    
-                                    value
-                                }
-                            };
-
-                            base.mul_assign(&value);
-                        }
-
-                        constraint_value.add_assign(&base);
-                    }
-
-                    if !constraint_value.is_zero() {
-                        println!("Unsatisfied at aux gate {} (zero enumerated)", gate_index);
-                        println!("Constraint value = {}", constraint_value);
-                        println!("Gate {:?}", gate_type);
-                        return false;
-                    }
+                if value.is_zero() == false {
+                    println!("Unsatisfied at aux gate {} (zero enumerated)", gate_index);
+                    println!("Constraint value = {}", value);
+                    println!("Gate {:?}", gate_type.name());
+                    return false;
                 }
             }
         }
@@ -1475,13 +1379,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
         sigmas
     }
 
-    pub fn perform_setup(
-        &self, 
-        worker: &Worker
-    ) -> Result<
-    (std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, Vec<Polynomial<E::Fr, Values>>), 
-    SynthesisError
-    > {
+    fn make_setup_polynomials(
+        &self,
+    ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, SynthesisError> {
         assert!(self.is_finalized);
         let total_num_gates = self.n();
 
@@ -1508,6 +1408,17 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
             map.insert(id, as_poly);
         }
 
+        Ok(map)
+    }
+
+    pub fn perform_setup(
+        &self, 
+        worker: &Worker
+    ) -> Result<
+    (std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, Vec<Polynomial<E::Fr, Values>>), 
+    SynthesisError
+    > {
+        let map = self.make_setup_polynomials()?;
         let permutation_polys = self.make_permutations(&worker);
 
         Ok((map, permutation_polys))
@@ -1606,524 +1517,66 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         Ok((full_assignments, vec![]))
     }
+
+    pub fn make_assembled_poly_storage(&self, worker: &Worker) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
+        assert!(self.is_finalized);
+        let (state_polys, witness_polys) = self.make_state_and_witness_polynomials(&worker)?;
+        let setup_polys_map = self.make_setup_polynomials()?;
+
+        let mut state_polys_map = std::collections::HashMap::new();
+        for (idx, poly) in state_polys.into_iter().enumerate() {
+            let key = PolyIdentifier::VariablesPolynomial(idx);
+            let p = Polynomial::from_values(poly)?;
+            state_polys_map.insert(key, p);
+        }
+
+        let mut witness_polys_map = std::collections::HashMap::new();
+        for (idx, poly) in witness_polys.into_iter().enumerate() {
+            let key = PolyIdentifier::WitnessPolynomial(idx);
+            let p = Polynomial::from_values(poly)?;
+            witness_polys_map.insert(key, p);
+        }
+
+        let assembled = AssembledPolynomialStorage::<E> {
+            state_map: state_polys_map,
+            witness_map: witness_polys_map,
+            setup_map: setup_polys_map,
+            is_bitreversed: false,
+            lde_factor: 1
+        };
+
+        Ok(assembled)
+    }
+
+    fn make_partial_assembled_poly_storage(&self, worker: &Worker) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
+        let (state_polys, witness_polys) = self.make_state_and_witness_polynomials(&worker)?;
+        let setup_polys_map = self.make_setup_polynomials()?;
+
+        let mut state_polys_map = std::collections::HashMap::new();
+        for (idx, poly) in state_polys.into_iter().enumerate() {
+            let key = PolyIdentifier::VariablesPolynomial(idx);
+            let p = Polynomial::from_values(poly)?;
+            state_polys_map.insert(key, p);
+        }
+
+        let mut witness_polys_map = std::collections::HashMap::new();
+        for (idx, poly) in witness_polys.into_iter().enumerate() {
+            let key = PolyIdentifier::WitnessPolynomial(idx);
+            let p = Polynomial::from_values(poly)?;
+            witness_polys_map.insert(key, p);
+        }
+
+        let assembled = AssembledPolynomialStorage::<E> {
+            state_map: state_polys_map,
+            witness_map: witness_polys_map,
+            setup_map: setup_polys_map,
+            is_bitreversed: false,
+            lde_factor: 1
+        };
+
+        Ok(assembled)
+    }
 }
-
-use crate::pairing::bn256;
-
-pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
-    circuit: &C
-) -> Result<(), SynthesisError> {
-    use super::*;
-    use rescue_hash::RescueEngine;
-    use rescue_hash::bn256::Bn256RescueParams;
-
-    use super::redshift::setup::*;
-    use super::redshift::prover::*;
-    use super::redshift::tree_hash::*;
-
-    use crate::worker::Worker;
-
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
-
-    let num_gates = assembly.n();
-
-    println!("Performing setup for {} gates", num_gates);
-
-    let params = Bn256RescueParams::new_checked_2_into_1(); 
-
-    use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
-
-    let mut prng = rescue_transcript::RescueTranscript::<bn256::Bn256>::from_params(&params);
-
-    let hasher = RescueBinaryTreeHasher::<bn256::Bn256>::new(&params);
-
-    let worker = Worker::new();
-
-    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-        assembly,
-        hasher.clone(),
-        &worker
-    )?;
-
-    println!("Setup is done");
-
-    // cut permutations
-    for p in permutations.iter_mut() {
-        p.pop_last().unwrap();
-    }
-
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
-
-    let num_gates = assembly.n();
-
-    let start = std::time::Instant::now();
-
-    let (prover, first_state, first_message) = RedshiftProver::first_step(
-        assembly, 
-        hasher.clone(), 
-        &worker
-    )?;
-
-    println!("First message");
-
-    for input in first_message.input_values.iter() {
-        prng.commit_input(input);
-    }
-
-    prng.commit_input(&first_message.witness_multioracle_commitment);
-
-    let beta = prng.get_challenge();
-    let gamma = prng.get_challenge();
-
-    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
-        beta,
-        gamma,
-    };
-
-    let (second_state, second_message) = prover.second_step_from_first_step(
-        first_state, 
-        first_verifier_message, 
-        &permutations, 
-        &worker
-    )?;
-
-    println!("Second message");
-
-    prng.commit_input(&second_message.grand_product_oracle_commitment);
-
-    let alpha = prng.get_challenge();
-
-    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-    };
-
-    let (third_state, third_message) = prover.third_step_from_second_step(
-        second_state, 
-        second_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
-
-    println!("Third message");
-
-    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
-
-    let z = prng.get_challenge();
-
-    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-    };
-
-    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-        third_state, 
-        third_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
-
-    println!("Fourth message");
-
-    let mut wire_values_at_z = fourth_message.wire_values_at_z;
-    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
-
-    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
-    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
-
-    for w in wire_values_at_z.iter()
-        .chain(&wire_values_at_z_omega)
-        .chain(&Some(fourth_message.grand_product_at_z))
-        .chain(&Some(fourth_message.grand_product_at_z_omega))
-        .chain(&fourth_message.quotient_polynomial_parts_at_z)
-        .chain(&fourth_message.setup_values_at_z)
-        .chain(&fourth_message.permutation_polynomials_at_z)
-        .chain(&fourth_message.gate_selector_polynomials_at_z) 
-    {
-        prng.commit_input(&w);
-    }
-
-    let v = prng.get_challenge();
-
-    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-        v,
-    };
-
-    let fifth_message = prover.fifth_step_from_fourth_step(
-        fourth_state, 
-        fourth_verifier_message, 
-        &setup_multioracle, 
-        &mut prng,
-        &worker
-    )?;
-
-    println!("Fifth message");
-
-    println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
-
-    Ok(())
-}
-
-
-pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
-    circuit: &C
-) -> Result<(), SynthesisError> {
-    use super::*;
-    use poseidon_hash::PoseidonEngine;
-    use poseidon_hash::bn256::Bn256PoseidonParams;
-
-    use super::redshift::setup::*;
-    use super::redshift::prover::*;
-    use super::redshift::tree_hash::*;
-
-    use crate::worker::Worker;
-
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
-
-    let num_gates = assembly.n();
-
-    println!("Performing setup for {} gates", num_gates);
-
-    let params = Bn256PoseidonParams::new_checked_2_into_1(); 
-
-    use crate::plonk::commitments::transcript::{Prng, poseidon_transcript};
-
-    let mut prng = poseidon_transcript::PoseidonTranscript::<bn256::Bn256>::from_params(&params);
-
-    let hasher = PoseidonBinaryTreeHasher::<bn256::Bn256>::new(&params);
-
-    let worker = Worker::new();
-
-    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-        assembly,
-        hasher.clone(),
-        &worker
-    )?;
-
-    println!("Setup is done");
-
-    // cut permutations
-    for p in permutations.iter_mut() {
-        p.pop_last().unwrap();
-    }
-
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
-
-    let num_gates = assembly.n();
-
-    let start = std::time::Instant::now();
-
-    let (prover, first_state, first_message) = RedshiftProver::first_step(
-        assembly, 
-        hasher.clone(), 
-        &worker
-    )?;
-
-    println!("First message");
-
-    for input in first_message.input_values.iter() {
-        prng.commit_input(input);
-    }
-
-    prng.commit_input(&first_message.witness_multioracle_commitment);
-
-    let beta = prng.get_challenge();
-    let gamma = prng.get_challenge();
-
-    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
-        beta,
-        gamma,
-    };
-
-    let (second_state, second_message) = prover.second_step_from_first_step(
-        first_state, 
-        first_verifier_message, 
-        &permutations, 
-        &worker
-    )?;
-
-    println!("Second message");
-
-    prng.commit_input(&second_message.grand_product_oracle_commitment);
-
-    let alpha = prng.get_challenge();
-
-    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-    };
-
-    let (third_state, third_message) = prover.third_step_from_second_step(
-        second_state, 
-        second_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
-
-    println!("Third message");
-
-    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
-
-    let z = prng.get_challenge();
-
-    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-    };
-
-    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-        third_state, 
-        third_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
-
-    println!("Fourth message");
-
-    let mut wire_values_at_z = fourth_message.wire_values_at_z;
-    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
-
-    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
-    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
-
-    for w in wire_values_at_z.iter()
-        .chain(&wire_values_at_z_omega)
-        .chain(&Some(fourth_message.grand_product_at_z))
-        .chain(&Some(fourth_message.grand_product_at_z_omega))
-        .chain(&fourth_message.quotient_polynomial_parts_at_z)
-        .chain(&fourth_message.setup_values_at_z)
-        .chain(&fourth_message.permutation_polynomials_at_z)
-        .chain(&fourth_message.gate_selector_polynomials_at_z) 
-    {
-        prng.commit_input(&w);
-    }
-
-    let v = prng.get_challenge();
-
-    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-        v,
-    };
-
-    let fifth_message = prover.fifth_step_from_fourth_step(
-        fourth_state, 
-        fourth_verifier_message, 
-        &setup_multioracle, 
-        &mut prng,
-        &worker
-    )?;
-
-    println!("Fifth message");
-
-    println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
-
-    Ok(())
-}
-
-
-pub fn prove_with_hash_counting_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
-    circuit: &C
-) -> Result<(), SynthesisError> {
-    use super::*;
-    use rescue_hash::RescueEngine;
-    use rescue_hash::bn256::Bn256RescueParams;
-
-    use super::redshift::setup::*;
-    use super::redshift::prover::*;
-    use super::redshift::tree_hash::*;
-
-    use crate::worker::Worker;
-
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
-
-    let num_gates = assembly.n();
-
-    println!("Performing setup for {} gates", num_gates);
-
-    let params = Bn256RescueParams::new_checked_2_into_1(); 
-
-    use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
-
-    let mut prng = rescue_transcript::RescueTranscript::<bn256::Bn256>::from_params(&params);
-
-    let hasher = CountingHash::<bn256::Bn256>::new();
-
-    let worker = Worker::new();
-
-    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-        assembly,
-        hasher.clone(),
-        &worker
-    )?;
-
-    println!("Setup is done");
-
-    // cut permutations
-    for p in permutations.iter_mut() {
-        p.pop_last().unwrap();
-    }
-
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
-
-    let num_gates = assembly.n();
-
-    let start = std::time::Instant::now();
-
-    let (prover, first_state, first_message) = RedshiftProver::first_step(
-        assembly, 
-        hasher.clone(), 
-        &worker
-    )?;
-
-    println!("First message");
-
-    for input in first_message.input_values.iter() {
-        prng.commit_input(input);
-    }
-
-    prng.commit_input(&first_message.witness_multioracle_commitment);
-
-    let beta = prng.get_challenge();
-    let gamma = prng.get_challenge();
-
-    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
-        beta,
-        gamma,
-    };
-
-    let (second_state, second_message) = prover.second_step_from_first_step(
-        first_state, 
-        first_verifier_message, 
-        &permutations, 
-        &worker
-    )?;
-
-    println!("Second message");
-
-    prng.commit_input(&second_message.grand_product_oracle_commitment);
-
-    let alpha = prng.get_challenge();
-
-    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-    };
-
-    let (third_state, third_message) = prover.third_step_from_second_step(
-        second_state, 
-        second_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
-
-    println!("Third message");
-
-    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
-
-    let z = prng.get_challenge();
-
-    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-    };
-
-    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-        third_state, 
-        third_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
-
-    println!("Fourth message");
-
-    let mut wire_values_at_z = fourth_message.wire_values_at_z;
-    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
-
-    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
-    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
-
-    for w in wire_values_at_z.iter()
-        .chain(&wire_values_at_z_omega)
-        .chain(&Some(fourth_message.grand_product_at_z))
-        .chain(&Some(fourth_message.grand_product_at_z_omega))
-        .chain(&fourth_message.quotient_polynomial_parts_at_z)
-        .chain(&fourth_message.setup_values_at_z)
-        .chain(&fourth_message.permutation_polynomials_at_z)
-        .chain(&fourth_message.gate_selector_polynomials_at_z) 
-    {
-        prng.commit_input(&w);
-    }
-
-    let v = prng.get_challenge();
-
-    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-        v,
-    };
-
-    let fifth_message = prover.fifth_step_from_fourth_step(
-        fourth_state, 
-        fourth_verifier_message, 
-        &setup_multioracle, 
-        &mut prng,
-        &worker
-    )?;
-
-    println!("Fifth message");
-
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use super::redshift::tree_hash::COUNTER;
-
-    let num_hashes = COUNTER.load(Ordering::Relaxed);
-
-    println!("Num hash invocations: {}", num_hashes);
-
-    Ok(())
-}
-
 
 #[cfg(test)]
 mod test {
@@ -2229,7 +1682,7 @@ mod test {
             // here d is equal = 2a, so we need to place b there
             // and compensate it with -b somewhere before
 
-            cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
+            cs.new_single_gate_for_trace_step(&CS::MainGate::default(), 
                 &coeffs, 
                 &vars, 
                 &[]
@@ -2243,7 +1696,7 @@ mod test {
             coeffs[3] = negative_one;
             vars[3] = b;
 
-            cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
+            cs.new_single_gate_for_trace_step(&CS::MainGate::default(), 
                 &coeffs, 
                 &vars, 
                 &[]
@@ -2258,7 +1711,7 @@ mod test {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;
 
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
 
         let circuit = TestCircuit4::<Bn256> {
             _marker: PhantomData
@@ -2266,14 +1719,14 @@ mod test {
 
         circuit.synthesize(&mut assembly).expect("must work");
 
-        assert!(assembly.constraints.len() == 1);
+        assert!(assembly.gates.len() == 1);
 
         // println!("Assembly state polys = {:?}", assembly.storage.state_map);
 
         // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
 
         println!("Assembly contains {} gates", assembly.n());
-        
+        assembly.finalize();
         assert!(assembly.is_satisfied());
 
         assembly.finalize();
@@ -2281,129 +1734,5 @@ mod test {
         let worker = Worker::new();
 
         let (_storage, _permutation_polys) = assembly.perform_setup(&worker).unwrap();
-    }
-
-    #[test]
-    fn test_make_setup_for_trivial_circuit() {
-        use crate::pairing::bn256::{Bn256, Fr};
-        use crate::worker::Worker;
-
-        use super::super::redshift::setup::*;
-        use super::super::redshift::prover::*;
-        use super::super::redshift::tree_hash::*;
-        use rescue_hash::bn256::Bn256RescueParams;
-
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
-
-        let circuit = TestCircuit4::<Bn256> {
-            _marker: PhantomData
-        };
-
-        circuit.synthesize(&mut assembly).expect("must work");
-
-        assert!(assembly.constraints.len() == 1);
-
-        // println!("Assembly state polys = {:?}", assembly.storage.state_map);
-
-        // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
-
-        println!("Assembly contains {} gates", assembly.n());
-        
-        assert!(assembly.is_satisfied());
-
-        assembly.finalize();
-
-        let params = Bn256RescueParams::new_checked_2_into_1();
-        let hasher = RescueBinaryTreeHasher::<Bn256>::new(&params);
-
-        let worker = Worker::new();
-
-        let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-            assembly,
-            hasher.clone(),
-            &worker
-        ).unwrap();
-
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
-
-        let circuit = TestCircuit4::<Bn256> {
-            _marker: PhantomData
-        };
-
-        circuit.synthesize(&mut assembly).expect("must work");
-
-        assembly.finalize();
-
-        let (prover, first_state, first_message) = RedshiftProver::first_step(
-            assembly, 
-            hasher.clone(), 
-            &worker
-        ).unwrap();
-
-        let first_verifier_message = FirstVerifierMessage::<Bn256> {
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-        };
-
-        // cut permutations
-
-        for p in permutations.iter_mut() {
-            p.pop_last().unwrap();
-        }
-
-        let (second_state, second_message) = prover.second_step_from_first_step(
-            first_state, 
-            first_verifier_message, 
-            &permutations, 
-            &worker
-        ).unwrap();
-
-        let second_verifier_message = SecondVerifierMessage::<Bn256> {
-            alpha: Fr::from_str("789").unwrap(),
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-        };
-
-        let (third_state, third_message) = prover.third_step_from_second_step(
-            second_state, 
-            second_verifier_message, 
-            &setup_multioracle, 
-            &worker
-        ).unwrap();
-
-        let third_verifier_message = ThirdVerifierMessage::<Bn256> {
-            alpha: Fr::from_str("789").unwrap(),
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-            z: Fr::from_str("1337").unwrap()
-        };
-
-        let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-            third_state, 
-            third_verifier_message, 
-            &setup_multioracle, 
-            &worker
-        ).unwrap();
-
-        let fourth_verifier_message = FourthVerifierMessage::<Bn256> {
-            alpha: Fr::from_str("789").unwrap(),
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-            z: Fr::from_str("1337").unwrap(),
-            v: Fr::from_str("97531").unwrap(),
-        };
-
-        use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
-
-        let mut prng = rescue_transcript::RescueTranscript::<Bn256>::from_params(&params);
-        prng.commit_input(&Fr::from_str("97531").unwrap());
-
-        let fifth_message = prover.fifth_step_from_fourth_step(
-            fourth_state, 
-            fourth_verifier_message, 
-            &setup_multioracle, 
-            &mut prng,
-            &worker
-        ).unwrap();
     }
 }

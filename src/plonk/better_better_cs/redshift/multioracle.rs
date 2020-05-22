@@ -79,7 +79,7 @@ impl<'a, E: Engine, H: BinaryTreeHasher<E::Fr>> Multioracle<'a, E, H> {
         // we need vector (over leafs)
         // of vectors(over individual polys)
         // of references
-        let mut leaf_refs_combined = Self::combine_leafs(
+        let leaf_refs_combined = Self::combine_leafs(
             polynomials, 
             num_values_from_one_poly_into_leaf, 
             &worker

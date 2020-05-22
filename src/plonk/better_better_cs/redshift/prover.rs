@@ -7,7 +7,7 @@ use super::tree_hash::BinaryTreeHasher;
 use super::binary_tree::{BinaryTree, BinaryTreeParams};
 use crate::plonk::polynomials::*;
 use super::multioracle::Multioracle;
-use super::super::cs::*;
+use super::super::cs_old::*;
 use crate::SynthesisError;
 use super::setup::*;
 use crate::plonk::better_cs::utils::*;
