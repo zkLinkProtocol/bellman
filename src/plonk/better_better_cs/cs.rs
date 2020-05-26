@@ -344,6 +344,7 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let q_const = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 5), row);
         let q_d_next = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial("main gate of width 4", 6), row);
 
+        // println!("{}*A + {}*B + {}*C + {}*D + {} + {}*A*A + {}*D_next", q_a, q_b, q_c, q_d, q_const, q_m, q_d_next);
         let a_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(0), row);
         let b_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(1), row);
         let c_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(2), row);
@@ -353,6 +354,8 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         } else {
             None
         }; 
+
+        // println!("A = {}, B = {}, C = {}, D = {}, D_Next = {:?}", a_value, b_value, c_value, d_value, d_next_value);
 
         let mut total = E::Fr::zero();
 
@@ -608,10 +611,10 @@ pub trait ConstraintSystem<E: Engine> {
     fn get_explicit_one(&mut self) -> Result<Variable, SynthesisError>;
 
     fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<(), SynthesisError>;
-    fn get_table(&self, name: &str) -> Result<Arc<LookupTableApplication<E>>, SynthesisError>; 
+    fn get_table(&self, functional_name: &str) -> Result<Arc<LookupTableApplication<E>>, SynthesisError>; 
 
     fn add_multitable(&mut self, table: MultiTableApplication<E>) -> Result<(), SynthesisError>;
-    fn get_multitable(&self, name: &str) -> Result<Arc<MultiTableApplication<E>>, SynthesisError>; 
+    fn get_multitable(&self, functional_name: &str) -> Result<Arc<MultiTableApplication<E>>, SynthesisError>; 
 
     fn apply_single_lookup_gate(&mut self, variables: &[Variable], gate: Arc<LookupTableApplication<E>>) -> Result<(), SynthesisError>;
     fn apply_multi_lookup_gate(&mut self, variables: &[Variable], gate: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError>;
@@ -943,6 +946,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
         let table_name = table.name();
         let table_id = table.table_id();
         self.tables.push(Arc::from(table));
+        self.individual_table_entries.insert(table_name.clone(), vec![]);
         self.table_selectors.insert(table_name, BitVec::new());
         self.known_table_ids.push(table_id);
 
@@ -960,16 +964,24 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     }
 
     fn add_multitable(&mut self, table: MultiTableApplication<E>) -> Result<(), SynthesisError> {
-        let table_name = table.name();
+        let table_name = table.functional_name();
+        let mut exists = false;
+        for t in self.multitables.iter() {
+            if t.functional_name() == table_name {
+                exists = true;
+            }
+        }
+        assert!(exists == false);
         self.multitables.push(Arc::from(table));
-        self.multitable_selectors.insert(table_name, BitVec::new());
+        self.multitable_selectors.insert(table_name.clone(), BitVec::new());
+        self.individual_table_entries.insert(table_name.clone(), vec![]);
 
         Ok(())
     }
 
-    fn get_multitable(&self, name: &str) -> Result<Arc<MultiTableApplication<E>>, SynthesisError> {
+    fn get_multitable(&self, functional_name: &str) -> Result<Arc<MultiTableApplication<E>>, SynthesisError> {
         for t in self.multitables.iter() {
-            if t.name() == name {
+            if t.functional_name() == functional_name {
                 return Ok(Arc::clone(t));
             }
         }
@@ -992,20 +1004,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
         // make zero-enumerated index
         let n = n - 1;
 
-        if let Some(tracker) = self.table_selectors.get_mut(&table_name) {
-            if tracker.len() != n {
-                let padding = n - tracker.len();
-                tracker.grow(padding, false);
-            }
-            tracker.push(true);
-            debug_assert_eq!(n+1, tracker.len());
-        } else {
-            self.table_selectors.insert(table_name.clone(), BitVec::new());
-            self.individual_table_entries.insert(table_name.clone(), vec![]);
-            let tracker = self.table_selectors.get_mut(&table_name).unwrap();
-            tracker.grow(n, false);
-            tracker.push(true);
+        let tracker = self.table_selectors.get_mut(&table_name).unwrap();
+        if tracker.len() != n {
+            let padding = n - tracker.len();
+            tracker.grow(padding, false);
         }
+        tracker.push(true);
+        debug_assert_eq!(n+1, tracker.len());
 
         let mut table_entries = Vec::with_capacity(table.applies_over().len());
         for v in variables.iter() {
@@ -1031,7 +1036,40 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     }
     
     fn apply_multi_lookup_gate(&mut self, variables: &[Variable], table: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError> {
-        unimplemented!()
+        let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
+        // make zero-enumerated index
+        let n = n - 1;
+
+        let table_name = table.functional_name();
+        let tracker = self.multitable_selectors.get_mut(&table_name).unwrap();
+        if tracker.len() != n {
+            let padding = n - tracker.len();
+            tracker.grow(padding, false);
+        }
+        tracker.push(true);
+        debug_assert_eq!(n+1, tracker.len());
+
+        let mut table_entries = Vec::with_capacity(table.applies_over().len());
+        for v in variables.iter() {
+            if let Ok(value) = self.get_value(*v) {
+                table_entries.push(value);
+            } else {
+                panic!("value must exist");
+            }
+        }
+
+        let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
+        assert_eq!(variables.len(), table.applies_over().len());
+
+        assert!(table.is_valid_entry(&table_entries));
+
+        self.table_ids_poly.resize(n, E::Fr::zero());
+        self.table_ids_poly.push(table.table_id());
+
+        entries.push(table_entries);
+
+
+        Ok(())
     }
 }
 
@@ -1228,7 +1266,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         let worker = Worker::new();
 
-        let storage = self.make_assembled_poly_storage(&worker).unwrap();
+        let storage = self.make_assembled_poly_storage(&worker, false).unwrap();
 
         for (gate_type, density) in self.aux_gate_density.0.iter() {
             for (gate_index, is_applicable) in density.iter().enumerate() {
@@ -1381,8 +1419,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
     fn make_setup_polynomials(
         &self,
+        with_finalization: bool
     ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, SynthesisError> {
-        assert!(self.is_finalized);
+        if with_finalization {
+            assert!(self.is_finalized);
+        }
+
         let total_num_gates = self.n();
 
         let num_input_gates = self.num_input_gates;
@@ -1418,7 +1460,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     (std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, Vec<Polynomial<E::Fr, Values>>), 
     SynthesisError
     > {
-        let map = self.make_setup_polynomials()?;
+        let map = self.make_setup_polynomials(true)?;
         let permutation_polys = self.make_permutations(&worker);
 
         Ok((map, permutation_polys))
@@ -1470,12 +1512,19 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
     pub fn make_state_and_witness_polynomials(
         &self,
-        worker: &Worker
+        worker: &Worker,
+        with_finalization: bool
     ) -> Result<(Vec<Vec<E::Fr>>, Vec<Vec<E::Fr>>), SynthesisError>
     {
-        assert!(self.is_finalized);
+        if with_finalization {
+            assert!(self.is_finalized);
+        }
 
-        let mut full_assignments = vec![Vec::with_capacity((self.n()+1).next_power_of_two()); P::STATE_WIDTH];
+        let mut full_assignments = if with_finalization {
+            vec![Vec::with_capacity((self.n()+1).next_power_of_two()); P::STATE_WIDTH]
+        } else {
+            vec![Vec::with_capacity(self.n()+1); P::STATE_WIDTH]
+        };
 
         let num_input_gates = self.num_input_gates;
         let num_aux_gates = self.num_aux_gates;
@@ -1507,50 +1556,26 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             }
         });
 
-        for p in full_assignments.iter_mut() {
-            p.resize((self.n()+1).next_power_of_two() - 1, E::Fr::zero());
-        }
+        if with_finalization {
+            for p in full_assignments.iter_mut() {
+                p.resize((self.n()+1).next_power_of_two() - 1, E::Fr::zero());
+            }
 
-        for a in full_assignments.iter() {
-            assert_eq!(a.len(), (self.n()+1).next_power_of_two() - 1);
+            for a in full_assignments.iter() {
+                assert_eq!(a.len(), (self.n()+1).next_power_of_two() - 1);
+            }
         }
 
         Ok((full_assignments, vec![]))
     }
 
-    pub fn make_assembled_poly_storage(&self, worker: &Worker) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
-        assert!(self.is_finalized);
-        let (state_polys, witness_polys) = self.make_state_and_witness_polynomials(&worker)?;
-        let setup_polys_map = self.make_setup_polynomials()?;
-
-        let mut state_polys_map = std::collections::HashMap::new();
-        for (idx, poly) in state_polys.into_iter().enumerate() {
-            let key = PolyIdentifier::VariablesPolynomial(idx);
-            let p = Polynomial::from_values(poly)?;
-            state_polys_map.insert(key, p);
+    pub fn make_assembled_poly_storage(&self, worker: &Worker, with_finalization: bool) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
+        if with_finalization {
+            assert!(self.is_finalized);
         }
-
-        let mut witness_polys_map = std::collections::HashMap::new();
-        for (idx, poly) in witness_polys.into_iter().enumerate() {
-            let key = PolyIdentifier::WitnessPolynomial(idx);
-            let p = Polynomial::from_values(poly)?;
-            witness_polys_map.insert(key, p);
-        }
-
-        let assembled = AssembledPolynomialStorage::<E> {
-            state_map: state_polys_map,
-            witness_map: witness_polys_map,
-            setup_map: setup_polys_map,
-            is_bitreversed: false,
-            lde_factor: 1
-        };
-
-        Ok(assembled)
-    }
-
-    fn make_partial_assembled_poly_storage(&self, worker: &Worker) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
-        let (state_polys, witness_polys) = self.make_state_and_witness_polynomials(&worker)?;
-        let setup_polys_map = self.make_setup_polynomials()?;
+        
+        let (state_polys, witness_polys) = self.make_state_and_witness_polynomials(&worker, with_finalization)?;
+        let setup_polys_map = self.make_setup_polynomials(with_finalization)?;
 
         let mut state_polys_map = std::collections::HashMap::new();
         for (idx, poly) in state_polys.into_iter().enumerate() {
