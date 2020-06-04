@@ -29,6 +29,7 @@ pub trait LookupTableInternal<E: Engine>: Send
         fn table_id(&self) -> E::Fr;
         fn sort(&self, values: &[E::Fr], column: usize) -> Result<Vec<E::Fr>, SynthesisError>;
         fn box_clone(&self) -> Box<dyn LookupTableInternal<E>>;
+        fn column_is_trivial(&self, column_num: usize) -> bool;
     }
 
 impl<E: Engine> std::hash::Hash for dyn LookupTableInternal<E> {
@@ -88,7 +89,43 @@ impl<E: Engine> LookupTableApplication<E> {
         }
     }
 
-    pub fn name(&self) -> String {
+    pub fn new_range_table_of_width_3(width: usize, over: Vec<PolyIdentifier>) -> Result<Self, SynthesisError> {
+        let table = RangeCheckTableOverOneColumnOfWidth3::new(width);
+
+        let name = "Range check table";
+
+        Ok(Self {
+            name: name,
+            apply_over: over,
+            table_to_apply: table.box_clone(),
+            can_be_combined: true
+        })
+    }
+
+    pub fn new_xor_table(bit_width: usize, over: Vec<PolyIdentifier>) -> Result<Self, SynthesisError> {
+        Self::new_binop_table::<XorBinop>(bit_width, over, "XOR table")
+    }
+
+    pub fn new_and_table(bit_width: usize, over: Vec<PolyIdentifier>) -> Result<Self, SynthesisError> {
+        Self::new_binop_table::<AndBinop>(bit_width, over, "AND table")
+    }
+
+    pub fn new_or_table(bit_width: usize, over: Vec<PolyIdentifier>) -> Result<Self, SynthesisError> {
+        Self::new_binop_table::<OrBinop>(bit_width, over, "OR table")
+    }
+
+    pub fn new_binop_table<B: Binop>(bit_width: usize, over: Vec<PolyIdentifier>, name: &'static str) -> Result<Self, SynthesisError> {
+        let table = TwoKeysOneValueBinopTable::<E, B>::new(bit_width, name);
+
+        Ok(Self {
+            name: name,
+            apply_over: over,
+            table_to_apply: table.box_clone(),
+            can_be_combined: true
+        })
+    }
+
+    pub fn functional_name(&self) -> String {
         format!("{} over {:?}", self.table_to_apply.name(), self.apply_over)
     }
 
@@ -97,7 +134,7 @@ impl<E: Engine> LookupTableApplication<E> {
     }
 
     pub fn can_be_combined(&self) -> bool {
-        self.table_to_apply.allows_combining()
+        self.can_be_combined && self.table_to_apply.allows_combining()
     }
 
     pub fn is_valid_entry(&self, values: &[E::Fr]) -> bool {
@@ -118,6 +155,18 @@ impl<E: Engine> LookupTableApplication<E> {
     pub fn size(&self) -> usize {
         self.table_to_apply.table_size()
     }
+
+    pub fn width(&self) -> usize {
+        self.table_to_apply.num_keys() + self.table_to_apply.num_values()
+    }
+
+    pub fn get_table_values_for_polys(&self) -> Vec<Vec<E::Fr>> {
+        self.table_to_apply.get_table_values_for_polys()
+    }
+
+    pub fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
+        self.table_to_apply.query(keys)
+    }
 }
 
 /// Apply multiple tables at the same time to corresponding columns
@@ -125,7 +174,7 @@ impl<E: Engine> LookupTableApplication<E> {
 pub struct MultiTableApplication<E: Engine> {
     name: &'static str,
     apply_over: Vec<PolyIdentifier>,
-    table_to_apply: Vec<Box<dyn LookupTableInternal<E>>>,
+    tables_to_apply: Vec<Box<dyn LookupTableInternal<E>>>,
     table_size: usize,
     id: E::Fr
 }
@@ -134,7 +183,7 @@ impl<E: Engine> PartialEq for MultiTableApplication<E> {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name &&
         self.apply_over == other.apply_over &&
-        &self.table_to_apply == &other.table_to_apply &&
+        &self.tables_to_apply == &other.tables_to_apply &&
         self.table_size == other.table_size
     }
 }
@@ -158,7 +207,7 @@ impl<E: Engine> MultiTableApplication<E> {
         Ok(Self {
             name: name,
             apply_over: over,
-            table_to_apply: vec![table.box_clone(), table.box_clone(), table.box_clone()],
+            tables_to_apply: vec![table.box_clone(), table.box_clone(), table.box_clone()],
             table_size: 1 << width,
             id: table_id_from_string::<E::Fr>(name)
         })
@@ -172,7 +221,7 @@ impl<E: Engine> MultiTableApplication<E> {
         assert_eq!(values.len(), 3);
         let mut all_values = values;
         let mut valid = true;
-        for t in self.table_to_apply.iter() {
+        for t in self.tables_to_apply.iter() {
             let num_keys = t.num_keys();
             let num_values = t.num_values();
             let (keys, rest) = all_values.split_at(num_keys);
@@ -191,23 +240,37 @@ impl<E: Engine> MultiTableApplication<E> {
     pub fn table_id(&self) -> E::Fr {
         self.id
     }
+
+    pub fn width(&self) -> usize {
+        let mut width = 0;
+        for t in self.tables_to_apply.iter() {
+            width += t.num_keys();
+            width += t.num_values();
+        }
+
+        width
+    }
 }
 #[derive(Clone)]
 pub struct RangeCheckTableOverSingleColumn<E: Engine> {
     table_entries: Vec<E::Fr>,
+    entries_map: std::collections::HashMap<E::Fr, usize>,
     bits: usize
 }
 
 impl<E: Engine> RangeCheckTableOverSingleColumn<E> {
     pub fn new(bits: usize) -> Self {
         let mut entries = Vec::with_capacity(1 << bits);
+        let mut map =  std::collections::HashMap::with_capacity(1 << bits);
         for i in 0..(1 << bits) {
             let value = E::Fr::from_str(&i.to_string()).unwrap();
             entries.push(value);
+            map.insert(value, i);
         }
 
         Self {
             table_entries: entries,
+            entries_map: map,
             bits
         }
     }
@@ -241,12 +304,13 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
         assert!(keys.len() == 1);
         assert!(values.len() == 0);
 
-        self.table_entries.contains(&keys[0])
+        self.entries_map.get(&keys[0]).is_some()
+        // self.table_entries.contains(&keys[0])
     }
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == 1);
 
-        if self.table_entries.contains(&keys[0]) {
+        if self.entries_map.get(&keys[0]).is_some() {
             return Ok(vec![]);
         } else {
             return Err(SynthesisError::Unsatisfiable);
@@ -256,7 +320,7 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
         vec![self.table_entries.clone()]
     }
     fn table_id(&self) -> E::Fr {
-        E::Fr::from_str("1234").unwrap()
+        table_id_from_string(self.name())
     }
     fn sort(&self, values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
         unimplemented!()
@@ -264,7 +328,13 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
     fn box_clone(&self) -> Box<dyn LookupTableInternal<E>> {
         Box::from(self.clone())
     }
+    fn column_is_trivial(&self, column_num: usize) -> bool {
+        assert!(column_num < 1);
+
+        false
+    }
 }
+
 #[derive(Clone)]
 pub struct RangeCheckTableOverOneColumnOfWidth3<E: Engine> {
     table_entries: Vec<E::Fr>,
@@ -339,13 +409,168 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverOneColumnOfWidth3<
         vec![self.table_entries.clone(), self.dummy_entries.clone(), self.dummy_entries.clone()]
     }
     fn table_id(&self) -> E::Fr {
-        E::Fr::from_str("5678").unwrap()
+        table_id_from_string(self.name())
     }
     fn sort(&self, values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
         unimplemented!()
     }
     fn box_clone(&self) -> Box<dyn LookupTableInternal<E>> {
         Box::from(self.clone())
+    }
+
+    fn column_is_trivial(&self, column_num: usize) -> bool {
+        assert!(column_num < 3);
+
+        if column_num == 0 {
+            false
+        } else {
+            true
+        }
+    }
+}
+
+pub trait Binop: 'static + Clone + Copy + Send + Sync + std::fmt::Debug + PartialEq + Eq {
+    const NAME: &'static str;
+    fn apply(x: usize, y: usize) -> usize;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct XorBinop;
+
+impl Binop for XorBinop {
+    const NAME: &'static str = "XOR binop";
+
+    fn apply(x: usize, y: usize) -> usize {
+        x ^ y
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AndBinop;
+
+impl Binop for AndBinop {
+    const NAME: &'static str =  "AND binop";
+
+    fn apply(x: usize, y: usize) -> usize {
+        x & y
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OrBinop;
+
+impl Binop for OrBinop {
+    const NAME: &'static str = "OR binop";
+
+    fn apply(x: usize, y: usize) -> usize {
+        x | y
+    }
+}
+
+#[derive(Clone)]
+pub struct TwoKeysOneValueBinopTable<E: Engine, B: Binop> {
+    table_entries: [Vec<E::Fr>; 3],
+    table_lookup_map: std::collections::HashMap<(E::Fr, E::Fr), E::Fr>,
+    bits: usize,
+    name: &'static str,
+    _binop_marker: std::marker::PhantomData<B>
+}
+
+impl<E: Engine, B: Binop> TwoKeysOneValueBinopTable<E, B> {
+    pub fn new(bits: usize, name: &'static str) -> Self {
+        let mut key_0 = Vec::with_capacity(1 << bits);
+        let mut key_1 = Vec::with_capacity(1 << bits);
+        let mut value_0 = Vec::with_capacity(1 << bits);
+
+        let mut map = std::collections::HashMap::with_capacity(1 << (bits * 2));
+        for x in 0..(1 << bits) {
+            for y in 0..(1<<bits) {
+                let z = B::apply(x, y);
+
+                let x = E::Fr::from_str(&x.to_string()).unwrap();
+                let y = E::Fr::from_str(&y.to_string()).unwrap();
+                let z = E::Fr::from_str(&z.to_string()).unwrap();
+                key_0.push(x);
+                key_1.push(y);
+                value_0.push(z);
+
+                map.insert((x, y), z);
+            }
+            
+        }
+
+        Self {
+            table_entries: [key_0, key_1, value_0],
+            table_lookup_map: map,
+            bits,
+            name,
+            _binop_marker: std::marker::PhantomData
+        }
+    }
+}
+
+impl<E: Engine, B: Binop> std::fmt::Debug for TwoKeysOneValueBinopTable<E, B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TwoKeysOneValueBinopTable")
+            .field("bits", &self.bits)
+            .field("binop", &B::NAME)
+            .finish()
+    }
+}
+
+impl<E: Engine, B: Binop> LookupTableInternal<E> for TwoKeysOneValueBinopTable<E, B> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn table_size(&self) -> usize {
+        1usize << (self.bits*2)
+    }
+    fn num_keys(&self) -> usize {
+        2
+    }
+    fn num_values(&self) -> usize {
+        1
+    }
+    fn allows_combining(&self) -> bool {
+        true
+    }
+    fn is_valid_entry(&self, keys: &[E::Fr], values: &[E::Fr]) -> bool {
+        assert!(keys.len() == 2);
+        assert!(values.len() == 1);
+
+        if let Some(entry) = self.table_lookup_map.get(&(keys[0], keys[1])) {
+            return entry == &values[0];
+        }
+
+        false
+    }
+    fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
+        assert!(keys.len() == 2);
+
+        if let Some(entry) = self.table_lookup_map.get(&(keys[0], keys[1])) {
+            return Ok(vec![*entry])
+        }
+
+        Err(SynthesisError::Unsatisfiable)
+    }
+
+    fn get_table_values_for_polys(&self) -> Vec<Vec<E::Fr>> {
+        vec![self.table_entries[0].clone(), self.table_entries[1].clone(), self.table_entries[2].clone()]
+    }
+    fn table_id(&self) -> E::Fr {
+        table_id_from_string(self.name())
+    }
+    fn sort(&self, values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
+        unimplemented!()
+    }
+    fn box_clone(&self) -> Box<dyn LookupTableInternal<E>> {
+        Box::from(self.clone())
+    }
+
+    fn column_is_trivial(&self, column_num: usize) -> bool {
+        assert!(column_num < 3);
+
+        false 
     }
 }
 
@@ -364,4 +589,70 @@ fn table_id_from_string<F: PrimeField>(
     repr.read_be(&h[..]).unwrap();
 
     F::from_repr(repr).unwrap()
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct KeyValueSet<E: Engine> {
+    pub(crate) inner: [E::Fr; 3]
+}
+
+impl<E: Engine> KeyValueSet<E> {
+    pub(crate) fn new(set: [E::Fr; 3]) -> Self {
+        Self {
+            inner: set
+        }
+    }
+
+    pub(crate) fn from_slice(input: &[E::Fr]) -> Self {
+        debug_assert_eq!(input.len(), 3);
+        let mut inner = [E::Fr::zero(); 3];
+        inner.copy_from_slice(input);
+
+        Self {
+            inner
+        }
+    }
+}
+
+impl<E: Engine> std::cmp::PartialEq for KeyValueSet<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<E: Engine> std::cmp::Eq for KeyValueSet<E> {}
+
+impl<E: Engine> std::cmp::Ord for KeyValueSet<E> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.inner[0].into_repr().cmp(&other.inner[0].into_repr()) {
+            std::cmp::Ordering::Equal => {
+                return self.inner[1].into_repr().cmp(&other.inner[1].into_repr());
+                // match self.inner[1].into_repr().cmp(&other.inner[1].into_repr()) {
+                //     std::cmp::Ordering::Equal => {
+                //         unreachable!("keys and values set must have no duality");
+                //     }
+                //     ord @ _ => {
+                //         return ord;
+                //     }
+                // }
+            },
+            ord @ _ => {
+                return ord;
+            }
+        }
+    }
+}
+
+impl<E: Engine> std::cmp::PartialOrd for KeyValueSet<E> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<E: Engine> std::fmt::Debug for KeyValueSet<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyValueSet")
+            .field("inner", &self.inner)
+            .finish()
+    }
 }
