@@ -656,3 +656,13 @@ impl<E: Engine> std::fmt::Debug for KeyValueSet<E> {
             .finish()
     }
 }
+
+pub(crate) struct LookupDataHolder<E: Engine> {
+    pub(crate) f_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub(crate) t_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub(crate) t_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub(crate) s_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub(crate) s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub(crate) t_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+    pub(crate) s_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+}
