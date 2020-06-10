@@ -289,6 +289,7 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
         "Range check table for a single column"
     }
     fn table_size(&self) -> usize {
+        debug_assert_eq!(1usize << self.bits, self.table_entries.len());
         1usize << self.bits
     }
     fn num_keys(&self) -> usize {
@@ -304,8 +305,7 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
         assert!(keys.len() == 1);
         assert!(values.len() == 0);
 
-        self.entries_map.get(&keys[0]).is_some()
-        // self.table_entries.contains(&keys[0])
+        self.table_entries.contains(&keys[0])
     }
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == 1);
@@ -372,6 +372,7 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverOneColumnOfWidth3<
         "Range check table for a single column only with width 3"
     }
     fn table_size(&self) -> usize {
+        debug_assert_eq!(1usize << self.bits, self.table_entries.len());
         1usize << self.bits
     }
     fn num_keys(&self) -> usize {
@@ -392,7 +393,6 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverOneColumnOfWidth3<
         valid = valid & keys[2].is_zero();
 
         valid
-
     }
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == 3);
@@ -523,6 +523,7 @@ impl<E: Engine, B: Binop> LookupTableInternal<E> for TwoKeysOneValueBinopTable<E
         self.name
     }
     fn table_size(&self) -> usize {
+        debug_assert_eq!(1usize << (self.bits*2), self.table_entries[0].len());
         1usize << (self.bits*2)
     }
     fn num_keys(&self) -> usize {
@@ -663,6 +664,7 @@ pub(crate) struct LookupDataHolder<E: Engine> {
     pub(crate) t_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) s_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub(crate) f_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
     pub(crate) t_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
     pub(crate) s_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
 }

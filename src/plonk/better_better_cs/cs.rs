@@ -93,6 +93,22 @@ pub trait GateInternal<E: Engine>: Send
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
         worker: &Worker
     ) -> Result<Polynomial<E::Fr, Values>, SynthesisError>;
+    fn contribute_into_linearization(
+        &self, 
+        domain_size: usize,
+        at: E::Fr,
+        queried_values: std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        challenges: &[E::Fr],
+        worker: &Worker
+    ) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError>;
+    fn contribute_into_verification_equation(
+        &self, 
+        domain_size: usize,
+        at: E::Fr,
+        queried_values: std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        challenges: &[E::Fr],
+    ) -> Result<E::Fr, SynthesisError>;
     fn put_public_inputs_into_selector_id(&self) -> Option<usize>;
     fn box_clone(&self) -> Box<dyn GateInternal<E>>;
 }
@@ -438,6 +454,27 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         _worker: &Worker
     ) -> Result<Polynomial<E::Fr, Values>, SynthesisError> {
         unreachable!("this type of gate can only be used as a main gate");
+    }
+
+    fn contribute_into_linearization(
+        &self, 
+        domain_size: usize,
+        at: E::Fr,
+        queried_values: std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        challenges: &[E::Fr],
+        worker: &Worker
+    ) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError> {
+        unimplemented!("NYI")
+    }
+    fn contribute_into_verification_equation(
+        &self, 
+        domain_size: usize,
+        at: E::Fr,
+        queried_values: std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        challenges: &[E::Fr],
+    ) -> Result<E::Fr, SynthesisError> {
+        unimplemented!("NYI")
     }
 
     fn put_public_inputs_into_selector_id(&self) -> Option<usize> {
@@ -1445,7 +1482,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     fn get_value(&self, var: Variable) -> Result<E::Fr, SynthesisError> {
         let value = match var {
             Variable(Index::Aux(0)) => {
-                E::Fr::zero()
+                use crate::rand::Rng;
+
+                let mut rng = crate::rand::thread_rng();
+                let value: E::Fr = rng.gen();
+
+                value
+                // E::Fr::zero()
                 // return Err(SynthesisError::AssignmentMissing);
             }
             Variable(Index::Input(0)) => {
@@ -1567,11 +1610,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
 
         let keys_and_values_len = table.applies_over().len();
         let mut table_entries = Vec::with_capacity(keys_and_values_len + 1);
+        let mut values_are_known = true;
         for v in variables.iter() {
             if let Ok(value) = self.get_value(*v) {
                 table_entries.push(value);
             } else {
-                panic!("value must exist");
+                values_are_known = false;
+                table_entries.push(E::Fr::zero());
             }
         }
         table_entries.push(table.table_id());        
@@ -1579,7 +1624,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
         let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
         assert_eq!(variables.len(), table.applies_over().len());
 
-        assert!(table.is_valid_entry(&table_entries[..keys_and_values_len]));
+        if values_are_known {
+            assert!(table.is_valid_entry(&table_entries[..keys_and_values_len]));
+        }
         entries.push(table_entries);
 
         // keep track of what table is applied at what row
@@ -1777,9 +1824,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         let mut min_space_for_lookups = self.num_table_lookups;
         for table in self.tables.iter() {
-            min_space_for_lookups += table.size();
+            let table_num_rows = table.size();
+            min_space_for_lookups += table_num_rows;
         }
-        // min_space_for_lookups += self.n();
+        min_space_for_lookups += self.n();
 
         let new_size_candidates = [(self.n() + 1).next_power_of_two() - 1, (min_space_for_lookups + 1).next_power_of_two() - 1];
 
@@ -2579,6 +2627,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 t_shifted_unpadded_values: Some(Polynomial::from_values_unpadded(full_t_poly_values_shifted)?),
                 s_poly_unpadded_values: Some(Polynomial::from_values_unpadded(full_s_poly_values)?),
                 s_shifted_unpadded_values: Some(Polynomial::from_values_unpadded(full_s_poly_values_shifted)?),
+                f_poly_monomial: None,
                 t_poly_monomial: None,
                 s_poly_monomial: None,
             };
@@ -2681,14 +2730,39 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         drop(z_den);
 
         let z = z_num.calculate_shifted_grand_product(&worker)?;
+        drop(z_num);
 
         assert!(z.size().is_power_of_two());
 
         assert!(z.as_ref()[0] == E::Fr::one());
 
-        let lookup_z_poly = if let Some(data) = lookup_data.as_mut() {
+        let copy_permutation_z_in_monomial_form = z.ifft_using_bitreversed_ntt(
+            &worker, 
+            &omegas_inv_bitreversed, 
+            &E::Fr::one()
+        )?;
+
+        // TODO: move to setup
+        let mut permutation_polys_in_monomial_form = vec![];
+        for p in permutation_polys.into_iter() {
+            let p = p.ifft_using_bitreversed_ntt(
+                &worker, 
+                &omegas_inv_bitreversed, 
+                &E::Fr::one()
+            )?;
+
+            permutation_polys_in_monomial_form.push(p);
+        }
+
+        let mut beta_for_lookup = None; 
+        let mut gamma_for_lookup = None;
+
+        let mut lookup_z_poly_in_monomial_form = if let Some(data) = lookup_data.as_mut() {
             let beta_for_lookup_permutation = E::Fr::from_str("789").unwrap();
             let gamma_for_lookup_permutation = E::Fr::from_str("1230").unwrap();
+
+            beta_for_lookup = Some(beta_for_lookup_permutation);
+            gamma_for_lookup = Some(gamma_for_lookup_permutation);
     
             let mut beta_plus_one = beta_for_lookup_permutation;
             beta_plus_one.add_assign(&E::Fr::one());
@@ -2697,7 +2771,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     
             let expected = gamma_beta.pow([(required_domain_size-1) as u64]);
             
-            let f_poly_values = data.f_poly_unpadded_values.take().unwrap();
+            let f_poly_unpadded_values = data.f_poly_unpadded_values.take().unwrap();
             let t_poly_unpadded_values = data.t_poly_unpadded_values.take().unwrap();
             let t_shifted_unpadded_values = data.t_shifted_unpadded_values.take().unwrap();
             let s_poly_unpadded_values = data.s_poly_unpadded_values.take().unwrap();
@@ -2714,11 +2788,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 t.add_assign_scaled(&worker, &t_shifted_unpadded_values, &beta_for_lookup_permutation);
                 t.add_constant(&worker, &gamma_beta);
 
-                let mut tmp = f_poly_values.clone();
+                let mut tmp = f_poly_unpadded_values.clone();
                 tmp.add_constant(&worker, &gamma_for_lookup_permutation);
                 tmp.scale(&worker, beta_plus_one);
 
                 t.mul_assign(&worker, &tmp);
+                drop(tmp);
 
                 t
             };
@@ -2739,11 +2814,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             drop(z_den);
 
             let z = z_num.calculate_shifted_grand_product(&worker)?;
+            drop(z_num);
 
             assert!(z.size().is_power_of_two());
 
             assert_eq!(z.as_ref()[0], E::Fr::one());
-            assert_eq!(z.as_ref().last().unwrap(), &expected);
+            assert_eq!(*z.as_ref().last().unwrap(), expected);
+
+            let f_poly_monomial = f_poly_unpadded_values.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
+                &worker,
+                &omegas_inv_bitreversed,
+                &E::Fr::one()
+            )?;
 
             let t_poly_monomial = t_poly_unpadded_values.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
                 &worker,
@@ -2757,20 +2839,22 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 &E::Fr::one()
             )?;
 
+            data.f_poly_monomial = Some(f_poly_monomial);
             data.t_poly_monomial = Some(t_poly_monomial);
             data.s_poly_monomial = Some(s_poly_monomial);
 
-            Some(z_num)
+            let z = z.ifft_using_bitreversed_ntt(
+                &worker, 
+                &omegas_inv_bitreversed, 
+                &E::Fr::one()
+            )?;
+
+            Some(z)
         } else {
             None
         };
 
         // TODO: commit to z polynomials
-
-        // make auxilary storages:
-        // - LDEs of gate selector polynomials
-        // - LDEs of state, witness and setup polynomials
-        // - Storage for intermediate shifted polynomials (mutable)
 
         // now draw alpha and add all the contributions to the quotient polynomial
 
@@ -2886,6 +2970,121 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         assert_eq!(challenges_slice.len(), 0);
 
+        println!("Power of alpha for a start of normal permutation argument = {}", total_powers_of_alpha_for_gates);
+
+        // perform copy-permutation argument
+
+        // we precompute L_{0} here cause it's necessary for both copy-permutation and lookup permutation
+
+        // z(omega^0) - 1 == 0
+        let l_0 = calculate_lagrange_poly::<E::Fr>(&worker, required_domain_size.next_power_of_two(), 0)?;
+
+        let l_0_coset_lde_bitreversed = l_0.bitreversed_lde_using_bitreversed_ntt(
+            &worker, 
+            lde_factor, 
+            &omegas_bitreversed, 
+            &coset_factor
+        )?;
+
+        {
+            // now compute the permutation argument
+
+            let z_coset_lde_bitreversed = copy_permutation_z_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                lde_factor, 
+                &omegas_bitreversed, 
+                &coset_factor
+            )?;
+
+            assert!(z_coset_lde_bitreversed.size() == required_domain_size*lde_factor);
+
+            let z_shifted_coset_lde_bitreversed = z_coset_lde_bitreversed.clone_shifted_assuming_bitreversed(
+                lde_factor,
+                &worker,
+            )?;
+
+            assert!(z_shifted_coset_lde_bitreversed.size() == required_domain_size*lde_factor);
+
+            // For both Z_1 and Z_2 we first check for grand products
+            // z*(X)(A + beta*X + gamma)(B + beta*k_1*X + gamma)(C + beta*K_2*X + gamma) - 
+            // - (A + beta*perm_a(X) + gamma)(B + beta*perm_b(X) + gamma)(C + beta*perm_c(X) + gamma)*Z(X*Omega)== 0
+
+            // we use evaluations of the polynomial X and K_i * X on a large domain's coset
+            let mut contrib_z = z_coset_lde_bitreversed.clone();
+
+            // precompute x poly
+            let mut x_poly = Polynomial::from_values(vec![
+                coset_factor;
+                required_domain_size*lde_factor
+            ])?;
+            x_poly.distribute_powers(&worker, z_shifted_coset_lde_bitreversed.omega);
+            x_poly.bitreverse_enumeration(&worker);
+    
+            assert_eq!(x_poly.size(), required_domain_size * lde_factor);
+
+            // A + beta*X + gamma
+
+            let mut tmp = ldes_storage.state_map.get(&PolyIdentifier::VariablesPolynomial(0)).unwrap().clone();
+            tmp.add_constant(&worker, &gamma_for_copy_permutation);
+            tmp.add_assign_scaled(&worker, &x_poly, &beta_for_copy_permutation);
+            contrib_z.mul_assign(&worker, &tmp);
+
+            assert_eq!(non_residues.len() + 1, num_state_polys);
+
+            for (poly_idx, non_res) in (1..num_state_polys).zip(non_residues.iter()) {
+                let mut factor = beta_for_copy_permutation;
+                factor.mul_assign(&non_res);
+
+                let key = PolyIdentifier::VariablesPolynomial(poly_idx);
+                tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap());
+                tmp.add_constant(&worker, &gamma_for_copy_permutation);
+                tmp.add_assign_scaled(&worker, &x_poly, &factor);
+                contrib_z.mul_assign(&worker, &tmp);
+            }
+
+            t_poly.add_assign_scaled(&worker, &contrib_z, &current_alpha);
+
+            drop(contrib_z);
+
+            let mut contrib_z = z_shifted_coset_lde_bitreversed;
+
+            // A + beta*perm_a + gamma
+
+            for (poly_idx, perm) in (0..4).zip(permutation_polys_in_monomial_form.iter()) {
+                let key = PolyIdentifier::VariablesPolynomial(poly_idx);
+
+                tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap());
+                tmp.add_constant(&worker, &gamma_for_copy_permutation);
+                let perm = perm.clone().bitreversed_lde_using_bitreversed_ntt(
+                    &worker, 
+                    lde_factor, 
+                    &omegas_bitreversed, 
+                    &coset_factor
+                )?;
+                tmp.add_assign_scaled(&worker, &perm, &beta_for_copy_permutation);
+                contrib_z.mul_assign(&worker, &tmp);
+                drop(perm);
+            }
+
+            t_poly.sub_assign_scaled(&worker, &contrib_z, &current_alpha);
+
+            drop(contrib_z);
+
+            drop(tmp);
+
+            // Z(x) * L_{0}(x) - 1 == 0
+            current_alpha.mul_assign(&alpha);
+
+            {
+                let mut z_minus_one_by_l_0 = z_coset_lde_bitreversed;
+                z_minus_one_by_l_0.sub_constant(&worker, &E::Fr::one());
+
+                z_minus_one_by_l_0.mul_assign(&worker, &l_0_coset_lde_bitreversed);
+
+                t_poly.add_assign_scaled(&worker, &z_minus_one_by_l_0, &current_alpha);
+            }
+        }
+
         let inverse_divisor_on_coset_lde_natural_ordering = {
             let mut vanishing_poly_inverse_bitreversed =
                 evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
@@ -2904,11 +3103,184 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
 
-        let t_mon = t_poly.ifft(&worker);
+        drop(inverse_divisor_on_coset_lde_natural_ordering);
+
+        // add contribution from grand product for loopup polys if there is one
+
+        if let Some(z_poly_in_monomial_form) = lookup_z_poly_in_monomial_form.take() {
+            let beta_for_lookup_permutation = beta_for_lookup.unwrap();
+            let gamma_for_lookup_permutation = gamma_for_lookup.unwrap();
+
+            let mut beta_plus_one = beta_for_lookup_permutation;
+            beta_plus_one.add_assign(&E::Fr::one());
+            let mut gamma_beta = gamma_for_lookup_permutation;
+            gamma_beta.mul_assign(&beta_plus_one);
+    
+            let expected = gamma_beta.pow([(required_domain_size-1) as u64]);
+
+            current_alpha.mul_assign(&alpha);
+
+            // same grand product argument for lookup permutation except divisor is now with one point cut
+
+            let z_lde = z_poly_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                lde_factor, 
+                &omegas_bitreversed, 
+                &coset_factor
+            )?;
+
+            let z_lde_shifted = z_lde.clone_shifted_assuming_bitreversed(
+                lde_factor,
+                &worker
+            )?;
+
+            // Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
+            // Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) 
+
+            let data = lookup_data.as_ref().unwrap();
+
+            let s_lde = data.s_poly_monomial.as_ref().unwrap().clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                lde_factor, 
+                &omegas_bitreversed, 
+                &coset_factor
+            )?;
+
+            let s_lde_shifted = s_lde.clone_shifted_assuming_bitreversed(
+                lde_factor,
+                &worker
+            )?;
+
+            // Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega)))
+
+            let mut contribution = s_lde;
+            contribution.add_assign_scaled(&worker, &s_lde_shifted, &beta_for_lookup_permutation);
+            contribution.add_constant(&worker, &gamma_beta);
+            contribution.mul_assign(&worker, &z_lde_shifted);
+
+            drop(s_lde_shifted);
+            drop(z_lde_shifted);
+
+            let t_lde = data.t_poly_monomial.as_ref().unwrap().clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                lde_factor, 
+                &omegas_bitreversed, 
+                &coset_factor
+            )?;
+
+            let t_lde_shifted = t_lde.clone_shifted_assuming_bitreversed(
+                lde_factor,
+                &worker
+            )?;
+
+            let f_lde = data.f_poly_monomial.as_ref().unwrap().clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                lde_factor, 
+                &omegas_bitreversed, 
+                &coset_factor
+            )?;
+
+            // Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega))
+
+            let mut tmp = f_lde;
+            tmp.add_constant(&worker, &gamma_for_lookup_permutation);
+            tmp.mul_assign(&worker, &z_lde);
+            tmp.scale(&worker, beta_plus_one);
+
+            let mut t = t_lde;
+            t.add_assign_scaled(&worker, &t_lde_shifted, &beta_for_lookup_permutation);
+            t.add_constant(&worker, &gamma_beta);
+
+            tmp.mul_assign(&worker, &t);
+            
+            drop(t);
+            drop(t_lde_shifted);
+
+            contribution.sub_assign(&worker, &tmp);
+
+            contribution.scale(&worker, current_alpha);
+
+            // check that (Z(x) - 1) * L_{0} == 0
+            current_alpha.mul_assign(&alpha);
+            
+            tmp.reuse_allocation(&z_lde);
+            tmp.sub_constant(&worker, &E::Fr::one());
+            tmp.mul_assign(&worker, &l_0_coset_lde_bitreversed);
+
+            drop(l_0_coset_lde_bitreversed);
+
+            // {
+            //     let mut mon = tmp.clone();
+            //     mon.bitreverse_enumeration(&worker);
+            //     let mon = mon.icoset_fft_for_generator(&worker, &coset_factor);
+            //     let vals = mon.fft(&worker);
+    
+            //     println!("Z(X) - 1 values lde = {:?}", vals.as_ref());
+            // }
+
+            contribution.add_assign_scaled(&worker, &tmp, &current_alpha);
+
+            // check that (Z(x) - expected) * L_{n-1}  == 0
+
+            current_alpha.mul_assign(&alpha);
+
+            let l_last = calculate_lagrange_poly::<E::Fr>(&worker, required_domain_size.next_power_of_two(), required_domain_size - 1)?;
+
+            let l_last_coset_lde_bitreversed = l_last.bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                lde_factor, 
+                &omegas_bitreversed, 
+                &coset_factor
+            )?;
+
+            tmp.reuse_allocation(&z_lde);
+            tmp.sub_constant(&worker, &expected);
+            tmp.mul_assign(&worker, &l_last_coset_lde_bitreversed);
+
+            drop(l_last_coset_lde_bitreversed);
+
+            contribution.add_assign_scaled(&worker, &tmp, &current_alpha);
+
+            drop(tmp);
+            drop(z_lde);
+
+            contribution.bitreverse_enumeration(&worker);
+
+            let vanishing_for_lookup = {
+                let normally_enumerated = calculate_inverse_vanishing_polynomial_with_last_point_cut(
+                    &worker,
+                    required_domain_size * lde_factor,
+                    required_domain_size,
+                    coset_factor,
+                )?;
+
+                normally_enumerated
+            };
+
+            contribution.mul_assign(&worker, &vanishing_for_lookup);
+
+            t_poly.add_assign(&worker, &contribution);
+
+            drop(contribution);
+
+            lookup_z_poly_in_monomial_form = Some(z_poly_in_monomial_form);
+        } else {
+            drop(l_0_coset_lde_bitreversed);
+        }
+        
+        let t_poly = t_poly.icoset_fft_for_generator(&worker, &coset_factor);
 
         println!("Lde factor = {}", lde_factor);
 
-        println!("Quotient poly = {:?}", t_mon.as_ref());
+        // println!("Quotient poly = {:?}", t_poly.as_ref());
+
+        // degree is 4n-4
+
+        let l = t_poly.as_ref().len();
+        assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..]);
+
+        println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
+
         Ok(())
     }
 }
@@ -3165,6 +3537,8 @@ mod test {
 
             cs.allocate_main_gate(term)?;
 
+            let var_zero = cs.get_explicit_zero()?;
+
             // range table
             {
                 let table = cs.get_table(&range_table_name)?;
@@ -3174,8 +3548,10 @@ mod test {
 
                 let mut term = MainGateTerm::<E>::new();
                 term.add_assign(ArithmeticTerm::from_variable_and_coeff(e, E::Fr::zero()));
+                term.add_assign(ArithmeticTerm::from_variable_and_coeff(var_zero, E::Fr::zero()));
+                term.add_assign(ArithmeticTerm::from_variable_and_coeff(var_zero, E::Fr::zero()));
 
-                let (vars, coeffs) = CS::MainGate::format_term(term, dummy)?;
+                let (vars, coeffs) = CS::MainGate::format_linear_term_with_duplicates(term, dummy)?;
 
                 cs.new_gate_in_batch(
                     &CS::MainGate::default(),
@@ -3398,6 +3774,27 @@ mod test {
             );
 
             Ok(tmp)
+        }
+
+        fn contribute_into_linearization(
+            &self, 
+            domain_size: usize,
+            at: E::Fr,
+            queried_values: std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+            monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+            challenges: &[E::Fr],
+            worker: &Worker
+        ) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError> {
+            unimplemented!("NYI")
+        }
+        fn contribute_into_verification_equation(
+            &self, 
+            domain_size: usize,
+            at: E::Fr,
+            queried_values: std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+            challenges: &[E::Fr],
+        ) -> Result<E::Fr, SynthesisError> {
+            unimplemented!("NYI")
         }
 
         fn put_public_inputs_into_selector_id(&self) -> Option<usize> {
