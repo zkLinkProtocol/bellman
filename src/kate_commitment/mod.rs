@@ -1220,8 +1220,8 @@ mod test {
         println!("Done");
 
         for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
-            // for cpus in vec![16, 32, 48, 64] {
-            for cpus in vec![16, 24, 32] {
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
                 let s = &scalars[..size];
                 let g = &points[..size];
 

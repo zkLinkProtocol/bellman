@@ -502,10 +502,15 @@ pub fn dense_multiexp<G: CurveAffine>(
     if exponents.len() != bases.len() {
         return Err(SynthesisError::AssignmentMissing);
     }
+    // do some heuristics here
+    // we proceed chunks of all points, and all workers do the same work over 
+    // some scalar width, so to have expected number of additions into buckets to 1
+    // we have to divide length by 
     let c = if exponents.len() < 32 {
         3u32
     } else {
-        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+        let chunk_len = pool.get_chunk_size(exponents.len());
+        (f64::from(chunk_len as u32)).ln().ceil() as u32
     };
 
     dense_multiexp_inner(pool, bases, exponents, 0, c, true)
