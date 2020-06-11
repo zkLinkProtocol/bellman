@@ -922,7 +922,7 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use crate::pairing::bn256::{Bn256, Fr};
     use crate::worker::Worker;
@@ -1148,7 +1148,7 @@ mod test {
         assert!(new == crs);
     }
 
-    fn make_random_field_elements<F: PrimeField>(
+    pub(crate) fn make_random_field_elements<F: PrimeField>(
         worker: &Worker,
         num_elements: usize,
     ) -> Vec<F> {
