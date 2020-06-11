@@ -660,8 +660,8 @@ pub fn dense_multiexp<G: CurveAffine>(
         // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
 
-    dense_multiexp_inner_unrolled_with_prefetch(pool, bases, exponents, 0, c, true)
-    // dense_multiexp_inner(pool, bases, exponents, 0, c, true)
+    // dense_multiexp_inner_unrolled_with_prefetch(pool, bases, exponents, 0, c, true)
+    dense_multiexp_inner(pool, bases, exponents, 0, c, true)
 }
 
 fn dense_multiexp_inner<G: CurveAffine>(
@@ -762,7 +762,7 @@ fn dense_multiexp_inner<G: CurveAffine>(
     }
 }
 
-
+#[allow(dead_code)]
 fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
     pool: &Worker,
     bases: & [G],
