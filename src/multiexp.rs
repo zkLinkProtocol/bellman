@@ -650,7 +650,7 @@ pub fn dense_multiexp<G: CurveAffine>(
     // do some heuristics here
     // we proceed chunks of all points, and all workers do the same work over 
     // some scalar width, so to have expected number of additions into buckets to 1
-    // we have to divide length by 
+    // we have to take log2 from the expected chunk(!) length
     let c = if exponents.len() < 32 {
         3u32
     } else {
