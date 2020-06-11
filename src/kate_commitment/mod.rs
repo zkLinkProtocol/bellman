@@ -326,16 +326,31 @@ pub fn commit_using_monomials<E: Engine>(
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
     println!("Committing coefficients");
+
+    use std::time::Instant;
+
+    let now = Instant::now();
+
+    let subtime = Instant::now();
+
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()
     )?;
+
+    println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+    let subtime = Instant::now();
 
     let res = multiexp::dense_multiexp::<E::G1Affine>(
         &worker,
         &crs.g1_bases[..scalars_repr.len()],
         &scalars_repr
     )?;
+
+    println!("Multiexp taken {:?}", subtime.elapsed());
+
+    println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }
@@ -347,16 +362,31 @@ pub fn commit_using_values<E: Engine>(
 ) -> Result<E::G1Affine, SynthesisError> {
     println!("Committing values over domain");
     assert_eq!(poly.size(), crs.g1_bases.len());
+
+    use std::time::Instant;
+
+    let now = Instant::now();
+
+    let subtime = Instant::now();
+
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()
     )?;
+
+    println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+    let subtime = Instant::now();
 
     let res = multiexp::dense_multiexp::<E::G1Affine>(
         &worker,
         &crs.g1_bases,
         &scalars_repr
     )?;
+
+    println!("Multiexp taken {:?}", subtime.elapsed());
+
+    println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }

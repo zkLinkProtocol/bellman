@@ -140,6 +140,8 @@ pub fn prove_by_steps<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     use crate::plonk::better_cs::utils::{commit_point_as_xy};
     use crate::plonk::better_cs::prover::prove_steps::{FirstVerifierMessage, SecondVerifierMessage, ThirdVerifierMessage, FourthVerifierMessage};
 
+    use std::time::Instant;
+
     let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
 
     let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
@@ -153,7 +155,6 @@ pub fn prove_by_steps<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
 
     let worker = Worker::new();
 
-    use std::time::Instant;
     let now = Instant::now();
 
     let mut transcript = T::new();
