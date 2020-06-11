@@ -799,7 +799,7 @@ fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
                     let mut offset = 0;
                     for _ in 0..unrolled_steps {
                         // [0..7]
-                        for i in 0..UNROLL_BY {
+                        for i in 0..(UNROLL_BY-1) {
                             crate::prefetch::prefetch_l3_pointer(&base[offset+i] as *const _);
                             crate::prefetch::prefetch_l3_pointer(&exp[offset+i] as *const _);
                         }
