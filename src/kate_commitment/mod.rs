@@ -1255,7 +1255,6 @@ pub(crate) mod test {
         }
     }
 
-
     #[test]
     #[ignore]
     fn test_future_based_multiexp_performance_on_large_data() {
@@ -1309,6 +1308,31 @@ pub(crate) mod test {
 
                 println!("Total time taken for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
             }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_long_naive_division() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        let divide_at = Fr::from_str("1234567890").unwrap();
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            let s = &scalars[..size];
+            let now = Instant::now();
+
+            let _ = divide_single::<Bn256>(s, divide_at);
+
+            println!("Total time taken for {} points division = {:?}", size, now.elapsed());
         }
     }
 }
