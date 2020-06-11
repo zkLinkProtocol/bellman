@@ -783,7 +783,7 @@ fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
         let arc = Arc::new(this_region);
 
         pool.scope(bases.len(), |scope, chunk| {
-            for (base, exp) in bases.chunks(chunk).zip(exponents.chunks(chunk)) {
+            for (bases, exp) in bases.chunks(chunk).zip(exponents.chunks(chunk)) {
                 let this_region_rwlock = arc.clone();
                 // let handle = 
                 scope.spawn(move |_| {
@@ -799,8 +799,8 @@ fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
                     let mut offset = 0;
                     for _ in 0..unrolled_steps {
                         // [0..7]
-                        for i in 0..(UNROLL_BY-1) {
-                            crate::prefetch::prefetch_l3_pointer(&base[offset+i] as *const _);
+                        for i in 0..UNROLL_BY {
+                            crate::prefetch::prefetch_l3_pointer(&bases[offset+i] as *const _);
                             crate::prefetch::prefetch_l3_pointer(&exp[offset+i] as *const _);
                         }
 
