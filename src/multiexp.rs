@@ -656,6 +656,8 @@ pub fn dense_multiexp<G: CurveAffine>(
     } else {
         let chunk_len = pool.get_chunk_size(exponents.len());
         (f64::from(chunk_len as u32)).ln().ceil() as u32
+
+        // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
 
     dense_multiexp_inner_unrolled_with_prefetch(pool, bases, exponents, 0, c, true)
@@ -792,17 +794,17 @@ fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
                     let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
 
                     let unrolled_steps = bases.len() / UNROLL_BY;
-                    let remainder = bases.len() & UNROLL_BY;
+                    let remainder = bases.len() % UNROLL_BY;
 
                     let mut offset = 0;
                     for _ in 0..unrolled_steps {
-                        for i in 0..(UNROLL_BY-1) {
+                        // [0..7]
+                        for i in 0..UNROLL_BY {
                             crate::prefetch::prefetch_l3_pointer(&base[offset+i] as *const _);
                             crate::prefetch::prefetch_l3_pointer(&exp[offset+i] as *const _);
-                            crate::prefetch::prefetch_l3_pointer(&exp[offset+i+1] as *const _);
-                            crate::prefetch::prefetch_l3_pointer(&base[offset+i+1] as *const _);
                         }
 
+                        // offset + [0..6]
                         for i in 0..(UNROLL_BY-1) {
                             let this_exp = exp[offset+i];
                             let mut next_exp = exp[offset+i+1];
@@ -832,6 +834,7 @@ fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
                             }
                         }
 
+                        // offset + 7
                         let this_exp = exp[offset+(UNROLL_BY-1)];
                         let base = &bases[offset+(UNROLL_BY-1)];
 
@@ -850,6 +853,7 @@ fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
                             }
                         }
 
+                        // go into next region
                         offset += UNROLL_BY;
                     }
 
