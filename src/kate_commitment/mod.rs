@@ -1254,5 +1254,62 @@ mod test {
             }
         }
     }
+
+
+    #[test]
+    #[ignore]
+    fn test_future_based_multiexp_performance_on_large_data() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
+                let s = &scalars[..size];
+                let g = points[..size].to_vec();
+                let g = Arc::from(g);
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let now = Instant::now();
+
+                // copy-paste, but ok
+
+                let subtime = Instant::now();
+
+                let scalars_repr = super::elements_into_representations::<Bn256>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                let scalars_repr = Arc::from(scalars_repr);
+
+                println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &worker,
+                    Arc::clone(&g),
+                    Arc::clone(&scalars_repr)
+                ).wait();
+
+                println!("Future based multiexp taken {:?}", subtime.elapsed());
+
+                println!("Total time taken for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
 }
 

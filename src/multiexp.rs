@@ -389,6 +389,151 @@ fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
     this
 }
 
+
+/// Perform multi-exponentiation. The caller is responsible for ensuring the
+/// query size is the same as the number of exponents.
+pub fn future_based_multiexp<G: CurveAffine>(
+    pool: &Worker,
+    bases: Arc<Vec<G>>,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
+    // bases: &[G],
+    // exponents: Arc<Vec<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>>
+) -> ChunksJoiner< <G as CurveAffine>::Projective >
+{
+    assert!(exponents.len() <= bases.len());
+    let c = if exponents.len() < 32 {
+        3u32
+    } else {
+        let mut width = (f64::from(exponents.len() as u32)).ln().ceil() as u32;
+        let mut num_chunks = <G::Scalar as PrimeField>::NUM_BITS / width;
+        if <G::Scalar as PrimeField>::NUM_BITS % width != 0 {
+            num_chunks += 1;
+        }
+
+        if num_chunks < pool.cpus as u32 {
+            width = <G::Scalar as PrimeField>::NUM_BITS / (pool.cpus as u32);
+            if <G::Scalar as PrimeField>::NUM_BITS % (pool.cpus as u32) != 0 {
+                width += 1;
+            }
+        }
+        
+        width
+    };
+
+    let mut skip = 0;
+    let mut futures = Vec::with_capacity((<G::Engine as ScalarEngine>::Fr::NUM_BITS / c + 1) as usize);
+
+    while skip < <G::Engine as ScalarEngine>::Fr::NUM_BITS {
+        let chunk_future = if skip == 0 {
+            future_based_dense_multiexp_imlp(pool, bases.clone(), exponents.clone(), 0, c, true)
+        } else {
+            future_based_dense_multiexp_imlp(pool, bases.clone(), exponents.clone(), skip, c, false)
+        };
+
+        futures.push(chunk_future);
+        skip += c;
+    }
+
+    let join = join_all(futures);
+
+    ChunksJoiner {
+        join,
+        c
+    } 
+}
+
+
+fn future_based_dense_multiexp_imlp<G: CurveAffine>(
+    pool: &Worker,
+    bases: Arc<Vec<G>>,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+    skip: u32,
+    c: u32,
+    handle_trivial: bool
+) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
+{
+    // Perform this region of the multiexp
+    let this = {
+        let bases = bases.clone();
+        let exponents = exponents.clone();
+        let bases = bases.clone();
+
+        // This is a Pippenger’s algorithm
+        pool.compute(move || {
+            // Accumulate the result
+            let mut acc = G::Projective::zero();
+
+            // Create buckets to place remainders s mod 2^c,
+            // it will be 2^c - 1 buckets (no bucket for zeroes)
+
+            // Create space for the buckets
+            let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << c) - 1];
+
+            let zero = <G::Engine as ScalarEngine>::Fr::zero().into_repr();
+            let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
+            let padding = Arc::new(vec![zero]);
+
+            let mask = 1 << c;
+
+            // Sort the bases into buckets
+            for ((&exp, base), &next_exp) in exponents.iter()
+                        .zip(bases.iter())
+                        .zip(exponents.iter().skip(1).chain(padding.iter())) {
+                // no matter what happens - prefetch next bucket
+                if next_exp != zero && next_exp != one {
+                    let mut next_exp = next_exp;
+                    next_exp.shr(skip);
+                    let next_exp = next_exp.as_ref()[0] % mask;
+                    if next_exp != 0 {
+                        let p: *const <G as CurveAffine>::Projective = &buckets[(next_exp - 1) as usize];
+                        crate::prefetch::prefetch_l3_pointer(p);
+                    }
+                    
+                }
+                // Go over density and exponents
+                if exp == zero {
+                    continue
+                } else if exp == one {
+                    if handle_trivial {
+                        acc.add_assign_mixed(base);
+                    } else {
+                        continue
+                    }
+                } else {
+                    // Place multiplication into the bucket: Separate s * P as 
+                    // (s/2^c) * P + (s mod 2^c) P
+                    // First multiplication is c bits less, so one can do it,
+                    // sum results from different buckets and double it c times,
+                    // then add with (s mod 2^c) P parts
+                    let mut exp = exp;
+                    exp.shr(skip);
+                    let exp = exp.as_ref()[0] % mask;
+
+                    if exp != 0 {
+                        (&mut buckets[(exp - 1) as usize]).add_assign_mixed(base);
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            // Summation by parts
+            // e.g. 3a + 2b + 1c = a +
+            //                    (a) + b +
+            //                    ((a) + b) + c
+            let mut running_sum = G::Projective::zero();
+            for exp in buckets.into_iter().rev() {
+                running_sum.add_assign(&exp);
+                acc.add_assign(&running_sum);
+            }
+
+            Ok(acc)
+        })
+    };
+
+    this
+}
+
 /// Perform multi-exponentiation. The caller is responsible for ensuring the
 /// query size is the same as the number of exponents.
 pub fn multiexp<Q, D, G, S>(
