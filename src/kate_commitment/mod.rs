@@ -922,7 +922,7 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use crate::pairing::bn256::{Bn256, Fr};
     use crate::worker::Worker;
@@ -1146,6 +1146,194 @@ mod test {
         let new = Crs::<Bn256, CrsForMonomialForm>::read(&buffer[..]).expect("must deserialize CRS");
 
         assert!(new == crs);
+    }
+
+    pub(crate) fn make_random_field_elements<F: PrimeField>(
+        worker: &Worker,
+        num_elements: usize,
+    ) -> Vec<F> {
+        let mut result = vec![F::zero(); num_elements];
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+    
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        worker.scope(result.len(), |scope, chunk| {
+            for r in result.chunks_mut(chunk)
+            {
+                let seed: [u32; 4] = rng.gen();
+                let subrng = XorShiftRng::from_seed(seed);
+                scope.spawn(move |_| {
+                    let mut subrng = subrng;
+                    for r in r.iter_mut() {
+                        *r = subrng.gen();
+                    }
+                });
+            }
+        });
+
+        result 
+    }
+
+    fn make_random_g1_points<G: CurveAffine>(
+        worker: &Worker,
+        num_elements: usize,
+    ) -> Vec<G> {
+        let mut result = vec![G::zero(); num_elements];
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+    
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        worker.scope(result.len(), |scope, chunk| {
+            for r in result.chunks_mut(chunk)
+            {
+                let seed: [u32; 4] = rng.gen();
+                let subrng = XorShiftRng::from_seed(seed);
+                scope.spawn(move |_| {
+                    let mut subrng = subrng;
+                    for r in r.iter_mut() {
+                        let p: G::Projective = subrng.gen();
+                        *r = p.into_affine();
+                    }
+                });
+            }
+        });
+
+        result 
+    }
+
+    #[test]
+    #[ignore]
+    fn test_multiexp_performance_on_large_data() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
+                let s = &scalars[..size];
+                let g = &points[..size];
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let now = Instant::now();
+
+                // copy-paste, but ok
+
+                let subtime = Instant::now();
+
+                let scalars_repr = super::elements_into_representations::<Bn256>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Multiexp taken {:?}", subtime.elapsed());
+
+                println!("Total time taken for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_future_based_multiexp_performance_on_large_data() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
+                let s = &scalars[..size];
+                let g = points[..size].to_vec();
+                let g = Arc::from(g);
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let now = Instant::now();
+
+                // copy-paste, but ok
+
+                let subtime = Instant::now();
+
+                let scalars_repr = super::elements_into_representations::<Bn256>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                let scalars_repr = Arc::from(scalars_repr);
+
+                println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    Arc::clone(&g),
+                    Arc::clone(&scalars_repr)
+                ).wait();
+
+                println!("Future based multiexp taken {:?}", subtime.elapsed());
+
+                println!("Total time taken for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_long_naive_division() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        let divide_at = Fr::from_str("1234567890").unwrap();
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            let s = &scalars[..size];
+            let now = Instant::now();
+
+            let _ = divide_single::<Bn256>(s, divide_at);
+
+            println!("Total time taken for {} points division = {:?}", size, now.elapsed());
+        }
     }
 }
 

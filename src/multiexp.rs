@@ -389,6 +389,151 @@ fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
     this
 }
 
+
+/// Perform multi-exponentiation. The caller is responsible for ensuring the
+/// query size is the same as the number of exponents.
+pub fn future_based_multiexp<G: CurveAffine>(
+    pool: &Worker,
+    bases: Arc<Vec<G>>,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
+    // bases: &[G],
+    // exponents: Arc<Vec<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>>
+) -> ChunksJoiner< <G as CurveAffine>::Projective >
+{
+    assert!(exponents.len() <= bases.len());
+    let c = if exponents.len() < 32 {
+        3u32
+    } else {
+        let mut width = (f64::from(exponents.len() as u32)).ln().ceil() as u32;
+        let mut num_chunks = <G::Scalar as PrimeField>::NUM_BITS / width;
+        if <G::Scalar as PrimeField>::NUM_BITS % width != 0 {
+            num_chunks += 1;
+        }
+
+        if num_chunks < pool.cpus as u32 {
+            width = <G::Scalar as PrimeField>::NUM_BITS / (pool.cpus as u32);
+            if <G::Scalar as PrimeField>::NUM_BITS % (pool.cpus as u32) != 0 {
+                width += 1;
+            }
+        }
+        
+        width
+    };
+
+    let mut skip = 0;
+    let mut futures = Vec::with_capacity((<G::Engine as ScalarEngine>::Fr::NUM_BITS / c + 1) as usize);
+
+    while skip < <G::Engine as ScalarEngine>::Fr::NUM_BITS {
+        let chunk_future = if skip == 0 {
+            future_based_dense_multiexp_imlp(pool, bases.clone(), exponents.clone(), 0, c, true)
+        } else {
+            future_based_dense_multiexp_imlp(pool, bases.clone(), exponents.clone(), skip, c, false)
+        };
+
+        futures.push(chunk_future);
+        skip += c;
+    }
+
+    let join = join_all(futures);
+
+    ChunksJoiner {
+        join,
+        c
+    } 
+}
+
+
+fn future_based_dense_multiexp_imlp<G: CurveAffine>(
+    pool: &Worker,
+    bases: Arc<Vec<G>>,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+    skip: u32,
+    c: u32,
+    handle_trivial: bool
+) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
+{
+    // Perform this region of the multiexp
+    let this = {
+        let bases = bases.clone();
+        let exponents = exponents.clone();
+        let bases = bases.clone();
+
+        // This is a Pippenger’s algorithm
+        pool.compute(move || {
+            // Accumulate the result
+            let mut acc = G::Projective::zero();
+
+            // Create buckets to place remainders s mod 2^c,
+            // it will be 2^c - 1 buckets (no bucket for zeroes)
+
+            // Create space for the buckets
+            let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << c) - 1];
+
+            let zero = <G::Engine as ScalarEngine>::Fr::zero().into_repr();
+            let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
+            let padding = Arc::new(vec![zero]);
+
+            let mask = 1 << c;
+
+            // Sort the bases into buckets
+            for ((&exp, base), &next_exp) in exponents.iter()
+                        .zip(bases.iter())
+                        .zip(exponents.iter().skip(1).chain(padding.iter())) {
+                // no matter what happens - prefetch next bucket
+                if next_exp != zero && next_exp != one {
+                    let mut next_exp = next_exp;
+                    next_exp.shr(skip);
+                    let next_exp = next_exp.as_ref()[0] % mask;
+                    if next_exp != 0 {
+                        let p: *const <G as CurveAffine>::Projective = &buckets[(next_exp - 1) as usize];
+                        crate::prefetch::prefetch_l3_pointer(p);
+                    }
+                    
+                }
+                // Go over density and exponents
+                if exp == zero {
+                    continue
+                } else if exp == one {
+                    if handle_trivial {
+                        acc.add_assign_mixed(base);
+                    } else {
+                        continue
+                    }
+                } else {
+                    // Place multiplication into the bucket: Separate s * P as 
+                    // (s/2^c) * P + (s mod 2^c) P
+                    // First multiplication is c bits less, so one can do it,
+                    // sum results from different buckets and double it c times,
+                    // then add with (s mod 2^c) P parts
+                    let mut exp = exp;
+                    exp.shr(skip);
+                    let exp = exp.as_ref()[0] % mask;
+
+                    if exp != 0 {
+                        (&mut buckets[(exp - 1) as usize]).add_assign_mixed(base);
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            // Summation by parts
+            // e.g. 3a + 2b + 1c = a +
+            //                    (a) + b +
+            //                    ((a) + b) + c
+            let mut running_sum = G::Projective::zero();
+            for exp in buckets.into_iter().rev() {
+                running_sum.add_assign(&exp);
+                acc.add_assign(&running_sum);
+            }
+
+            Ok(acc)
+        })
+    };
+
+    this
+}
+
 /// Perform multi-exponentiation. The caller is responsible for ensuring the
 /// query size is the same as the number of exponents.
 pub fn multiexp<Q, D, G, S>(
@@ -502,12 +647,20 @@ pub fn dense_multiexp<G: CurveAffine>(
     if exponents.len() != bases.len() {
         return Err(SynthesisError::AssignmentMissing);
     }
+    // do some heuristics here
+    // we proceed chunks of all points, and all workers do the same work over 
+    // some scalar width, so to have expected number of additions into buckets to 1
+    // we have to take log2 from the expected chunk(!) length
     let c = if exponents.len() < 32 {
         3u32
     } else {
-        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+        let chunk_len = pool.get_chunk_size(exponents.len());
+        (f64::from(chunk_len as u32)).ln().ceil() as u32
+
+        // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
 
+    // dense_multiexp_inner_unrolled_with_prefetch(pool, bases, exponents, 0, c, true)
     dense_multiexp_inner(pool, bases, exponents, 0, c, true)
 }
 
@@ -561,6 +714,169 @@ fn dense_multiexp_inner<G: CurveAffine>(
                                 }
                             }
                         }
+                    }
+
+                    // buckets are filled with the corresponding accumulated value, now sum
+                    let mut running_sum = G::Projective::zero();
+                    for exp in buckets.into_iter().rev() {
+                        running_sum.add_assign(&exp);
+                        acc.add_assign(&running_sum);
+                    }
+
+                    let mut guard = match this_region_rwlock.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            panic!("poisoned!"); 
+                            // poisoned.into_inner()
+                        }
+                    };
+
+                    (*guard).add_assign(&acc);
+                });
+        
+            }
+        });
+
+        let this_region = Arc::try_unwrap(arc).unwrap();
+        let this_region = this_region.into_inner().unwrap();
+
+        this_region
+    };
+
+    skip += c;
+
+    if skip >= <G::Engine as ScalarEngine>::Fr::NUM_BITS {
+        // There isn't another region, and this will be the highest region
+        return Ok(this);
+    } else {
+        // next region is actually higher than this one, so double it enough times
+        let mut next_region = dense_multiexp_inner(
+            pool, bases, exponents, skip, c, false).unwrap();
+        for _ in 0..c {
+            next_region.double();
+        }
+
+        next_region.add_assign(&this);
+
+        return Ok(next_region);
+    }
+}
+
+#[allow(dead_code)]
+fn dense_multiexp_inner_unrolled_with_prefetch<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    mut skip: u32,
+    c: u32,
+    handle_trivial: bool
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{   
+    const UNROLL_BY: usize = 8;
+
+    use std::sync::{Mutex};
+    // Perform this region of the multiexp. We use a different strategy - go over region in parallel,
+    // then over another region, etc. No Arc required
+    let this = {
+        let mask = (1u64 << c) - 1u64;
+        let this_region = Mutex::new(<G as CurveAffine>::Projective::zero());
+        let arc = Arc::new(this_region);
+
+        pool.scope(bases.len(), |scope, chunk| {
+            for (bases, exp) in bases.chunks(chunk).zip(exponents.chunks(chunk)) {
+                let this_region_rwlock = arc.clone();
+                // let handle = 
+                scope.spawn(move |_| {
+                    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << c) - 1];
+                    // Accumulate the result
+                    let mut acc = G::Projective::zero();
+                    let zero = <G::Engine as ScalarEngine>::Fr::zero().into_repr();
+                    let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
+
+                    let unrolled_steps = bases.len() / UNROLL_BY;
+                    let remainder = bases.len() % UNROLL_BY;
+
+                    let mut offset = 0;
+                    for _ in 0..unrolled_steps {
+                        // [0..7]
+                        for i in 0..UNROLL_BY {
+                            crate::prefetch::prefetch_l3_pointer(&bases[offset+i] as *const _);
+                            crate::prefetch::prefetch_l3_pointer(&exp[offset+i] as *const _);
+                        }
+
+                        // offset + [0..6]
+                        for i in 0..(UNROLL_BY-1) {
+                            let this_exp = exp[offset+i];
+                            let mut next_exp = exp[offset+i+1];
+                            let base = &bases[offset+i];
+
+                            if this_exp != zero {
+                                if this_exp == one {
+                                    if handle_trivial {
+                                        acc.add_assign_mixed(base);
+                                    }
+                                } else {
+                                    let mut this_exp = this_exp;
+                                    this_exp.shr(skip);
+                                    let this_exp = this_exp.as_ref()[0] & mask;
+                                    if this_exp != 0 {
+                                        buckets[(this_exp - 1) as usize].add_assign_mixed(base);
+                                    }
+                                }
+                            }
+
+                            {
+                                next_exp.shr(skip);
+                                let next_exp = next_exp.as_ref()[0] & mask;
+                                if next_exp != 0 {
+                                    crate::prefetch::prefetch_l3_pointer(&buckets[(next_exp - 1) as usize] as *const _);
+                                }
+                            }
+                        }
+
+                        // offset + 7
+                        let this_exp = exp[offset+(UNROLL_BY-1)];
+                        let base = &bases[offset+(UNROLL_BY-1)];
+
+                        if this_exp != zero {
+                            if this_exp == one {
+                                if handle_trivial {
+                                    acc.add_assign_mixed(base);
+                                }
+                            } else {
+                                let mut this_exp = this_exp;
+                                this_exp.shr(skip);
+                                let this_exp = this_exp.as_ref()[0] & mask;
+                                if this_exp != 0 {
+                                    buckets[(this_exp - 1) as usize].add_assign_mixed(base);
+                                }
+                            }
+                        }
+
+                        // go into next region
+                        offset += UNROLL_BY;
+                    }
+
+                    for _ in 0..remainder {
+                        let this_exp = exp[offset];
+                        let base = &bases[offset];
+
+                        if this_exp != zero {
+                            if this_exp == one {
+                                if handle_trivial {
+                                    acc.add_assign_mixed(base);
+                                }
+                            } else {
+                                let mut this_exp = this_exp;
+                                this_exp.shr(skip);
+                                let this_exp = this_exp.as_ref()[0] & mask;
+                                if this_exp != 0 {
+                                    buckets[(this_exp - 1) as usize].add_assign_mixed(base);
+                                }
+                            }
+                        }
+
+                        offset += 1;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum

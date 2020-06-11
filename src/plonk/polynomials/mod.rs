@@ -2421,4 +2421,49 @@ mod test {
             assert_eq!(manual[idx], as_poly[idx], "failed at idx = {}", idx);
         }
     }
+
+    #[test]
+    #[ignore]
+    fn test_insane_size_lde() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+    
+        let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            let poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
+            use crate::plonk::fft::cooley_tukey_ntt::*;
+
+            let omegas_bitreversed = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
+
+                use std::time::Instant;
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let poly = poly.clone();
+
+                let now = Instant::now();
+
+                let _ = poly.bitreversed_lde_using_bitreversed_ntt(
+                    &subworker,
+                    4,
+                    &omegas_bitreversed,
+                    &Fr::multiplicative_generator()
+                ).unwrap();
+
+                println!("Total LDE time for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
 }
