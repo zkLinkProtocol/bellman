@@ -1243,7 +1243,7 @@ mod test {
                 let subtime = Instant::now();
 
                 let _ = multiexp::dense_multiexp::<<Bn256 as Engine>::G1Affine>(
-                    &worker,
+                    &subworker,
                     g,
                     &scalars_repr
                 ).unwrap();
@@ -1300,7 +1300,7 @@ mod test {
                 let subtime = Instant::now();
 
                 let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
-                    &worker,
+                    &subworker,
                     Arc::clone(&g),
                     Arc::clone(&scalars_repr)
                 ).wait();
