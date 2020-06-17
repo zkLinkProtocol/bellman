@@ -76,7 +76,7 @@ pub trait GateInternal<E: Engine>: Send
         vec![]
     }
     fn benefits_from_linearization(&self) -> bool;
-    fn linearizes_over(&self) -> Vec<PolyIdentifier>;
+    fn linearizes_over(&self) -> Vec<PolynomialInConstraint>;
     fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint>;
     // fn compute_linearization_contribution(&self, values: &[E::Fr]) -> Vec<E::Fr> {
     //     vec![]
@@ -362,17 +362,17 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         true
     }
 
-    fn linearizes_over(&self) -> Vec<PolyIdentifier> {
+    fn linearizes_over(&self) -> Vec<PolynomialInConstraint> {
         let name = <Self as GateInternal<E>>::name(&self);
 
         vec![
-            PolyIdentifier::SetupPolynomial(name, 0),
-            PolyIdentifier::SetupPolynomial(name, 1),
-            PolyIdentifier::SetupPolynomial(name, 2),
-            PolyIdentifier::SetupPolynomial(name, 3),
-            PolyIdentifier::SetupPolynomial(name, 4),
-            PolyIdentifier::SetupPolynomial(name, 5),
-            PolyIdentifier::SetupPolynomial(name, 6),
+            PolynomialInConstraint::SetupPolynomial(name, 0, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial(name, 1, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial(name, 2, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial(name, 3, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial(name, 4, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial(name, 5, TimeDilation(0)),
+            PolynomialInConstraint::SetupPolynomial(name, 6, TimeDilation(0)),
         ]
     }
 
@@ -1025,7 +1025,7 @@ impl SimpleBitmap {
         unreachable!()
     }
 
-    fn get(&self, idx: usize) -> bool{
+    fn get(&self, idx: usize) -> bool {
         1u64 << idx & self.0 > 0
     }
 
@@ -3281,6 +3281,109 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
 
+        let mut t_poly_parts = t_poly.break_into_multiples(required_domain_size)?;
+
+        // TODO: commit every of them
+
+        // draw opening point
+        let z = E::Fr::from_str("333444555").unwrap();
+        let omega = domain.generator;
+
+        // Now perform the linearization.
+        // First collect and evalute all the polynomials that are necessary for linearization
+
+        let mut opening_requests_before_linearization = std::collections::HashSet::new();
+        let mut all_queries = std::collections::HashSet::new();
+        let mut sorted_opening_requests = vec![];
+        let mut sorted_selector_for_opening = vec![];
+        let mut polys_in_linearization = std::collections::HashSet::new();
+
+        let num_gate_types = self.sorted_gates.len();
+
+        for gate in self.sorted_gates.iter() {
+            for q in gate.all_queried_polynomials().into_iter() {
+                all_queries.insert(q);
+            }
+            if gate.benefits_from_linearization() {
+                // it's better to linearize the gate
+                if num_gate_types > 1 {
+                    // there are various gates, so we need to query the selector
+                    sorted_selector_for_opening.push(gate.box_clone());
+                }
+
+                for q in gate.needs_opened_for_linearization().into_iter() {
+                    if !opening_requests_before_linearization.contains(&q) {
+                        opening_requests_before_linearization.insert(q.clone());
+                        sorted_opening_requests.push(q);
+                    }
+                }
+
+                for q in gate.linearizes_over().into_iter() {
+                    polys_in_linearization.insert(q);
+                }
+            } else {
+                // we will linearize over the selector, so we do not need to query it
+            }
+        }
+
+        println!("Will need to open for linearization: {:?}", sorted_opening_requests);
+        println!("Will open selectors: {:?}", sorted_selector_for_opening);
+
+        println!("All queries = {:?}", all_queries);
+
+        // Sanity check: we open everything either in linearization or in plain text! 
+        {
+            let must_open_without_linearization: Vec<_> = all_queries.difference(&polys_in_linearization).collect();
+
+            for p in must_open_without_linearization.into_iter() {
+                assert!(opening_requests_before_linearization.contains(&p));
+            }
+        }
+
+        let mut query_values = vec![];
+        let mut query_values_map_over_dilation = std::collections::HashMap::new();
+        let mut query_values_map = std::collections::HashMap::new();
+
+        for p in sorted_opening_requests.into_iter() {
+            let (poly_ref, d) = match p {
+                PolynomialInConstraint::VariablesPolynomial(idx, dilation) => {
+                    let key = PolyIdentifier::VariablesPolynomial(idx);
+
+                    (monomials_storage.state_map.get(&key).unwrap(), dilation)
+                },
+                PolynomialInConstraint::WitnessPolynomial(idx, dilation) => {
+                    let key = PolyIdentifier::WitnessPolynomial(idx);
+
+                    (monomials_storage.witness_map.get(&key).unwrap(), dilation)
+                },
+                PolynomialInConstraint::SetupPolynomial(name, idx, dilation) => {
+                    let key = PolyIdentifier::SetupPolynomial(name, idx);
+
+                    (monomials_storage.setup_map.get(&key).unwrap(), dilation)
+                }
+            };
+
+            let dilation_value = d.0;
+            let mut opening_point = z;
+            for _ in 0..dilation_value {
+                opening_point.mul_assign(&omega);
+            }
+
+            let value = poly_ref.evaluate_at(&worker, opening_point);
+
+            let entry = query_values_map_over_dilation.entry(dilation_value).or_insert(vec![]);
+            entry.push(value);
+
+            query_values_map.insert(p, value);
+            query_values.push(value);
+        }
+
+
+        println!("Queried values = {:?}", query_values_map_over_dilation);
+
+        // let mut copy_permutation_polynomials_queries = vec![];
+        // let mut copy_permutation_value_at_z_omega = E::Fr::zero();
+
         Ok(())
     }
 }
@@ -3696,7 +3799,7 @@ mod test {
             false
         }
 
-        fn linearizes_over(&self) -> Vec<PolyIdentifier> {
+        fn linearizes_over(&self) -> Vec<PolynomialInConstraint> {
             vec![]
         }
 
