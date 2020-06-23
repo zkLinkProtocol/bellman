@@ -670,6 +670,7 @@ pub(crate) struct LookupDataHolder<E: Engine> {
     pub(crate) selector_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct LookupQuery<E: Engine> {
     pub(crate) s_at_z_omega: E::Fr,
     pub(crate) grand_product_at_z_omega: E::Fr,
