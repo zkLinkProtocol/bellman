@@ -1335,5 +1335,83 @@ pub(crate) mod test {
             println!("Total time taken for {} points division = {:?}", size, now.elapsed());
         }
     }
+
+
+    #[test]
+    #[ignore]
+    fn test_different_multiexps() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let max_size = 1 << 20;
+        let worker = Worker::new();
+
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in vec![1 << 20] {
+            for cpus in vec![2, 4, 8] {
+            // for cpus in vec![16, 24, 32] {
+                let s = &scalars[..size];
+                let g = points[..size].to_vec();
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let scalars_repr = super::elements_into_representations::<Bn256>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Dense multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::dense_unrolled_multiexp_with_prefetch::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Dense unrolled multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::dense_multiexp_with_manual_unrolling::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Dense manually unrolled multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+
+                let g = Arc::from(g);
+                let scalars_repr = Arc::from(scalars_repr);
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    Arc::clone(&g),
+                    Arc::clone(&scalars_repr)
+                ).wait();
+
+                println!("Future based multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+
+                
+            }
+        }
+    }
 }
 
