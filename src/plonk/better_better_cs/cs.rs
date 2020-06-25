@@ -3141,7 +3141,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         )?;
 
         let mut copy_grand_product_alphas = None;
-        {
+        let x_poly_lde_bitreversed = {
             // now compute the permutation argument
 
             let z_coset_lde_bitreversed = copy_permutation_z_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
@@ -3244,27 +3244,29 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             }
 
             copy_grand_product_alphas = Some([alpha_0, alpha_1]);
-        }
 
-        let inverse_divisor_on_coset_lde_natural_ordering = {
-            let mut vanishing_poly_inverse_bitreversed =
-                evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
-                    required_domain_size as u64,
-                    &E::Fr::multiplicative_generator(),
-                    (required_domain_size * lde_factor) as u64,
-                    &worker,
-                )?;
-            vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
-            // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
-
-            vanishing_poly_inverse_bitreversed
+            x_poly
         };
 
-        t_poly.bitreverse_enumeration(&worker);
+        // let inverse_divisor_on_coset_lde_natural_ordering = {
+        //     let mut vanishing_poly_inverse_bitreversed =
+        //         evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
+        //             required_domain_size as u64,
+        //             &E::Fr::multiplicative_generator(),
+        //             (required_domain_size * lde_factor) as u64,
+        //             &worker,
+        //         )?;
+        //     vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
+        //     // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
 
-        t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
+        //     vanishing_poly_inverse_bitreversed
+        // };
 
-        drop(inverse_divisor_on_coset_lde_natural_ordering);
+        // t_poly.bitreverse_enumeration(&worker);
+
+        // t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
+
+        // drop(inverse_divisor_on_coset_lde_natural_ordering);
 
         // add contribution from grand product for loopup polys if there is one
 
@@ -3298,8 +3300,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 &worker
             )?;
 
-            // Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
-            // - Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) 
+            // We make an small ad-hoc modification here and instead of dividing some contributions by
+            // (X^n - 1)/(X - omega^{n-1}) we move (X - omega^{n-1}) to the numerator and join the divisions
+
+            // Numerator degree is at max 4n, so it's < 4n after division
+
+            // ( Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
+            // - Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) )*(X - omega^{n-1})
 
             let data = lookup_data.as_ref().unwrap();
 
@@ -3419,6 +3426,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             contribution.scale(&worker, current_alpha);
 
+            // multiply by (X - omega^{n-1})
+
+            let last_omega = domain.generator.pow(&[(required_domain_size - 1) as u64]);
+            let mut x_minus_last_omega = x_poly_lde_bitreversed;
+            x_minus_last_omega.sub_constant(&worker, &last_omega);
+
+            contribution.mul_assign(&worker, &x_minus_last_omega);
+            drop(x_minus_last_omega);
+
+            // we do not need to do addition multiplications for terms below cause multiplication by lagrange poly
+            // does everything for us
+
             // check that (Z(x) - 1) * L_{0} == 0
             current_alpha.mul_assign(&alpha);
 
@@ -3458,21 +3477,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             drop(tmp);
             drop(z_lde);
 
-            contribution.bitreverse_enumeration(&worker);
+            // contribution.bitreverse_enumeration(&worker);
 
 
-            let vanishing_for_lookup = {
-                let normally_enumerated = calculate_inverse_vanishing_polynomial_with_last_point_cut(
-                    &worker,
-                    required_domain_size * lde_factor,
-                    required_domain_size,
-                    coset_factor,
-                )?;
+            // let vanishing_for_lookup = {
+            //     let normally_enumerated = calculate_inverse_vanishing_polynomial_with_last_point_cut(
+            //         &worker,
+            //         required_domain_size * lde_factor,
+            //         required_domain_size,
+            //         coset_factor,
+            //     )?;
 
-                normally_enumerated
-            };
+            //     normally_enumerated
+            // };
 
-            contribution.mul_assign(&worker, &vanishing_for_lookup);
+            // contribution.mul_assign(&worker, &vanishing_for_lookup);
 
             t_poly.add_assign(&worker, &contribution);
 
@@ -3480,8 +3499,33 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             lookup_grand_product_alphas = Some([alpha_0, alpha_1, alpha_2]);
         } else {
+            drop(x_poly_lde_bitreversed);
             drop(l_0_coset_lde_bitreversed);
         }
+
+        // perform the division
+
+        let inverse_divisor_on_coset_lde_natural_ordering = {
+            let mut vanishing_poly_inverse_bitreversed =
+                evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
+                    required_domain_size as u64,
+                    &E::Fr::multiplicative_generator(),
+                    (required_domain_size * lde_factor) as u64,
+                    &worker,
+                )?;
+            vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
+            // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
+
+            vanishing_poly_inverse_bitreversed
+        };
+
+        // don't forget to bitreverse
+
+        t_poly.bitreverse_enumeration(&worker);
+
+        t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
+
+        drop(inverse_divisor_on_coset_lde_natural_ordering);
         
         let t_poly = t_poly.icoset_fft_for_generator(&worker, &coset_factor);
 
@@ -3763,8 +3807,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             r_poly.add_assign_scaled(&worker, &copy_permutation_z_in_monomial_form, &factor);
         }
 
-        let linearization_at_z = r_poly.evaluate_at(&worker, z);
-
         // lookup grand product linearization
 
         // due to separate divisor it's not obvious if this is beneficial without some tricks
@@ -3781,7 +3823,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         // and Z(x) from Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) term,
         // with terms with lagrange polys as multipliers left intact
 
-        let (lookup_linearization, lookup_linearization_at_z, lookup_queries) = if let Some(lookup_z_poly) = lookup_z_poly_in_monomial_form.as_ref() {
+        let lookup_queries = if let Some(lookup_z_poly) = lookup_z_poly_in_monomial_form.as_ref() {
             let [alpha_0, alpha_1, alpha_2] = lookup_grand_product_alphas.expect("there must be powers of alpha for lookup permutation");
 
             let s_at_z_omega = lookup_data.as_ref().unwrap().s_poly_monomial.as_ref().unwrap().evaluate_at(&worker, z_omega);
@@ -3802,14 +3844,19 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             let mut gamma_beta = gamma_for_lookup_permutation;
             gamma_beta.mul_assign(&beta_plus_one);
 
-            // Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
-            // Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) 
+            // (Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
+            // Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)))*(X - omega^{n-1})
+
+            let last_omega = domain.generator.pow(&[(required_domain_size - 1) as u64]);
+            let mut z_minus_last_omega = z;
+            z_minus_last_omega.sub_assign(&last_omega);
 
             // s(x) from the Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega)))
-            let mut linearization_poly = lookup_data.as_ref().unwrap().s_poly_monomial.as_ref().unwrap().clone();
             let mut factor = grand_product_at_z_omega; // we do not need to account for additive terms
             factor.mul_assign(&alpha_0);
-            linearization_poly.scale(&worker, factor);
+            factor.mul_assign(&z_minus_last_omega);
+
+            r_poly.add_assign_scaled(&worker, lookup_data.as_ref().unwrap().s_poly_monomial.as_ref().unwrap(), &factor);
 
             // Z(x) from - alpha_0 * Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) 
             // + alpha_1 * Z(x) * L_{0}(z) + alpha_2 * Z(x) * L_{n-1}(z)
@@ -3851,6 +3898,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             factor.negate(); // don't forget minus sign
             factor.mul_assign(&alpha_0);
 
+            // Multiply by (z - omega^{n-1})
+
+            factor.mul_assign(&z_minus_last_omega);
+
             // L_{0}(z) in front of Z(x)
 
             let mut tmp = l_0_at_z;
@@ -3863,7 +3914,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             tmp.mul_assign(&alpha_2);
             factor.add_assign(&tmp);
 
-            linearization_poly.add_assign_scaled(&worker, lookup_z_poly, &factor);
+            r_poly.add_assign_scaled(&worker, lookup_z_poly, &factor);
 
             let query = LookupQuery::<E> {
                 s_at_z_omega,
@@ -3874,12 +3925,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 table_type_at_z,
             };
 
-            let lookup_linearization_at_z = linearization_poly.evaluate_at(&worker, z);
-
-            (Some(linearization_poly), Some(lookup_linearization_at_z), Some(query))
+            Some(query)
         } else {
-            (None, None, None)
+            None
         };
+
+        let linearization_at_z = r_poly.evaluate_at(&worker, z);
 
         // don't forget to evaluate quotient too
 
@@ -3902,16 +3953,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         {
             let vanishing_at_z = evaluate_vanishing_for_size(&z, required_domain_size as u64);
-            let mut vanishing_at_z_without_last_point = z;
-            vanishing_at_z_without_last_point.sub_assign(&domain.generator.pow([(required_domain_size - 1) as u64]));
-            let mut vanishing_at_z_without_last_point = vanishing_at_z_without_last_point.inverse().unwrap();
-            vanishing_at_z_without_last_point.mul_assign(&vanishing_at_z);
 
             // first let's aggregate gates
 
             let mut t_num_on_full_domain = E::Fr::zero();
-
-            let mut t_num_on_domain_without_last_element = E::Fr::zero();
 
             let challenges_slice = &powers_of_alpha_for_gates[..];
 
@@ -3954,7 +3999,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 // - alpha_0 * (a + perm(z) * beta + gamma)*()*(d + gamma) * z(z*omega)
                 let [alpha_0, alpha_1] = copy_grand_product_alphas.expect("there must be powers of alpha for copy permutation");
 
-
                 let mut factor = alpha_0;
                 factor.mul_assign(&copy_permutation_z_at_z_omega);
 
@@ -3990,9 +4034,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             // and if exists - grand product for lookup permutation
 
             {
-                if let Some(lookup_linearization_at_z) = lookup_linearization_at_z {
-                    // get value from linearization
-                    t_num_on_domain_without_last_element.add_assign(&lookup_linearization_at_z);
+                if lookup_queries.is_some() {
 
                     let [alpha_0, alpha_1, alpha_2] = lookup_grand_product_alphas.expect("there must be powers of alpha for lookup permutation");
 
@@ -4020,14 +4062,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                     tmp.mul_assign(&lookup_queries.grand_product_at_z_omega);
                     tmp.mul_assign(&alpha_0);
 
-                    t_num_on_domain_without_last_element.add_assign(&tmp);
+                    // (z - omega^{n-1}) for this part
+                    let last_omega = domain.generator.pow(&[(required_domain_size - 1) as u64]);
+                    let mut z_minus_last_omega = z;
+                    z_minus_last_omega.sub_assign(&last_omega);
+
+                    tmp.mul_assign(&z_minus_last_omega);
+
+                    t_num_on_full_domain.add_assign(&tmp);
 
                     // // - alpha_1 * L_{0}(z)
 
                     let mut l_0_at_z = evaluate_l0_at_point(required_domain_size as u64, z)?;
                     l_0_at_z.mul_assign(&alpha_1);
         
-                    t_num_on_domain_without_last_element.sub_assign(&l_0_at_z);
+                    t_num_on_full_domain.sub_assign(&l_0_at_z);
 
                     // // - alpha_2 * expected L_{n-1}(z)
 
@@ -4035,29 +4084,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                     l_n_minus_one_at_z.mul_assign(&expected);
                     l_n_minus_one_at_z.mul_assign(&alpha_2);
 
-                    t_num_on_domain_without_last_element.sub_assign(&l_n_minus_one_at_z);
+                    t_num_on_full_domain.sub_assign(&l_n_minus_one_at_z);
                 }
             }
 
-            let den_full = vanishing_at_z.inverse().unwrap();
-            let den_partial = vanishing_at_z_without_last_point.inverse().unwrap();
+            let mut lhs = t_at_z;
+            lhs.mul_assign(&vanishing_at_z);
 
-            let mut t_reconstructed = E::Fr::zero();
-            let mut tmp = t_num_on_full_domain;
-            tmp.mul_assign(&den_full);
+            let rhs = t_num_on_full_domain;
 
-            t_reconstructed.add_assign(&tmp);
-
-            let mut tmp = t_num_on_domain_without_last_element;
-            tmp.mul_assign(&den_partial);
-
-            t_reconstructed.add_assign(&tmp);
-
-            assert_eq!(t_at_z, t_reconstructed);
-
-            // if t_at_z != t_reconstructed {
-            //     panic!("Invalid proof");
-            // }
+            if lhs != rhs {
+                return Err(SynthesisError::Unsatisfiable);
+            }
         }
 
 
