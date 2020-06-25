@@ -659,15 +659,17 @@ impl<E: Engine> std::fmt::Debug for KeyValueSet<E> {
 }
 
 pub(crate) struct LookupDataHolder<E: Engine> {
+    pub(crate) eta: E::Fr,
     pub(crate) f_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) t_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) t_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) s_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub(crate) f_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+    // pub(crate) f_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
     pub(crate) t_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
     pub(crate) s_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
     pub(crate) selector_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+    pub(crate) table_type_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -677,4 +679,5 @@ pub(crate) struct LookupQuery<E: Engine> {
     pub(crate) t_at_z: E::Fr,
     pub(crate) t_at_z_omega: E::Fr,
     pub(crate) selector_at_z: E::Fr,
+    pub(crate) table_type_at_z: E::Fr,
 }
