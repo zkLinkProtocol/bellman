@@ -18,7 +18,7 @@ bit-vec = "0.6"
 cfg-if = "0.1"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
-pairing = {package = "pairing_ce", version = "0.21.*" }
+pairing = {package = "pairing_ce", version = "0.22.*" }
 byteorder = "1"
 
 futures= {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
@@ -37,7 +37,8 @@ lazy_static = {version = "1", optional = true}
 
 blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_const/blake2s/"}
 
-rescue_hash = {git = "https://github.com/shamatar/rescue_hash.git", optional = true }
+# rescue_hash = {git = "https://github.com/shamatar/rescue_hash.git", optional = true }
+rescue_hash = {path = "../rescue_hash", optional = true }
 poseidon_hash = {path = "../poseidon_hash", optional = true }
 
 hex = "*"

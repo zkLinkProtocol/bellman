@@ -18,12 +18,16 @@ lazy_static! {
 
 pub trait Prng<F: PrimeField>: Sized + Clone {
     type Input;
+    type InitializationParameters: Clone;
     fn new() -> Self;
+    fn new_from_params(params: Self::InitializationParameters) -> Self {
+        unimplemented!("not implemented by default");
+    }
     fn commit_input(&mut self, input: &Self::Input);
     fn get_challenge(&mut self) -> F;
 }
 
-pub trait Transcript<F: PrimeField>: Prng<F> + Sized + Clone + 'static {
+pub trait Transcript<F: PrimeField>: Prng<F> + Sized + Clone {
     fn commit_bytes(&mut self, bytes: &[u8]);
     fn commit_field_element(&mut self, element: &F);
     fn get_challenge_bytes(&mut self) -> Vec<u8>;
@@ -76,6 +80,7 @@ impl<F: PrimeField> Blake2sTranscript<F> {
 
 impl<F: PrimeField> Prng<F> for Blake2sTranscript<F> {
     type Input = [u8; 32];
+    type InitializationParameters = ();
 
     fn new() -> Self {
         assert!(F::NUM_BITS < 256);

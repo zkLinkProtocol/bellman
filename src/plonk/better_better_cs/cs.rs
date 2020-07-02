@@ -954,7 +954,7 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
     // }
 }
 
-fn get_from_map_unchecked<E: Engine>(
+pub fn get_from_map_unchecked<E: Engine>(
     key_with_dilation: PolynomialInConstraint,
     ldes_map: &AssembledPolynomialStorage<E>
 ) -> &Polynomial<E::Fr, Values> {
@@ -991,7 +991,7 @@ fn get_from_map_unchecked<E: Engine>(
     r
 }
 
-fn ensure_in_map_or_create<E: Engine>(
+pub fn ensure_in_map_or_create<E: Engine>(
     worker: &Worker,
     key_with_dilation: PolynomialInConstraint,
     domain_size: usize,
@@ -1247,6 +1247,8 @@ pub trait ConstraintSystem<E: Engine> {
 
     fn apply_single_lookup_gate(&mut self, variables: &[Variable], gate: Arc<LookupTableApplication<E>>) -> Result<(), SynthesisError>;
     fn apply_multi_lookup_gate(&mut self, variables: &[Variable], gate: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError>;
+
+    fn get_current_step_number(&self) -> usize;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1446,6 +1448,8 @@ pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
     pub table_selectors: std::collections::HashMap<String, BitVec>,
     pub multitable_selectors: std::collections::HashMap<String, BitVec>,
     pub table_ids_poly: Vec<E::Fr>,
+    pub total_length_of_all_tables: usize,
+
     pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
     pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
     pub known_table_ids: Vec<E::Fr>,
@@ -1666,10 +1670,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
         assert!(!self.known_table_ids.contains(&table.table_id()));
         let table_name = table.functional_name();
         let table_id = table.table_id();
+        let number_of_entries = table.size();
+
+        dbg!(&table_name, number_of_entries);
+
         self.tables.push(Arc::from(table));
         self.individual_table_entries.insert(table_name.clone(), vec![]);
         self.table_selectors.insert(table_name, BitVec::new());
         self.known_table_ids.push(table_id);
+
+        self.total_length_of_all_tables += number_of_entries;
 
         Ok(())
     }
@@ -1801,6 +1811,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
 
         Ok(())
     }
+
+    fn get_current_step_number(&self) -> usize {
+        self.n()
+    }
 }
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssembly<E, P, MG> {
@@ -1922,6 +1936,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             table_selectors: std::collections::HashMap::new(),
             multitable_selectors: std::collections::HashMap::new(),
             table_ids_poly: vec![],
+            total_length_of_all_tables: 0,
 
             individual_table_entries: std::collections::HashMap::new(),
             individual_multitable_entries: std::collections::HashMap::new(),
@@ -2310,6 +2325,74 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         Ok(column_contributions)
     }
 
+    pub fn calculate_interleaved_t_polys(&self) -> 
+        Result<Vec<Vec<E::Fr>>, SynthesisError> {
+        assert!(self.is_finalized);
+        
+        if self.tables.len() == 0 {
+            return Ok(vec![])
+        }
+        
+        // we should pass over every table and append it
+
+        let mut width = 0;
+        for table in self.tables.iter() {
+            if width == 0 {
+                width = table.width();
+            } else {
+                assert_eq!(width, table.width());
+            }
+        }
+
+        assert_eq!(width, 3, "only support tables that span over 3 polynomials for now");
+
+        assert!(self.is_finalized);
+        if self.tables.len() == 0 {
+            return Ok(vec![]);
+        }
+
+        // total number of gates, Input + Aux
+        let size = self.n();
+
+        let aux_gates_start = self.num_input_gates;
+
+        let mut contributions = vec![vec![E::Fr::zero(); size]; 4];
+
+        // make it shifted for ease of rotations later one
+        let mut place_into_idx = aux_gates_start + 1;
+
+        let lookup_selector = self.calculate_lookup_selector_values()?;
+
+        for single_application in self.tables.iter() {
+            let entries = single_application.get_table_values_for_polys();
+            assert_eq!(entries.len(), 3);
+            let table_id = single_application.table_id();
+            let num_entries = single_application.size();
+
+            assert_eq!(entries[0].len(), num_entries);
+
+            for entry_idx in 0..num_entries {
+                'inner: loop {
+                    if lookup_selector[place_into_idx].is_zero() {
+                        // we can place a table row into the poly
+                        for column in 0..3 {
+                            contributions[column][place_into_idx] = entries[column][entry_idx];
+                        }
+                        contributions[3][place_into_idx] = table_id;
+                        place_into_idx += 1;
+
+                        break 'inner;
+                    } else {
+                        // go for a next one 
+                        place_into_idx += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(contributions)
+    }
+
     pub fn calculate_s_poly_contributions_from_witness(&self) ->
         Result<Vec<Vec<E::Fr>>, SynthesisError> 
     {
@@ -2361,38 +2444,88 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         Ok(contributions_per_column)
     }
 
-    pub fn calculate_f_poly_contribution_from_witness(
-        &self,
-        storage: &AssembledPolynomialStorage<E>
+    pub fn calculate_table_type_values(
+        &self
     ) -> 
-        Result<(Vec<Vec<E::Fr>>, Vec<E::Fr>), SynthesisError>
+        Result<Vec<E::Fr>, SynthesisError>
     {
         assert!(self.is_finalized);
         if self.tables.len() == 0 {
-            return Ok((vec![], vec![]));
+            return Ok(vec![]);
         }
 
-        let table_ids_vector = self.table_ids_poly.clone();
+        let table_ids_vector_on_aux_gates = &self.table_ids_poly;
+
+        let num_aux_gates = self.num_aux_gates;
 
         // total number of gates, Input + Aux
         let size = self.n();
 
-        // TODO: calculate reserved length somewhere else
-        let tmp = self.calculate_t_polynomial_values_for_single_application_tables()?;
+        let aux_gates_start = self.num_input_gates;
+        let aux_gates_end = aux_gates_start + num_aux_gates;
 
-        let reserved_len = tmp[0].len();
+        let mut values = vec![E::Fr::zero(); size];
+        assert_eq!(num_aux_gates, table_ids_vector_on_aux_gates.len());
 
-        assert!(size > reserved_len);
+        values[aux_gates_start..aux_gates_end].copy_from_slice(table_ids_vector_on_aux_gates);
+
+        Ok(values)
+    }
+
+    pub fn calculate_lookup_selector_values(
+        &self
+    ) -> Result<Vec<E::Fr>, SynthesisError> {
+        assert!(self.is_finalized);
+        if self.tables.len() == 0 {
+            return Ok(vec![]);
+        }
+
+        // total number of gates, Input + Aux
+        let size = self.n();
 
         let aux_gates_start = self.num_input_gates;
-        // input + aux gates without t-polys
-        let aux_gates_end = size - reserved_len;
 
-        let num_aux_gates = aux_gates_end - aux_gates_start;
+        let num_aux_gates = self.num_aux_gates;
+        // input + aux gates without t-polys
 
         let mut lookup_selector_values = vec![E::Fr::zero(); size];
 
-        let mut contributions_per_column = vec![vec![E::Fr::zero(); size]; 4];
+        for single_application in self.tables.iter() {
+            let table_name = single_application.functional_name();
+            let selector_bitvec = self.table_selectors.get(&table_name).unwrap();
+
+            for aux_gate_idx in 0..num_aux_gates {
+                if selector_bitvec[aux_gate_idx] {
+                    let global_gate_idx = aux_gate_idx + aux_gates_start;
+                    // place 1 into selector
+                    lookup_selector_values[global_gate_idx] = E::Fr::one();
+                }
+            }
+        }
+
+        Ok(lookup_selector_values)
+    }
+
+    pub fn calculate_masked_lookup_entries(
+        &self,
+        storage: &AssembledPolynomialStorage<E>
+    ) -> 
+        Result<Vec<Vec<E::Fr>>, SynthesisError>
+    {
+        assert!(self.is_finalized);
+        if self.tables.len() == 0 {
+            return Ok(vec![]);
+        }
+
+        // total number of gates, Input + Aux
+        let size = self.n();
+
+        let aux_gates_start = self.num_input_gates;
+
+        let num_aux_gates = self.num_aux_gates;
+        // input + aux gates without t-polys
+
+        let mut contributions_per_column = vec![vec![E::Fr::zero(); size]; 3];
         for single_application in self.tables.iter() {
             let table_name = single_application.functional_name();
             let keys_and_values = single_application.applies_over();
@@ -2401,8 +2534,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             for aux_gate_idx in 0..num_aux_gates {
                 if selector_bitvec[aux_gate_idx] {
                     let global_gate_idx = aux_gate_idx + aux_gates_start;
-                    // place 1 into selector
-                    lookup_selector_values[global_gate_idx] = E::Fr::one();
 
                     // place value into f poly
                     for (idx, &poly_id) in keys_and_values.iter().enumerate() {
@@ -2413,11 +2544,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             }
         }
 
-        let aux_gates_slice = &table_ids_vector[..num_aux_gates];
-
-        contributions_per_column.last_mut().unwrap()[aux_gates_start..aux_gates_end].copy_from_slice(aux_gates_slice);
-
-        Ok((contributions_per_column, lookup_selector_values))
+        Ok(contributions_per_column)
     }
 
     fn sort_by_t(
@@ -2632,10 +2759,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     }
 
     pub fn create_lde_storage(
-        worker: &Worker, 
-        omegas: &BitReversedOmegas<E::Fr>, 
-        lde_factor: usize,
-        monomial_storage: &AssembledPolynomialStorageForMonomialForms<E>
+        _worker: &Worker, 
+        _omegas: &BitReversedOmegas<E::Fr>, 
+        _lde_factor: usize,
+        _monomial_storage: &AssembledPolynomialStorageForMonomialForms<E>
     ) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
         unimplemented!()
     }
@@ -2695,17 +2822,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             // these are selected rows from witness (where lookup applies)
             // TODO: split and output selector without calculating witness
-            let (mut f_polys_values, selector_values) = self.calculate_f_poly_contribution_from_witness(&values_storage)?;
-            assert_eq!(f_polys_values.len(), 4);
 
-            let witness_len = f_polys_values[0].len();
+            let selector_for_lookup_values = self.calculate_lookup_selector_values()?;
+            let table_type_values = self.calculate_table_type_values()?;
+
+            let mut table_contributions_values = self.calculate_masked_lookup_entries(&values_storage)?;
+
+            assert_eq!(table_contributions_values.len(), 3);
+
+            let witness_len = table_contributions_values[0].len();
             assert_eq!(witness_len, required_domain_size - 1);
 
-            let mut f_poly_values_aggregated = f_polys_values.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-            let table_type_values = f_polys_values.pop().unwrap();
+            let mut f_poly_values_aggregated = table_contributions_values.drain(0..1).collect::<Vec<_>>().pop().unwrap();
 
             let mut current = eta;
-            for t in f_polys_values.into_iter() {
+            for t in table_contributions_values.into_iter() {
                 let op = BinopAddAssignScaled::new(current);
                 binop_over_slices(&worker, &op, &mut f_poly_values_aggregated, &t);
                 
@@ -2750,6 +2881,29 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             assert!(full_t_poly_values[0].is_zero());
 
+            // // these are unsorted rows of lookup tables
+            // let mut interleaved_t_polys = self.calculate_interleaved_t_polys()?;
+
+            // assert_eq!(interleaved_t_polys.len(), 4);
+            // assert_eq!(interleaved_t_polys[0].len(), witness_len);
+
+            // let mut t_poly_values_aggregated = interleaved_t_polys.drain(0..1).collect::<Vec<_>>().pop().unwrap();
+            // let mut current = eta;
+            // for t in interleaved_t_polys.into_iter() {
+            //     let op = BinopAddAssignScaled::new(current);
+            //     binop_over_slices(&worker, &op, &mut t_poly_values_aggregated, &t);
+                
+            //     current.mul_assign(&eta);
+            // }
+
+            // let mut full_t_poly_values = vec![E::Fr::zero(); witness_len];
+            // let mut full_t_poly_values_shifted = full_t_poly_values.clone();
+
+            // full_t_poly_values[..].copy_from_slice(&t_poly_values_aggregated);
+            // full_t_poly_values_shifted[..(witness_len-1)].copy_from_slice(&t_poly_values_aggregated[1..]);
+
+            // assert!(full_t_poly_values[0].is_zero());
+
             let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
             assert_eq!(s_poly_ends.len(), 4);
 
@@ -2772,7 +2926,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             assert!(full_s_poly_values[0].is_zero());
 
-            let selector_poly = Polynomial::<E::Fr, Values>::from_values(selector_values)?.ifft_using_bitreversed_ntt(
+            let selector_poly = Polynomial::<E::Fr, Values>::from_values(selector_for_lookup_values)?.ifft_using_bitreversed_ntt(
                 &worker,
                 &omegas_inv_bitreversed,
                 &E::Fr::one()
@@ -4329,7 +4483,7 @@ mod test {
 
             let dummy = CS::get_dummy_variable();
 
-            // and table
+            // and table (gate #2 zero enumerated)
             {
                 let table = cs.get_table(&and_table_name)?;
                 let num_keys_and_values = table.width();
@@ -4365,7 +4519,7 @@ mod test {
 
             let var_zero = cs.get_explicit_zero()?;
 
-            // range table
+            // range table (gate #4 zero enumerated)
             {
                 let table = cs.get_table(&range_table_name)?;
                 let num_keys_and_values = table.width();
@@ -4374,6 +4528,157 @@ mod test {
 
                 let mut term = MainGateTerm::<E>::new();
                 term.add_assign(ArithmeticTerm::from_variable_and_coeff(e, E::Fr::zero()));
+                term.add_assign(ArithmeticTerm::from_variable_and_coeff(var_zero, E::Fr::zero()));
+                term.add_assign(ArithmeticTerm::from_variable_and_coeff(var_zero, E::Fr::zero()));
+
+                let (vars, coeffs) = CS::MainGate::format_linear_term_with_duplicates(term, dummy)?;
+
+                cs.new_gate_in_batch(
+                    &CS::MainGate::default(),
+                    &coeffs,
+                    &vars,
+                    &[]
+                )?;
+
+                cs.apply_single_lookup_gate(&vars[..num_keys_and_values], table)?;
+
+                cs.end_gates_batch_for_step()?;
+            }
+
+            // xor table (gate #5 zero enumerated)
+            {
+                let table = cs.get_table(&xor_table_name)?;
+                let num_keys_and_values = table.width();
+
+                let xor_result_value = table.query(&[binary_x_value, binary_y_value])?[0];
+
+                let binary_z = cs.alloc(|| {
+                    Ok(xor_result_value)
+                })?;
+
+                cs.begin_gates_batch_for_step()?;
+
+                let vars = [binary_x, binary_y, binary_z, dummy];
+                cs.allocate_variables_without_gate(
+                    &vars,
+                    &[]
+                )?;
+
+                cs.apply_single_lookup_gate(&vars[..num_keys_and_values], table)?;
+
+                cs.end_gates_batch_for_step()?;
+            }
+
+            let one = cs.get_explicit_one()?;
+
+            cs.new_single_gate_for_trace_step(
+                &TestBitGate::default(),
+                &[],
+                &[one],
+                &[],
+            )?;
+
+            Ok(())
+        }
+    }
+
+
+    struct TestCircuit4WithLookupsManyGatesSmallTable<E:Engine>{
+        _marker: PhantomData<E>
+    }
+
+    impl<E: Engine> Circuit<E> for TestCircuit4WithLookupsManyGatesSmallTable<E> {
+        fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let columns = vec![PolyIdentifier::VariablesPolynomial(0), PolyIdentifier::VariablesPolynomial(1), PolyIdentifier::VariablesPolynomial(2)];
+            let range_table = LookupTableApplication::new_range_table_of_width_3(2, columns.clone())?;
+            let range_table_name = range_table.functional_name();
+
+            let xor_table = LookupTableApplication::new_xor_table(2, columns.clone())?;
+            let xor_table_name = xor_table.functional_name();
+
+            let and_table = LookupTableApplication::new_and_table(2, columns)?;
+            let and_table_name = and_table.functional_name();
+
+            cs.add_table(range_table)?;
+            cs.add_table(xor_table)?;
+            cs.add_table(and_table)?;
+
+            let a = cs.alloc(|| {
+                Ok(E::Fr::from_str("10").unwrap())
+            })?;
+
+            let b = cs.alloc(|| {
+                Ok(E::Fr::from_str("20").unwrap())
+            })?;
+
+            let c = cs.alloc(|| {
+                Ok(E::Fr::from_str("200").unwrap())
+            })?;
+
+            let binary_x_value = E::Fr::from_str("3").unwrap();
+            let binary_y_value = E::Fr::from_str("1").unwrap();
+
+            let binary_x = cs.alloc(|| {
+                Ok(binary_x_value)
+            })?;
+
+            let binary_y = cs.alloc(|| {
+                Ok(binary_y_value)
+            })?;
+
+            let mut negative_one = E::Fr::one();
+            negative_one.negate();
+
+            for _ in 0..((1 << 11) - 100) {
+                // c - a*b == 0 
+
+                let mut ab_term = ArithmeticTerm::from_variable(a).mul_by_variable(b);
+                ab_term.scale(&negative_one);
+                let c_term = ArithmeticTerm::from_variable(c);
+                let mut term = MainGateTerm::new();
+                term.add_assign(c_term);
+                term.add_assign(ab_term);
+
+                cs.allocate_main_gate(term)?;
+            }
+
+            let dummy = CS::get_dummy_variable();
+
+            // and table
+            {
+                let table = cs.get_table(&and_table_name)?;
+                let num_keys_and_values = table.width();
+
+                let and_result_value = table.query(&[binary_x_value, binary_y_value])?[0];
+
+                let binary_z = cs.alloc(|| {
+                    Ok(and_result_value)
+                })?;
+
+                cs.begin_gates_batch_for_step()?;
+
+                let vars = [binary_x, binary_y, binary_z, dummy];
+                cs.allocate_variables_without_gate(
+                    &vars,
+                    &[]
+                )?;
+
+                cs.apply_single_lookup_gate(&vars[..num_keys_and_values], table)?;
+
+                cs.end_gates_batch_for_step()?;
+            }
+
+            let var_zero = cs.get_explicit_zero()?;
+
+            // range table
+            {
+                let table = cs.get_table(&range_table_name)?;
+                let num_keys_and_values = table.width();
+
+                cs.begin_gates_batch_for_step()?;
+
+                let mut term = MainGateTerm::<E>::new();
+                term.add_assign(ArithmeticTerm::from_variable_and_coeff(binary_y, E::Fr::zero()));
                 term.add_assign(ArithmeticTerm::from_variable_and_coeff(var_zero, E::Fr::zero()));
                 term.add_assign(ArithmeticTerm::from_variable_and_coeff(var_zero, E::Fr::zero()));
 
@@ -4414,15 +4719,6 @@ mod test {
 
                 cs.end_gates_batch_for_step()?;
             }
-
-            let one = cs.get_explicit_one()?;
-
-            cs.new_single_gate_for_trace_step(
-                &TestBitGate::default(),
-                &[],
-                &[one],
-                &[],
-            )?;
 
             Ok(())
         }
@@ -4475,6 +4771,34 @@ mod test {
         assert!(assembly.is_satisfied());
 
         assert!(assembly.gates.len() == 2);
+
+        assembly.finalize();
+
+        println!("Finalized assembly contains {} gates", assembly.n());
+
+        let worker = Worker::new();
+
+        let _ = assembly.prover_stub(&worker).unwrap();
+    }
+
+    #[test]
+    fn test_circuit_with_small_tables() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::worker::Worker;
+
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+
+        let circuit = TestCircuit4WithLookupsManyGatesSmallTable::<Bn256> {
+            _marker: PhantomData
+        };
+
+        circuit.synthesize(&mut assembly).expect("must work");
+
+        println!("Assembly contains {} gates", assembly.n());
+        assert!(assembly.is_satisfied());
+
+        assert_eq!(assembly.gates.len(), 1);
+        assert_eq!(assembly.total_length_of_all_tables, 4*4 + 4*4 + 4);
 
         assembly.finalize();
 

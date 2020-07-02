@@ -282,13 +282,18 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         crs_vals: &Crs<E, CrsForLagrangeForm>, 
         crs_mon: &Crs<E, CrsForMonomialForm>,
         omegas_bitreversed: &CP,
-        omegas_inv_bitreversed: &CPI
+        omegas_inv_bitreversed: &CPI,
+        transcript_init_params: Option< <T as Prng<E::Fr> >:: InitializationParameters>,
     ) -> Result<Proof<E, PlonkCsWidth4WithNextStepParams>, SynthesisError> {
         use crate::pairing::CurveAffine;
         use std::sync::Arc;
 
-        let mut transcript = T::new();
-
+        let mut transcript = if let Some(p) = transcript_init_params {
+            T::new_from_params(p)
+        } else {
+            T::new()
+        };
+            
         assert!(self.is_finalized);
 
         let input_values = self.input_assingments.clone();

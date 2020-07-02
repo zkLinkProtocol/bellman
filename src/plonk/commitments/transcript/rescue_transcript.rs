@@ -22,9 +22,18 @@ impl<'a, E: RescueEngine> RescueTranscript<'a, E> {
 
 impl<'a, E: RescueEngine> Prng<E::Fr> for RescueTranscript<'a, E> {
     type Input = E::Fr;
+    type InitializationParameters = &'a E::Params;
 
     fn new() -> Self {
         unimplemented!()
+    }
+
+    fn new_from_params(params: Self::InitializationParameters) -> Self {
+        let stateful = StatefulRescue::new(params);
+
+        Self {
+            state: stateful
+        }
     }
 
     fn commit_input(&mut self, input: &Self::Input) {

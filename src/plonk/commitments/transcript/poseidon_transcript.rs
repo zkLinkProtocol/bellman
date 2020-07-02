@@ -22,9 +22,18 @@ impl<'a, E: PoseidonEngine> PoseidonTranscript<'a, E> {
 
 impl<'a, E: PoseidonEngine> Prng<E::Fr> for PoseidonTranscript<'a, E> {
     type Input = E::Fr;
+    type InitializationParameters = &'a E::Params;
 
     fn new() -> Self {
         unimplemented!()
+    }
+
+    fn new_from_params(params: Self::InitializationParameters) -> Self {
+        let stateful = StatefulSponge::new(params);
+
+        Self {
+            state: stateful
+        }
     }
 
     fn commit_input(&mut self, input: &Self::Input) {

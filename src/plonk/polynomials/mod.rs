@@ -144,7 +144,20 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         func(v);
-                        // v.negate();
+                    }
+                });
+            }
+        });
+    }
+
+    pub fn map_indexed<M: Fn(usize, &mut F) -> () + Send + Copy>(&mut self, worker: &Worker, func: M)
+    {
+        worker.scope(self.coeffs.len(), |scope, chunk| {
+            for (chunk_idx, v) in self.coeffs.chunks_mut(chunk).enumerate() {
+                scope.spawn(move |_| {
+                    let base = chunk_idx * chunk;
+                    for (in_chunk_idx, v) in v.iter_mut().enumerate() {
+                        func(base + in_chunk_idx, v);
                     }
                 });
             }

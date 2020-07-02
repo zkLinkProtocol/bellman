@@ -21,13 +21,18 @@ use crate::plonk::commitments::transcript::*;
 pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>>(
     proof: &Proof<E, P>,
     verification_key: &VerificationKey<E, P>,
+    transcript_init_params: Option< <T as Prng<E::Fr> >:: InitializationParameters>,
 ) -> Result<bool, SynthesisError> {
     use crate::pairing::CurveAffine;
     use crate::pairing::CurveProjective;
 
     assert!(P::CAN_ACCESS_NEXT_TRACE_STEP);
 
-    let mut transcript = T::new();
+    let mut transcript = if let Some(p) = transcript_init_params {
+        T::new_from_params(p)
+    } else {
+        T::new()
+    };
 
     if proof.n != verification_key.n {
         return Err(SynthesisError::MalformedVerifyingKey);
@@ -299,6 +304,7 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
 
     // do the same for linearization
     multiopening_challenge.mul_assign(&v); // to preserve sequence
+
     commitments_aggregation.add_assign(&virtual_commitment_for_linearization_poly); // v^1 is contained inside
 
     debug_assert_eq!(multiopening_challenge, v.pow(&[1 as u64]));
@@ -366,6 +372,8 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
 
     assert_eq!(multiopening_challenge, multiopening_challenge_for_values);
 
+    dbg!(aggregated_value);
+
     // make equivalent of (f(x) - f(z))
     commitments_aggregation.sub_assign(&E::G1Affine::one().mul(aggregated_value.into_repr()));
 
@@ -383,6 +391,9 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
     let mut pair_with_x = proof.opening_at_z_omega_proof.mul(u.into_repr());
     pair_with_x.add_assign_mixed(&proof.opening_at_z_proof);
     pair_with_x.negate();
+
+    dbg!(pair_with_generator.into_affine());
+    // dbg!(pair_with_x.into_affine());
 
     let valid = E::final_exponentiation(
         &E::miller_loop(&[

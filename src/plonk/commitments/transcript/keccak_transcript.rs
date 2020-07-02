@@ -64,6 +64,7 @@ impl<F: PrimeField> RollingKeccakTranscript<F> {
 
 impl<F: PrimeField> Prng<F> for RollingKeccakTranscript<F> {
     type Input = [u8; 32];
+    type InitializationParameters = ();
 
     fn new() -> Self {
         assert!(F::NUM_BITS < 256);

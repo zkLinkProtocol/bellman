@@ -3,7 +3,7 @@ macro_rules! transparent_engine_impl {
         $engine:ident,
         $fr:ty
     ) => {
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         pub struct $engine;
 
         impl crate::ff::ScalarEngine for $engine {

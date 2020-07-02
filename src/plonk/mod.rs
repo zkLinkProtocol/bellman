@@ -334,6 +334,7 @@ pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
         &csr_mon_basis,
         &omegas_bitreversed,
         &omegas_inv_bitreversed,
+        None,
     )?;
 
     println!("Proving taken {:?}", now.elapsed());
@@ -384,6 +385,7 @@ pub fn prove_from_recomputations<
         &csr_mon_basis,
         omegas_bitreversed,
         omegas_inv_bitreversed,
+        None,
     )?;
 
     println!("Proving taken {:?}", now.elapsed());
@@ -395,5 +397,5 @@ pub fn verify<E: Engine, T: Transcript<E::Fr>>(
     proof: &Proof<E, PlonkCsWidth4WithNextStepParams>,
     verification_key: &VerificationKey<E, PlonkCsWidth4WithNextStepParams>
 ) -> Result<bool, SynthesisError> {
-    self::better_cs::verifier::verify::<E, PlonkCsWidth4WithNextStepParams, T>(&proof, &verification_key)
+    self::better_cs::verifier::verify::<E, PlonkCsWidth4WithNextStepParams, T>(&proof, &verification_key, None)
 }
