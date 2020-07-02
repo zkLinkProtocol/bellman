@@ -372,8 +372,6 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
 
     assert_eq!(multiopening_challenge, multiopening_challenge_for_values);
 
-    dbg!(aggregated_value);
-
     // make equivalent of (f(x) - f(z))
     commitments_aggregation.sub_assign(&E::G1Affine::one().mul(aggregated_value.into_repr()));
 
@@ -391,9 +389,6 @@ pub fn verify<E: Engine, P: PlonkConstraintSystemParams<E>, T: Transcript<E::Fr>
     let mut pair_with_x = proof.opening_at_z_omega_proof.mul(u.into_repr());
     pair_with_x.add_assign_mixed(&proof.opening_at_z_proof);
     pair_with_x.negate();
-
-    dbg!(pair_with_generator.into_affine());
-    // dbg!(pair_with_x.into_affine());
 
     let valid = E::final_exponentiation(
         &E::miller_loop(&[
