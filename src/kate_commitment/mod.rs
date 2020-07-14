@@ -1336,6 +1336,84 @@ pub(crate) mod test {
         }
     }
 
+    fn serialize_affine_points_for_fpga<E: Engine, W: std::io::Write>(
+        points: &[E::G1Affine],
+        mut dst: W
+    ) -> Result<(), std::io::Error> {
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        println!("First point = {}", points[0]);
+        for p in points.iter() {
+            let (x, y) = p.into_xy_unchecked();
+            let repr = x.into_raw_repr();
+            repr.write_le(&mut dst)?;
+
+            let repr = y.into_raw_repr();
+            repr.write_le(&mut dst)?;
+        }
+        
+        Ok(())
+    }
+
+    fn serialize_scalars_for_fpga<E: Engine, W: std::io::Write>(
+        scalars: &[E::Fr],
+        mut dst: W
+    ) -> Result<(), std::io::Error> {
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        println!("First scalar = {}", scalars[0]);
+        for s in scalars.iter() {
+            let repr = s.into_repr();
+            repr.write_le(&mut dst)?;
+        }
+        
+        Ok(())
+    }
+
+    fn serialize_projective_points_for_fpga<E: Engine, W: std::io::Write>(
+        points: &[E::G1],
+        mut dst: W
+    ) -> Result<(), std::io::Error> {
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        let (x, y, z) = points[1].into_xyz_unchecked();
+
+        println!("Second bucket (for scalar = 1): X = {}, Y = {}, Z = {}", x, y, z);
+        for p in points.iter() {
+            let (x, y, z) = p.into_xyz_unchecked();
+            let repr = x.into_raw_repr();
+            repr.write_le(&mut dst)?;
+
+            let repr = y.into_raw_repr();
+            repr.write_le(&mut dst)?;
+
+            let repr = z.into_raw_repr();
+            repr.write_le(&mut dst)?;
+        }
+        
+        Ok(())
+    }
+
+    fn simulate_first_buckets<E: Engine>(points: &[E::G1Affine], scalars: &[E::Fr], c: usize, random_point: E::G1Affine) -> Vec<E::G1> {
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        let skip = 0;
+        let mask = (1u64 << c) - 1u64;
+        let p = random_point.into_projective();
+        let mut buckets = vec![p; 1 << c];
+
+        for (exp, point) in scalars.iter().zip(points.iter()) {
+            let this_exp = exp.into_repr();
+
+            let mut this_exp = this_exp;
+            this_exp.shr(skip);
+            let this_exp = this_exp.as_ref()[0] & mask;
+            buckets[this_exp as usize].add_assign_mixed(point);
+        }
+
+        buckets
+    }
 
     #[test]
     #[ignore]
@@ -1411,6 +1489,83 @@ pub(crate) mod test {
 
                 
             }
+        }
+    }
+
+    fn make_random_points_with_unknown_discrete_log<E: Engine>(
+        dst: &[u8],
+        seed: &[u8],
+        num_points: usize
+    ) -> Vec<E::G1Affine> {
+        let mut result = vec![];
+
+        use rand::{Rng, SeedableRng};
+        use rand::chacha::ChaChaRng;
+        // Create an RNG based on the outcome of the random beacon
+        let mut rng = {
+            // if we use Blake hasher
+            let input: Vec<u8> = dst.iter().chain(seed.iter()).cloned().collect();
+            let h = blake2s_simd::blake2s(&input);
+            assert!(h.as_bytes().len() == 32);
+            let mut seed = [0u32; 8];
+            for (i, chunk) in h.as_bytes().chunks_exact(8).enumerate() {
+                seed[i] = (&chunk[..]).read_u32::<BigEndian>().expect("digest is large enough for this to work");
+            }
+
+            ChaChaRng::from_seed(&seed)
+        };
+
+        for _ in 0..num_points {
+            let point: E::G1 = rng.gen();
+
+            result.push(point.into_affine());
+        }
+
+        result
+    }
+
+    #[test]
+    fn produce_fpga_test_vectors() {
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::bls12_381::Bls12;
+
+        let worker =crate::worker::Worker::new();
+
+        let random_point = make_random_points_with_unknown_discrete_log::<Bls12>(
+            &b"fpga_dst"[..], 
+            &hex::decode(crate::constants::ETH_BLOCK_10_000_000_HASH).unwrap(), 
+            1
+        )[0];
+
+        println!("Random point = {}", random_point);
+
+        let base_path = std::path::Path::new("./");
+    
+        for n in vec![6, 7, 20] {
+            let points_path = base_path.join(&format!("input_points_2^{}.key", n));
+            let scalars_path = base_path.join(&format!("input_scalars_2^{}.key", n));
+            let buckets_path = base_path.join(&format!("output_buckets_2^{}.key", n));
+
+            println!("Opening {}", points_path.to_string_lossy());
+
+            let file = std::fs::File::create(points_path).unwrap();
+            let mut points_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(scalars_path).unwrap();
+            let mut scalars_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(buckets_path).unwrap();
+            let mut buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let size = 1 << n;
+
+            let scalars = make_random_field_elements::<<Bls12 as ScalarEngine>::Fr>(&worker, size);
+            let points = make_random_g1_points::<<Bls12 as Engine>::G1Affine>(&worker, size);
+            let buckets = simulate_first_buckets::<Bls12>(&points, &scalars, 13, random_point);
+
+            serialize_affine_points_for_fpga::<Bls12, _>(&points, &mut points_file).unwrap();
+            serialize_scalars_for_fpga::<Bls12, _>(&scalars, &mut scalars_file).unwrap();
+            serialize_projective_points_for_fpga::<Bls12, _>(&buckets, &mut buckets_file).unwrap();
         }
     }
 }

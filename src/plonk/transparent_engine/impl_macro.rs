@@ -3,7 +3,7 @@ macro_rules! transparent_engine_impl {
         $engine:ident,
         $fr:ty
     ) => {
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         pub struct $engine;
 
         impl crate::ff::ScalarEngine for $engine {
@@ -190,7 +190,7 @@ macro_rules! transparent_engine_impl {
                 (&self, &self)
             }
 
-            fn into_xy_unchecked(&self) -> (Self::Base, Self::Base) {
+            fn into_xy_unchecked(self) -> (Self::Base, Self::Base) {
                 (<$fr as crate::ff::Field>::zero(), <$fr as crate::ff::Field>::zero())
             }
 
