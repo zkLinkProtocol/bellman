@@ -215,11 +215,8 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
         let required_domain_size = n + 1;
         assert!(required_domain_size.is_power_of_two());
 
-        let domain = Domain::new_for_size(required_domain_size as u64)?;
-
         let non_residues = make_non_residues::<E::Fr>(
-            P::STATE_WIDTH - 1, 
-            &domain
+            P::STATE_WIDTH - 1
         );
 
         let (full_assignments, _) = assembly.make_state_and_witness_polynomials(&worker)?;

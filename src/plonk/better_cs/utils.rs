@@ -185,7 +185,17 @@ pub(crate) fn evaluate_lagrange_poly_at_point<F: PrimeField>(
 
 use crate::ff::SqrtField;
 
-pub(crate) fn make_non_residues<F: PrimeField + SqrtField>(num: usize, domain: &Domain<F>) -> Vec<F> {
+
+pub fn make_non_residues<F: PrimeField + SqrtField>(num: usize) -> Vec<F> {
+    // create largest domain possible
+    let domain_size = 1u64 << (F::S as u64);
+
+    let domain = Domain::<F>::new_for_size(domain_size).expect("largest domain must exist");
+
+    make_non_residues_for_domain(num, &domain)
+}
+
+pub fn make_non_residues_for_domain<F: PrimeField + SqrtField>(num: usize, domain: &Domain<F>) -> Vec<F> {
     use crate::ff::LegendreSymbol;
     
     // we need to check that 

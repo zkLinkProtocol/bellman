@@ -1414,7 +1414,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
         let mut non_residues = vec![];
         non_residues.push(E::Fr::one());
-        non_residues.extend(make_non_residues::<E::Fr>(P::STATE_WIDTH - 1, &domain));
+        non_residues.extend(make_non_residues::<E::Fr>(P::STATE_WIDTH - 1));
 
         assert_eq!(non_residues.len(), 4);
 

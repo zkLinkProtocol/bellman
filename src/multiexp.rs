@@ -878,14 +878,19 @@ fn test_dense_multiexp_vs_new_multiexp() {
 #[test]
 fn test_bench_sparse_multiexp() {
     use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-    use crate::pairing::bn256::Bn256;
     use num_cpus;
 
-    const SAMPLES: usize = 1 << 22;
+    // type Eng = crate::pairing::bn256::Bn256;
+    type Eng = crate::pairing::bls12_381::Bls12;
+
+    const SAMPLES: usize = 1 << 20;
     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
-    let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-    let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+    println!("Generating scalars");
+    let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+
+    println!("Generating points");
+    let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
     println!("Done generating test points and scalars");
 
@@ -900,20 +905,22 @@ fn test_bench_sparse_multiexp() {
     ).wait().unwrap();
 
     let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("{} ms for sparse for {} samples", duration_ns/1000.0f64, SAMPLES);
+    println!("{} ms for sparse for {} samples on {:?}", duration_ns/1000.0f64, SAMPLES, Eng{});
 }
 
 #[test]
 fn test_bench_dense_consuming_multiexp() {
     use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-    use crate::pairing::bn256::Bn256;
+
+    // type Eng = crate::pairing::bn256::Bn256;
+    type Eng = crate::pairing::bls12_381::Bls12;
     use num_cpus;
 
     const SAMPLES: usize = 1 << 20;
     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
-    let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-    let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+    let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+    let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
     println!("Done generating test points and scalars");
 

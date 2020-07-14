@@ -91,7 +91,7 @@ impl<E: RescueEngine> BinaryTreeHasher<E::Fr> for CountingHash<E> {
         E::Fr::zero()
     }
 
-    fn node_hash(&self, input: &[Self::Output; 2], _level: usize) -> Self::Output {
+    fn node_hash(&self, _input: &[Self::Output; 2], _level: usize) -> Self::Output {
         COUNTER.fetch_add(2, Ordering::SeqCst);
 
         E::Fr::zero()

@@ -599,9 +599,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             new.permutation_commitments.push(commitment);
         }
 
-        let domain = Domain::<E::Fr>::new_for_size(setup.n.next_power_of_two() as u64)?;
         new.non_residues
-            .extend(super::utils::make_non_residues(P::STATE_WIDTH - 1, &domain));
+            .extend(super::utils::make_non_residues::<E::Fr>(P::STATE_WIDTH - 1));
 
         Ok(new)
     }

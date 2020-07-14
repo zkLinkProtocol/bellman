@@ -368,8 +368,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         domain_elements_poly_by_beta.scale(&worker, beta);
 
         let non_residues = make_non_residues::<E::Fr>(
-            <PlonkCsWidth4WithNextStepParams as PlonkConstraintSystemParams<E>>::STATE_WIDTH - 1, 
-            &domain
+            <PlonkCsWidth4WithNextStepParams as PlonkConstraintSystemParams<E>>::STATE_WIDTH - 1
         );
 
         // we take A, B, C, ... values and form (A + beta * X * non_residue + gamma), etc and calculate their grand product
@@ -1180,9 +1179,10 @@ mod test {
             &crs_mons,
             &omegas_bitreversed,
             &omegas_inv_bitreversed,
+            None,
         ).unwrap();
 
-        let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key).unwrap();
+        let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key, None).unwrap();
 
         assert!(is_valid);
 

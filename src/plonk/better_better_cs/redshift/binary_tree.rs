@@ -58,7 +58,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         self.num_leafs
     }
 
-    pub(crate) fn create_from_combined_leafs(
+    pub fn create_from_combined_leafs(
         leafs: &[Vec<&[E::Fr]>],
         num_combined: usize, 
         tree_hasher: H, 
@@ -67,9 +67,9 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         let values_per_leaf = params.values_per_leaf;
         let num_leafs = leafs.len();
         let values_per_leaf_supplied = leafs[0].len() * leafs[0][0].len();
-        assert!(num_combined == leafs[0].len());
-        assert!(values_per_leaf == values_per_leaf_supplied);
-        assert!(num_leafs.is_power_of_two());
+        assert_eq!(num_combined, leafs[0].len(), "invalid number of total combined leafs");
+        assert_eq!(values_per_leaf, values_per_leaf_supplied, "values per leaf from params and from data is not consistent");
+        assert!(num_leafs.is_power_of_two(), "tree must be binary");
 
         let num_nodes = num_leafs;
 
@@ -106,7 +106,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
             });
         }
 
-        println!("Leaf hashes comleted");
+        println!("Leaf hashes completed");
 
         // leafs are now encoded and hashed, so let's make a tree
 
@@ -272,7 +272,7 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
         }
     }
 
-    pub(crate) fn get_commitment(&self) -> H::Output {
+    pub fn get_commitment(&self) -> H::Output {
         self.nodes[1].clone()
     }
 
@@ -435,12 +435,16 @@ pub struct MultiQuery<E: Engine, H: BinaryTreeHasher<E::Fr>> {
 }
 
 impl<E: Engine, H: BinaryTreeHasher<E::Fr>> Query<E, H> {
-    fn indexes(&self) -> Vec<usize> {
+    pub fn indexes(&self) -> Vec<usize> {
         self.indexes.clone()
     }
 
-    fn values(&self) -> &[E::Fr] {
+    pub fn values(&self) -> &[E::Fr] {
         &self.values
+    }
+
+    pub fn path(&self) -> &[H::Output] {
+        &self.path
     }
 }
 
