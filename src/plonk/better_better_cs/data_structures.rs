@@ -10,10 +10,11 @@ pub enum PolyIdentifier {
     GateSetupPolynomial(&'static str, usize),
     GateSelector(&'static str),
     LookupSelector,
-    NamedSetupPolynomial(&'static str)
+    LookupTableEntriesPolynomial(usize),
+    NamedSetupPolynomial(&'static str),
+    PermutationPolynomial(usize),
 }
 
-pub const LOOKUP_TABLE_POLYNOMIAL: &'static str = "LOOKUP_TABLE_POLYNOMIAL";
 pub const LOOKUP_TABLE_TYPE_POLYNOMIAL: &'static str = "LOOKUP_TABLE_TYPE_POLYNOMIAL";
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -22,13 +23,13 @@ pub struct TimeDilation(pub usize);
 pub struct PolynomialInConstraint(pub PolyIdentifier, pub TimeDilation);
 
 impl PolynomialInConstraint{
-    pub fn from_id(id: PolyIdentifier) -> Self {
+    pub const fn from_id(id: PolyIdentifier) -> Self {
         Self(id, TimeDilation(0))
     }
-    pub fn from_id_and_dilation(id: PolyIdentifier, dilation: usize) -> Self {
+    pub const fn from_id_and_dilation(id: PolyIdentifier, dilation: usize) -> Self {
         Self(id, TimeDilation(dilation))
     }
-    pub fn into_id_and_raw_dilation(self) -> (PolyIdentifier, usize) {
+    pub const fn into_id_and_raw_dilation(self) -> (PolyIdentifier, usize) {
         (self.0, (self.1).0)
     }
 }
@@ -47,10 +48,10 @@ impl<'a, F: PrimeField, P: PolynomialForm> PolynomialProxy<'a, F, P> {
         PolynomialProxy::Borrowed(poly)
     }
 
-    fn as_ref(&self) -> &Polynomial<F, P> {
+    pub fn as_ref(&self) -> &Polynomial<F, P> {
         match self {
             PolynomialProxy::Borrowed(b) => {
-                b
+                &*b
             },
             PolynomialProxy::Owned(o) => {
                 &o
@@ -148,12 +149,18 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
             p @ PolyIdentifier::GateSetupPolynomial(..) => {
                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
             },
+            p @ PolyIdentifier::PermutationPolynomial(..) => {
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
             p @ PolyIdentifier::LookupSelector => {
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
+            p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
                 self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
             },
             p @ PolyIdentifier::NamedSetupPolynomial(..) => {
                 self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
-            }
+            },
             _ => {
                 unreachable!()
             }
@@ -185,7 +192,7 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
         }
     }
 
-    pub fn add_setup_polys(&mut self, ids: &[PolyIdentifier], polys: &'a [Polynomial<E::Fr, Values>]) {
+    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Values>]) {
         assert_eq!(ids.len(), polys.len());
         for (id, poly) in ids.iter().zip(polys.iter()) {
             let proxy = PolynomialProxy::from_borrowed(poly);
@@ -197,12 +204,18 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
                 p @ PolyIdentifier::GateSelector(..) => {
                     self.setup_map.insert(p.clone(), proxy);
                 },
+                p @ PolyIdentifier::PermutationPolynomial(..) => {
+                    self.setup_map.insert(p.clone(), proxy);
+                },
                 p @ PolyIdentifier::LookupSelector => {
+                    self.named_polys.insert(p.clone(), proxy);
+                },
+                p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
                     self.named_polys.insert(p.clone(), proxy);
                 },
                 p @ PolyIdentifier::NamedSetupPolynomial(..) => {
                     self.named_polys.insert(p.clone(), proxy);
-                }
+                },
                 _ => {
                     unreachable!()
                 }
@@ -223,9 +236,21 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
             p @ PolyIdentifier::GateSetupPolynomial(..) => {
                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
             },
-            _ => {
-                unreachable!()
-            }
+            p @ PolyIdentifier::GateSelector(..) => {
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
+            p @ PolyIdentifier::PermutationPolynomial(..) => {
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
+            p @ PolyIdentifier::LookupSelector => {
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
+            p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
+            p @ PolyIdentifier::NamedSetupPolynomial(..) => {
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
         }
     }
 
@@ -245,7 +270,7 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
         self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
     }
 
-    pub fn add_setup_polys(&mut self, ids: &[PolyIdentifier], polys: &'a [Polynomial<E::Fr, Coefficients>]) {
+    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Coefficients>]) {
         assert_eq!(ids.len(), polys.len());
         for (id, poly) in ids.iter().zip(polys.iter()) {
             let proxy = PolynomialProxy::from_borrowed(poly);
@@ -257,7 +282,13 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
                 p @ PolyIdentifier::GateSelector(..) => {
                     self.setup_map.insert(p.clone(), proxy);
                 },
+                p @ PolyIdentifier::PermutationPolynomial(..) => {
+                    self.setup_map.insert(p.clone(), proxy);
+                },
                 p @ PolyIdentifier::LookupSelector => {
+                    self.named_polys.insert(p.clone(), proxy);
+                },
+                p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
                     self.named_polys.insert(p.clone(), proxy);
                 },
                 p @ PolyIdentifier::NamedSetupPolynomial(..) => {

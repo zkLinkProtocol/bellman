@@ -16,9 +16,11 @@ pub use super::lookup_tables::*;
 use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::utils::*;
+use super::data_structures::*;
 
-pub trait SynthesisMode {
+pub trait SynthesisMode: Clone + Send + Sync + std::fmt::Debug {
     const PRODUCE_WITNESS: bool;
+    const PRODUCE_SETUP: bool;
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct SynthesisModeGenerateSetup;
@@ -26,24 +28,26 @@ pub struct SynthesisModeGenerateSetup;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct SynthesisModeProve;
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct SynthesisModeTesting;
+
 impl SynthesisMode for SynthesisModeGenerateSetup {
     const PRODUCE_WITNESS: bool = false;
+    const PRODUCE_SETUP: bool = true;
 }
 
 impl SynthesisMode for SynthesisModeProve {
     const PRODUCE_WITNESS: bool = true;
+    const PRODUCE_SETUP: bool = false;
 }
 
+impl SynthesisMode for SynthesisModeTesting {
+    const PRODUCE_WITNESS: bool = true;
+    const PRODUCE_SETUP: bool = true;
+}
 
 pub trait Circuit<E: Engine> {
     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PolynomialInConstraint {
-    VariablesPolynomial(usize, TimeDilation),
-    WitnessPolynomial(usize, TimeDilation),
-    SetupPolynomial(&'static str, usize, TimeDilation)
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -52,16 +56,6 @@ pub enum Coefficient {
     MinusOne,
     Other
 }
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PolyIdentifier {
-    VariablesPolynomial(usize),
-    WitnessPolynomial(usize),
-    SetupPolynomial(&'static str, usize),
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct TimeDilation(pub usize);
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct PolynomialMultiplicativeTerm(pub Coefficient, pub Vec<PolynomialInConstraint>);
@@ -97,23 +91,23 @@ pub trait GateInternal<E: Engine>: Send
     fn linearizes_over(&self) -> Vec<PolynomialInConstraint>;
     fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint>;
     fn num_quotient_terms(&self) -> usize;
-    fn verify_on_row(&self, row: usize, poly_storage: &AssembledPolynomialStorage<E>, last_row: bool) -> E::Fr;
-    fn contribute_into_quotient(
+    fn verify_on_row<'a>(&self, row: usize, poly_storage: &AssembledPolynomialStorage<'a, E>, last_row: bool) -> E::Fr;
+    fn contribute_into_quotient<'a, 'b>(
         &self, 
         domain_size: usize,
-        poly_storage: &mut AssembledPolynomialStorage<E>,
-        monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        poly_storage: &mut AssembledPolynomialStorage<'a, E>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<'b, E>,
         challenges: &[E::Fr],
         omegas_bitreversed: &BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
         worker: &Worker
     ) -> Result<Polynomial<E::Fr, Values>, SynthesisError>;
-    fn contribute_into_linearization(
+    fn contribute_into_linearization<'a>(
         &self, 
         domain_size: usize,
         at: E::Fr,
         queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
-        monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<'a, E>,
         challenges: &[E::Fr],
         worker: &Worker
     ) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError>;
@@ -155,24 +149,24 @@ pub trait MainGate<E: Engine>: Gate<E> {
     fn format_linear_term_with_duplicates(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
     fn dummy_vars_to_inscribe(dummy: Variable) -> Vec<Variable>;
     fn empty_coefficients() -> Vec<E::Fr>;
-    fn contribute_into_quotient_for_public_inputs(
+    fn contribute_into_quotient_for_public_inputs<'a, 'b>(
         &self, 
         domain_size: usize,
         public_inputs: &[E::Fr],
-        poly_storage: &mut AssembledPolynomialStorage<E>,
-        monomial_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        poly_storage: &mut AssembledPolynomialStorage<'b, E>,
+        monomial_storage: & AssembledPolynomialStorageForMonomialForms<'a, E>,
         challenges: &[E::Fr],
         omegas_bitreversed: &BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
         worker: &Worker
     ) -> Result<Polynomial<E::Fr, Values>, SynthesisError>;
-    fn contribute_into_linearization_for_public_inputs(
+    fn contribute_into_linearization_for_public_inputs<'a>(
         &self, 
         domain_size: usize,
         public_inputs: &[E::Fr],
         at: E::Fr,
         queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
-        monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<'a, E>,
         challenges: &[E::Fr],
         worker: &Worker
     ) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError>;
@@ -359,19 +353,20 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let name = <Self as GateInternal<E>>::name(&self);
 
         vec![
-            PolynomialInConstraint::SetupPolynomial(name, 0, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 1, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 2, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 3, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 4, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 5, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 6, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 2)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 3)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
 
-            PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
+
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
         ]
     }
 
@@ -379,13 +374,13 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let name = <Self as GateInternal<E>>::name(&self);
 
         vec![
-            PolyIdentifier::SetupPolynomial(name, 0),
-            PolyIdentifier::SetupPolynomial(name, 1),
-            PolyIdentifier::SetupPolynomial(name, 2),
-            PolyIdentifier::SetupPolynomial(name, 3),
-            PolyIdentifier::SetupPolynomial(name, 4),
-            PolyIdentifier::SetupPolynomial(name, 5),
-            PolyIdentifier::SetupPolynomial(name, 6),
+            PolyIdentifier::GateSetupPolynomial(name, 0),
+            PolyIdentifier::GateSetupPolynomial(name, 1),
+            PolyIdentifier::GateSetupPolynomial(name, 2),
+            PolyIdentifier::GateSetupPolynomial(name, 3),
+            PolyIdentifier::GateSetupPolynomial(name, 4),
+            PolyIdentifier::GateSetupPolynomial(name, 5),
+            PolyIdentifier::GateSetupPolynomial(name, 6),
         ]
     }
 
@@ -406,23 +401,24 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let name = <Self as GateInternal<E>>::name(&self);
 
         vec![
-            PolynomialInConstraint::SetupPolynomial(name, 0, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 1, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 2, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 3, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 4, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 5, TimeDilation(0)),
-            PolynomialInConstraint::SetupPolynomial(name, 6, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 2)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 3)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
         ]
     }
 
     fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint> {
         vec![
-            PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(0)),
-            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
+
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
         ]
     }
 
@@ -433,13 +429,13 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
     fn verify_on_row(&self, row: usize, poly_storage: &AssembledPolynomialStorage<E>, last_row: bool) -> E::Fr {
         let name = <Self as GateInternal<E>>::name(&self);
 
-        let q_a = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 0), row);
-        let q_b = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 1), row);
-        let q_c = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 2), row);
-        let q_d = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 3), row);
-        let q_m = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 4), row);
-        let q_const = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 5), row);
-        let q_d_next = poly_storage.get_poly_at_step(PolyIdentifier::SetupPolynomial(name, 6), row);
+        let q_a = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 0), row);
+        let q_b = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 1), row);
+        let q_c = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 2), row);
+        let q_d = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 3), row);
+        let q_m = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 4), row);
+        let q_const = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 5), row);
+        let q_d_next = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 6), row);
 
         // println!("{}*A + {}*B + {}*C + {}*D + {} + {}*A*A + {}*D_next", q_a, q_b, q_c, q_d, q_const, q_m, q_d_next);
         let a_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(0), row);
@@ -702,12 +698,12 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         vec![E::Fr::zero(); 7]
     }
 
-    fn contribute_into_quotient_for_public_inputs(
+    fn contribute_into_quotient_for_public_inputs<'a, 'b>(
         &self, 
         domain_size: usize,
         public_inputs: &[E::Fr],
-        poly_storage: &mut AssembledPolynomialStorage<E>,
-        monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+        poly_storage: &mut AssembledPolynomialStorage<'a, E>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<'b, E>,
         challenges: &[E::Fr],
         omegas_bitreversed: &BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
@@ -734,8 +730,8 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         // add constants selectors vector
         let name = <Self as GateInternal<E>>::name(&self);
 
-        let key = PolyIdentifier::SetupPolynomial(name, 5);
-        let constants_poly_ref = monomials_storage.setup_map.get(&key).unwrap();
+        let key = PolyIdentifier::GateSetupPolynomial(name, 5);
+        let constants_poly_ref = monomials_storage.get_poly(key);
         inputs_poly.add_assign(&worker, constants_poly_ref);
         drop(constants_poly_ref);
 
@@ -749,7 +745,7 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         for p in <Self as GateInternal<E>>::all_queried_polynomials(&self).into_iter() {
             // skip public constants poly (was used in public inputs)
-            if p == PolynomialInConstraint::SetupPolynomial(name, 5, TimeDilation(0)) {
+            if p == PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)) {
                 continue;
             }
             ensure_in_map_or_create(&worker, 
@@ -767,11 +763,11 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         // Q_A * A
         let q_a_ref = get_from_map_unchecked(
-            PolynomialInConstraint::SetupPolynomial(name, 0, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
             ldes_storage
         );
         let a_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
             ldes_storage
         );
         let mut tmp = q_a_ref.clone();
@@ -782,11 +778,11 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         // Q_B * B
         let q_b_ref = get_from_map_unchecked(
-            PolynomialInConstraint::SetupPolynomial(name, 1, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 1)),
             ldes_storage
         );
         let b_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
             ldes_storage
         );
         tmp.reuse_allocation(q_b_ref);
@@ -797,11 +793,11 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         // // Q_C * C
         let q_c_ref = get_from_map_unchecked(
-            PolynomialInConstraint::SetupPolynomial(name, 2, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 2)),
             ldes_storage
         );
         let c_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
             ldes_storage
         );
         tmp.reuse_allocation(q_c_ref);
@@ -812,11 +808,11 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         // // Q_D * D
         let q_d_ref = get_from_map_unchecked(
-            PolynomialInConstraint::SetupPolynomial(name, 3, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 3)),
             ldes_storage
         );
         let d_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
             ldes_storage
         );
         tmp.reuse_allocation(q_d_ref);
@@ -827,15 +823,15 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         // Q_M * A * B
         let q_m_ref = get_from_map_unchecked(
-            PolynomialInConstraint::SetupPolynomial(name, 4, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
             ldes_storage
         );
         let a_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
             ldes_storage
         );
         let b_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
             ldes_storage
         );
         tmp.reuse_allocation(q_m_ref);
@@ -848,11 +844,11 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         // Q_D_next * D_next
         let q_d_next_ref = get_from_map_unchecked(
-            PolynomialInConstraint::SetupPolynomial(name, 6, TimeDilation(0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
             ldes_storage
         );
         let d_next_ref = get_from_map_unchecked(
-            PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)),
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(0), 0),
             ldes_storage
         );
         tmp.reuse_allocation(q_d_next_ref);
@@ -879,54 +875,47 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         // we actually do not depend on public inputs, but we use this form for consistency
         assert_eq!(challenges.len(), 1);
 
-        let a_value = *queried_values.get(&PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)))
+        let a_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)))
         .ok_or(SynthesisError::AssignmentMissing)?;
-        let b_value = *queried_values.get(&PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)))
+        let b_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)))
         .ok_or(SynthesisError::AssignmentMissing)?;
-        let c_value = *queried_values.get(&PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)))
+        let c_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)))
         .ok_or(SynthesisError::AssignmentMissing)?;
-        let d_value = *queried_values.get(&PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(0)))
+        let d_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)))
         .ok_or(SynthesisError::AssignmentMissing)?;
-        let d_next_value = *queried_values.get(&PolynomialInConstraint::VariablesPolynomial(3, TimeDilation(1)))
+        let d_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1))
         .ok_or(SynthesisError::AssignmentMissing)?;
 
         let name = <Self as GateInternal<E>>::name(&self);
 
         // Q_a * A
-        let mut result = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 0))
-            .ok_or(SynthesisError::AssignmentMissing)?.clone();
+        let mut result = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 0)).clone();
         result.scale(&worker, a_value);
 
         // Q_b * B
-        let poly_ref = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 1))
-            .ok_or(SynthesisError::AssignmentMissing)?;
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 1));
         result.add_assign_scaled(&worker, poly_ref, &b_value);
 
         // Q_c * C
-        let poly_ref = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 2))
-            .ok_or(SynthesisError::AssignmentMissing)?;
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 2));
         result.add_assign_scaled(&worker, poly_ref, &c_value);
 
         // Q_d * D
-        let poly_ref = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 3))
-            .ok_or(SynthesisError::AssignmentMissing)?;
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 3));
         result.add_assign_scaled(&worker, poly_ref, &d_value);
 
         // Q_m * A*B
         let mut tmp = a_value;
         tmp.mul_assign(&b_value);
-        let poly_ref = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 4))
-            .ok_or(SynthesisError::AssignmentMissing)?;
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 4));
         result.add_assign_scaled(&worker, poly_ref, &tmp);
 
         // Q_const
-        let poly_ref = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 5))
-            .ok_or(SynthesisError::AssignmentMissing)?;
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 5));
         result.add_assign(&worker, poly_ref);
 
         // Q_dNext * D_next
-        let poly_ref = monomials_storage.setup_map.get(&PolyIdentifier::SetupPolynomial(name, 6))
-            .ok_or(SynthesisError::AssignmentMissing)?;
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 6));
         result.add_assign_scaled(&worker, poly_ref, &d_next_value);
 
         result.scale(&worker, challenges[0]);
@@ -956,80 +945,51 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         Ok(contribution)
     }
-    // fn contribute_into_verification_equation_for_public_inputs(
-    //     &self, 
-    //     domain_size: usize,
-    //     public_inputs: &[E::Fr],
-    //     at: E::Fr,
-    //     queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
-    //     challenges: &[E::Fr],
-    // ) -> Result<E::Fr, SynthesisError> {
-    //     assert_eq!(challenges.len(), 1);
-    //     unimplemented!("NYI");
-    // }
 }
 
-pub fn get_from_map_unchecked<E: Engine>(
+pub fn get_from_map_unchecked<'a, 'b: 'a, E: Engine>(
     key_with_dilation: PolynomialInConstraint,
-    ldes_map: &AssembledPolynomialStorage<E>
-) -> &Polynomial<E::Fr, Values> {
+    ldes_map: &'a AssembledPolynomialStorage<'b, E>
+) -> &'a Polynomial<E::Fr, Values> {
 
-    let (key, dilation_value) = match key_with_dilation {
-        PolynomialInConstraint::VariablesPolynomial(idx, dilation) => {
-            (PolyIdentifier::VariablesPolynomial(idx), dilation.0)
-        },
-        PolynomialInConstraint::WitnessPolynomial(idx, dilation) => {
-            (PolyIdentifier::WitnessPolynomial(idx), dilation.0)
-        },
-        PolynomialInConstraint::SetupPolynomial(name, idx, dilation) => {
-            (PolyIdentifier::SetupPolynomial(name, idx), dilation.0)
-        }
-    };
-
+    let (key, dilation_value) = key_with_dilation.into_id_and_raw_dilation();
 
     let r = if dilation_value == 0 {
         match key {
             k @ PolyIdentifier::VariablesPolynomial(..) => {
-                ldes_map.state_map.get(&k).unwrap()
+                ldes_map.state_map.get(&k).unwrap().as_ref()
             },
             k @ PolyIdentifier::WitnessPolynomial(..) => {
-                ldes_map.witness_map.get(&k).unwrap()
+                ldes_map.witness_map.get(&k).unwrap().as_ref()
             },           
-            k @ PolyIdentifier::SetupPolynomial(..) => {
-                ldes_map.setup_map.get(&k).unwrap()
+            k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                ldes_map.setup_map.get(&k).unwrap().as_ref()
+            },
+            _ => {
+                unreachable!();
             }
         }
     } else {
-        ldes_map.scratch_space.get(&key_with_dilation).unwrap()
+        ldes_map.scratch_space.get(&key_with_dilation).unwrap().as_ref()
     };
 
     r
 }
 
-pub fn ensure_in_map_or_create<E: Engine>(
+pub fn ensure_in_map_or_create<'a, 'b, E: Engine>(
     worker: &Worker,
     key_with_dilation: PolynomialInConstraint,
     domain_size: usize,
     omegas_bitreversed: &BitReversedOmegas<E::Fr>,
     lde_factor: usize,
     coset_factor: E::Fr,
-    monomials_map: &AssembledPolynomialStorageForMonomialForms<E>,
-    ldes_map: &mut AssembledPolynomialStorage<E>
+    monomials_map: & AssembledPolynomialStorageForMonomialForms<'a, E>,
+    ldes_map: &mut AssembledPolynomialStorage<'b, E>
 ) -> Result<(), SynthesisError> {
     assert!(ldes_map.is_bitreversed);
     assert_eq!(ldes_map.lde_factor, lde_factor);
 
-    let (key, dilation_value) = match key_with_dilation {
-        PolynomialInConstraint::VariablesPolynomial(idx, dilation) => {
-            (PolyIdentifier::VariablesPolynomial(idx), dilation.0)
-        },
-        PolynomialInConstraint::WitnessPolynomial(idx, dilation) => {
-            (PolyIdentifier::WitnessPolynomial(idx), dilation.0)
-        },
-        PolynomialInConstraint::SetupPolynomial(name, idx, dilation) => {
-            (PolyIdentifier::SetupPolynomial(name, idx), dilation.0)
-        }
-    };
+    let (key, dilation_value) = key_with_dilation.into_id_and_raw_dilation();
 
     let mut contains_in_scratch_or_maps = false;
 
@@ -1045,10 +1005,13 @@ pub fn ensure_in_map_or_create<E: Engine>(
                     contains_in_scratch_or_maps = true;
                 }
             },           
-            k @ PolyIdentifier::SetupPolynomial(..) => {
+            k @ PolyIdentifier::GateSetupPolynomial(..) => {
                 if ldes_map.setup_map.get(&k).is_some() {
                     contains_in_scratch_or_maps = true;
                 }
+            },
+            _ => {
+                unreachable!();
             }
         }
     } else {
@@ -1067,8 +1030,11 @@ pub fn ensure_in_map_or_create<E: Engine>(
             k @ PolyIdentifier::WitnessPolynomial(..) => {
                 ldes_map.witness_map.get(&k)
             },           
-            k @ PolyIdentifier::SetupPolynomial(..) => {
+            k @ PolyIdentifier::GateSetupPolynomial(..) => {
                 ldes_map.setup_map.get(&k)
+            },
+            _ => {
+                unreachable!();
             }
         };
 
@@ -1076,7 +1042,7 @@ pub fn ensure_in_map_or_create<E: Engine>(
 
         let rotated = if let Some(lde) = lde_without_dilation.as_ref() {
             let rotation_factor = dilation_value * lde_factor;
-            let f = lde.clone_shifted_assuming_bitreversed(rotation_factor, worker)?;
+            let f = lde.as_ref().clone_shifted_assuming_bitreversed(rotation_factor, worker)?;
             drop(lde);
 
             Some(f)
@@ -1087,7 +1053,8 @@ pub fn ensure_in_map_or_create<E: Engine>(
         drop(lde_without_dilation);
 
         if let Some(f) = rotated {
-            ldes_map.scratch_space.insert(key_with_dilation, f);
+            let proxy = PolynomialProxy::from_owned(f);
+            ldes_map.scratch_space.insert(key_with_dilation, proxy);
 
             done = true;
         };
@@ -1097,13 +1064,16 @@ pub fn ensure_in_map_or_create<E: Engine>(
 
             let monomial = match key {
                 k @ PolyIdentifier::VariablesPolynomial(..) => {
-                    monomials_map.state_map.get(&k).unwrap()
+                    monomials_map.state_map.get(&k).unwrap().as_ref()
                 },
                 k @ PolyIdentifier::WitnessPolynomial(..) => {
-                    monomials_map.witness_map.get(&k).unwrap()
+                    monomials_map.witness_map.get(&k).unwrap().as_ref()
                 },           
-                k @ PolyIdentifier::SetupPolynomial(..) => {
-                    monomials_map.setup_map.get(&k).unwrap()
+                k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                    monomials_map.setup_map.get(&k).unwrap().as_ref()
+                },
+                _ => {
+                    unreachable!();
                 }
             };
         
@@ -1126,20 +1096,25 @@ pub fn ensure_in_map_or_create<E: Engine>(
 
             // insert back
 
+            let proxy = PolynomialProxy::from_owned(final_lde);
+
             if dilation_value == 0 {
                 match key {
                     k @ PolyIdentifier::VariablesPolynomial(..) => {
-                        ldes_map.state_map.insert(k, final_lde);
+                        ldes_map.state_map.insert(k, proxy);
                     },
                     k @ PolyIdentifier::WitnessPolynomial(..) => {
-                        ldes_map.witness_map.insert(k, final_lde);
+                        ldes_map.witness_map.insert(k, proxy);
                     },           
-                    k @ PolyIdentifier::SetupPolynomial(..) => {
-                        ldes_map.setup_map.insert(k, final_lde);
+                    k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                        ldes_map.setup_map.insert(k, proxy);
+                    },
+                    _ => {
+                        unreachable!();
                     }
                 }
             } else {
-                ldes_map.scratch_space.insert(key_with_dilation, final_lde);
+                ldes_map.scratch_space.insert(key_with_dilation, proxy);
             };
 
             done = true;
@@ -1264,6 +1239,7 @@ pub trait ConstraintSystem<E: Engine> {
     fn apply_multi_lookup_gate(&mut self, variables: &[Variable], gate: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError>;
 
     fn get_current_step_number(&self) -> usize;
+    fn get_current_aux_gate_number(&self) -> usize;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1277,12 +1253,6 @@ impl<E: Engine> PlonkConstraintSystemParams<E> for PlonkCsWidth4WithNextStepPara
 }
 
 use crate::plonk::polynomials::*;
-
-// pub struct PolynomialStorage<E: Engine> {
-//     pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-//     pub witness_map: std::collections::HashMap<PolyIdentifier,Polynomial<E::Fr, Values>>,
-//     pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-// }
 
 #[derive(Clone)]
 pub struct PolynomialStorage<E: Engine> {
@@ -1302,12 +1272,12 @@ impl<E: Engine> PolynomialStorage<E> {
 
     pub fn get_value(&self, poly: &PolynomialInConstraint, n: usize) -> Result<E::Fr, SynthesisError> {
         match poly {
-            PolynomialInConstraint::VariablesPolynomial(_, _) => {
+            PolynomialInConstraint(PolyIdentifier::VariablesPolynomial(_), TimeDilation(_)) => {
                 unreachable!("should not try to get value of the state polynomial, get variable first instead");
             },
-            PolynomialInConstraint::SetupPolynomial(gate_descr, idx, TimeDilation(dilation)) => {
+            PolynomialInConstraint(PolyIdentifier::GateSetupPolynomial(gate_descr, idx), TimeDilation(dilation)) => {
                 let final_index = n + dilation;
-                let identifier = PolyIdentifier::SetupPolynomial(gate_descr, *idx);
+                let identifier = PolyIdentifier::GateSetupPolynomial(gate_descr, *idx);
                 let value = *self.setup_map
                     .get(&identifier)
                     .ok_or(SynthesisError::AssignmentMissing)?
@@ -1316,15 +1286,18 @@ impl<E: Engine> PolynomialStorage<E> {
 
                 Ok(value)
             },
-            PolynomialInConstraint::WitnessPolynomial(_, _) => {
+            PolynomialInConstraint(PolyIdentifier::WitnessPolynomial(_), TimeDilation(_)) => {
                 unimplemented!()
+            },
+            _ => {
+                unreachable!();
             }
         }
     }
 
     pub fn get_variable(&self, poly: &PolynomialInConstraint, n: usize) -> Result<Variable, SynthesisError> {
         match poly {
-            PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(dilation)) => {
+            PolynomialInConstraint(PolyIdentifier::VariablesPolynomial(idx), TimeDilation(dilation)) => {
                 let final_index = n + dilation;
                 let identifier = PolyIdentifier::VariablesPolynomial(*idx);
                 let value = *self.state_map
@@ -1342,81 +1315,81 @@ impl<E: Engine> PolynomialStorage<E> {
     }
 }
 
-pub struct AssembledPolynomialStorage<E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-    pub scratch_space: std::collections::HashMap<PolynomialInConstraint, Polynomial<E::Fr, Values>>,
-    pub gate_selectors: std::collections::HashMap<Box<dyn GateInternal<E>>, Polynomial<E::Fr, Values>>,
-    pub is_bitreversed: bool,
-    pub lde_factor: usize
-}
+// pub struct AssembledPolynomialStorage<E: Engine> {
+//     pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+//     pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+//     pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+//     pub scratch_space: std::collections::HashMap<PolynomialInConstraint, Polynomial<E::Fr, Values>>,
+//     pub gate_selectors: std::collections::HashMap<Box<dyn GateInternal<E>>, Polynomial<E::Fr, Values>>,
+//     pub is_bitreversed: bool,
+//     pub lde_factor: usize
+// }
 
-pub struct AssembledPolynomialStorageForMonomialForms<E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
-    pub gate_selectors: std::collections::HashMap<Box<dyn GateInternal<E>>, Polynomial<E::Fr, Coefficients>>,
-}
+// pub struct AssembledPolynomialStorageForMonomialForms<E: Engine> {
+//     pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+//     pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+//     pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+//     pub gate_selectors: std::collections::HashMap<Box<dyn GateInternal<E>>, Polynomial<E::Fr, Coefficients>>,
+// }
 
-impl<E: Engine> AssembledPolynomialStorage<E> {
-    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values> {
-        match id {
-            p @ PolyIdentifier::VariablesPolynomial(..) => {
-                self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
-            },
-            p @ PolyIdentifier::WitnessPolynomial(..) => {
-                self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
-            },
-            p @ PolyIdentifier::SetupPolynomial(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
-            }
-        }
-    }
-    pub fn get_poly_at_step(&self, id: PolyIdentifier, step: usize) -> E::Fr {
-        assert!(self.is_bitreversed == false);
-        assert!(self.lde_factor == 1);
-        let p = self.get_poly(id);
-        p.as_ref()[step]
-    }
+// impl<E: Engine> AssembledPolynomialStorage<E> {
+//     pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values> {
+//         match id {
+//             p @ PolyIdentifier::VariablesPolynomial(..) => {
+//                 self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
+//             },
+//             p @ PolyIdentifier::WitnessPolynomial(..) => {
+//                 self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
+//             },
+//             p @ PolyIdentifier::GateSetupPolynomial(..) => {
+//                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
+//             }
+//         }
+//     }
+//     pub fn get_poly_at_step(&self, id: PolyIdentifier, step: usize) -> E::Fr {
+//         assert!(self.is_bitreversed == false);
+//         assert!(self.lde_factor == 1);
+//         let p = self.get_poly(id);
+//         p.as_ref()[step]
+//     }
 
-    pub fn new(bitreversed: bool, lde_factor: usize) -> Self {
-        Self {
-            state_map: std::collections::HashMap::new(),
-            witness_map: std::collections::HashMap::new(),
-            setup_map: std::collections::HashMap::new(),
-            gate_selectors: std::collections::HashMap::new(),
-            scratch_space: std::collections::HashMap::new(),
-            is_bitreversed: bitreversed,
-            lde_factor
-        }
-    }
-}
+//     pub fn new(bitreversed: bool, lde_factor: usize) -> Self {
+//         Self {
+//             state_map: std::collections::HashMap::new(),
+//             witness_map: std::collections::HashMap::new(),
+//             setup_map: std::collections::HashMap::new(),
+//             gate_selectors: std::collections::HashMap::new(),
+//             scratch_space: std::collections::HashMap::new(),
+//             is_bitreversed: bitreversed,
+//             lde_factor
+//         }
+//     }
+// }
 
-impl<E: Engine> AssembledPolynomialStorageForMonomialForms<E> {
-    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Coefficients> {
-        match id {
-            p @ PolyIdentifier::VariablesPolynomial(..) => {
-                self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
-            },
-            p @ PolyIdentifier::WitnessPolynomial(..) => {
-                self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
-            },
-            p @ PolyIdentifier::SetupPolynomial(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
-            }
-        }
-    }
+// impl<E: Engine> AssembledPolynomialStorageForMonomialForms<E> {
+//     pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Coefficients> {
+//         match id {
+//             p @ PolyIdentifier::VariablesPolynomial(..) => {
+//                 self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
+//             },
+//             p @ PolyIdentifier::WitnessPolynomial(..) => {
+//                 self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
+//             },
+//             p @ PolyIdentifier::GateSetupPolynomial(..) => {
+//                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
+//             }
+//         }
+//     }
 
-    pub fn new() -> Self {
-        Self {
-            state_map: std::collections::HashMap::new(),
-            witness_map: std::collections::HashMap::new(),
-            setup_map: std::collections::HashMap::new(),
-            gate_selectors: std::collections::HashMap::new()
-        }
-    }
-}
+//     pub fn new() -> Self {
+//         Self {
+//             state_map: std::collections::HashMap::new(),
+//             witness_map: std::collections::HashMap::new(),
+//             setup_map: std::collections::HashMap::new(),
+//             gate_selectors: std::collections::HashMap::new()
+//         }
+//     }
+// }
 
 #[derive(Clone)]
 pub struct GateDensityStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateInternal<E>>, BitVec>);
@@ -1435,8 +1408,10 @@ impl<E: Engine> GateConstantCoefficientsStorage<E> {
     }
 }
 
+pub type TrivialAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeTesting>;
+
 #[derive(Clone)]
-pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> {
+pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> {
     pub inputs_storage: PolynomialStorage<E>,
     pub aux_storage: PolynomialStorage<E>,
     pub num_input_gates: usize,
@@ -1475,7 +1450,7 @@ pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
     _marker_s: std::marker::PhantomData<S>,
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSystem<E> for TrivialAssembly<E, P, MG> {
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> ConstraintSystem<E> for Assembly<E, P, MG, S> {
     type Params = P;
     type MainGate = MG;
 
@@ -1484,13 +1459,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError> 
     {
-        let value = value()?;
 
         self.num_aux += 1;
         let index = self.num_aux;
-        self.aux_assingments.push(value);
-
-        // println!("Allocated variable Aux({}) with value {}", index, value);
+        if S::PRODUCE_WITNESS {
+            let value = value()?;
+            self.aux_assingments.push(value);
+        }
 
         Ok(Variable(Index::Aux(index)))
     }
@@ -1500,12 +1475,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError> 
     {
-        let value = value()?;
-
         self.num_inputs += 1;
         let index = self.num_inputs;
-        self.input_assingments.push(value);
-
+        if S::PRODUCE_WITNESS {
+            let value = value()?;
+            self.input_assingments.push(value);
+        }
+        
         let input_var = Variable(Index::Input(index));
 
         let mut main_gate = MainGateTerm::<E>::new();
@@ -1566,19 +1542,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
 
         self.add_gate_into_list(gate);
 
-        if let Some(tracker) = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>) {
-            if tracker.len() != n {
-                let padding = n - tracker.len();
-                tracker.grow(padding, false);
+        if S::PRODUCE_SETUP {
+            if let Some(tracker) = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>) {
+                if tracker.len() != n {
+                    let padding = n - tracker.len();
+                    tracker.grow(padding, false);
+                }
+                tracker.push(true);
+                debug_assert_eq!(n+1, tracker.len());
+            } else {
+                self.aux_gate_density.0.insert(gate.clone().into_internal(), BitVec::new());
+                let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
+                tracker.grow(n, false);
+                tracker.push(true);
+                debug_assert_eq!(n+1, tracker.len());
             }
-            tracker.push(true);
-            debug_assert_eq!(n+1, tracker.len());
-        } else {
-            self.aux_gate_density.0.insert(gate.clone().into_internal(), BitVec::new());
-            let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
-            tracker.grow(n, false);
-            tracker.push(true);
-            debug_assert_eq!(n+1, tracker.len());
         }
 
         Ok(())
@@ -1605,15 +1583,17 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
             witness_assignments,
         )?;
 
-        let apply_gate = false;
+        if S::PRODUCE_SETUP {
+            let apply_gate = false;
 
-        let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
-        if tracker.len() != n {
-            let padding = n - tracker.len();
-            tracker.grow(padding, false);
+            let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
+            if tracker.len() != n {
+                let padding = n - tracker.len();
+                tracker.grow(padding, false);
+            }
+            tracker.push(apply_gate);
+            debug_assert_eq!(n+1, tracker.len());
         }
-        tracker.push(apply_gate);
-        debug_assert_eq!(n+1, tracker.len());
 
         Ok(())
     }
@@ -1627,6 +1607,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     }
 
     fn get_value(&self, var: Variable) -> Result<E::Fr, SynthesisError> {
+        if !S::PRODUCE_WITNESS {
+            return Err(SynthesisError::AssignmentMissing);
+        }
         let value = match var {
             Variable(Index::Aux(0)) => {
                 // use crate::rand::Rng;
@@ -1741,50 +1724,49 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
         // make zero-enumerated index
         let n = n - 1;
 
-        debug_assert!(self.tables.contains(&table));
-        assert!(table.can_be_combined() == true);
-        assert!(table.applies_over().len() == 3);
+        if S::PRODUCE_SETUP {
+            debug_assert!(self.tables.contains(&table));
+            assert!(table.can_be_combined() == true);
+            assert!(table.applies_over().len() == 3);
 
-        let table_name = table.functional_name();
+            let table_name = table.functional_name();
 
-        // we need to:
-        // - mark that this table applies at this row
-        // - add values into the list to later on make a sorted polynomial
+            // we need to:
+            // - mark that this table applies at this row
+            // - add values into the list to later on make a sorted polynomial
 
-        let tracker = self.table_selectors.get_mut(&table_name).unwrap();
-        if tracker.len() != n {
-            let padding = n - tracker.len();
-            tracker.grow(padding, false);
-        }
-        tracker.push(true);
-        debug_assert_eq!(n+1, tracker.len());
-
-        // add values for lookup table sorting later
-
-        let keys_and_values_len = table.applies_over().len();
-        let mut table_entries = Vec::with_capacity(keys_and_values_len + 1);
-        let mut values_are_known = true;
-        for v in variables.iter() {
-            if let Ok(value) = self.get_value(*v) {
-                table_entries.push(value);
-            } else {
-                values_are_known = false;
-                table_entries.push(E::Fr::zero());
+            let tracker = self.table_selectors.get_mut(&table_name).unwrap();
+            if tracker.len() != n {
+                let padding = n - tracker.len();
+                tracker.grow(padding, false);
             }
+            tracker.push(true);
+            debug_assert_eq!(n+1, tracker.len());
+
+            // keep track of what table is applied at what row
+            self.table_ids_poly.resize(n, E::Fr::zero());
+            self.table_ids_poly.push(table.table_id());
         }
-        table_entries.push(table.table_id());        
 
-        let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
-        assert_eq!(variables.len(), table.applies_over().len());
+        if S::PRODUCE_WITNESS {
+            let table_name = table.functional_name();
 
-        if values_are_known {
+            // add values for lookup table sorting later
+            let keys_and_values_len = table.applies_over().len();
+            let mut table_entries = Vec::with_capacity(keys_and_values_len + 1);
+            for v in variables.iter() {
+                let value = self.get_value(*v).unwrap();
+                table_entries.push(value);
+            }
+            table_entries.push(table.table_id());        
+
+            let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
+            assert_eq!(variables.len(), table.applies_over().len());
+
             assert!(table.is_valid_entry(&table_entries[..keys_and_values_len]));
-        }
-        entries.push(table_entries);
 
-        // keep track of what table is applied at what row
-        self.table_ids_poly.resize(n, E::Fr::zero());
-        self.table_ids_poly.push(table.table_id());
+            entries.push(table_entries);
+        }
 
         self.num_table_lookups += 1;
 
@@ -1796,34 +1778,37 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
         // make zero-enumerated index
         let n = n - 1;
 
-        let table_name = table.functional_name();
-        let tracker = self.multitable_selectors.get_mut(&table_name).unwrap();
-        if tracker.len() != n {
-            let padding = n - tracker.len();
-            tracker.grow(padding, false);
-        }
-        tracker.push(true);
-        debug_assert_eq!(n+1, tracker.len());
-
-        let mut table_entries = Vec::with_capacity(table.applies_over().len());
-        for v in variables.iter() {
-            if let Ok(value) = self.get_value(*v) {
-                table_entries.push(value);
-            } else {
-                panic!("value must exist");
+        if S::PRODUCE_SETUP {
+            let table_name = table.functional_name();
+            let tracker = self.multitable_selectors.get_mut(&table_name).unwrap();
+            if tracker.len() != n {
+                let padding = n - tracker.len();
+                tracker.grow(padding, false);
             }
+            tracker.push(true);
+            debug_assert_eq!(n+1, tracker.len());
+
+            self.table_ids_poly.resize(n, E::Fr::zero());
+            self.table_ids_poly.push(table.table_id());
         }
 
-        let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
-        assert_eq!(variables.len(), table.applies_over().len());
+        if S::PRODUCE_WITNESS {
+            let table_name = table.functional_name();
+            let mut table_entries = Vec::with_capacity(table.applies_over().len());
+            for v in variables.iter() {
+                let value = self.get_value(*v).unwrap();
+                table_entries.push(value);
+            }
+    
+            let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
+            assert_eq!(variables.len(), table.applies_over().len());
+    
+            assert!(table.is_valid_entry(&table_entries));
 
-        assert!(table.is_valid_entry(&table_entries));
+            entries.push(table_entries);
+        }
 
-        self.table_ids_poly.resize(n, E::Fr::zero());
-        self.table_ids_poly.push(table.table_id());
-
-        entries.push(table_entries);
-
+        self.num_multitable_lookups += 1;
 
         Ok(())
     }
@@ -1831,9 +1816,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSy
     fn get_current_step_number(&self) -> usize {
         self.n()
     }
+
+    fn get_current_aux_gate_number(&self) -> usize {
+        self.num_aux_gates
+    }
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssembly<E, P, MG> {
+impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> Assembly<E, P, MG, S> {
     fn allocate_into_storage<G: Gate<E>>(
         gate: &G,
         storage: &mut PolynomialStorage<E>, 
@@ -1845,17 +1834,20 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         let dummy = Self::get_dummy_variable();
         let zero = E::Fr::zero();
 
-        let mut coeffs_it = coefficients_assignments.iter();
+        if S::PRODUCE_SETUP {
+            let mut coeffs_it = coefficients_assignments.iter();
 
-        for setup_poly in gate.setup_polynomials().into_iter() {
-            let poly_ref = storage.setup_map.entry(setup_poly).or_insert(vec![]);
-            if poly_ref.len() < n {
-                poly_ref.resize(n, E::Fr::zero());
+            for setup_poly in gate.setup_polynomials().into_iter() {
+                let poly_ref = storage.setup_map.entry(setup_poly).or_insert(vec![]);
+                if poly_ref.len() < n {
+                    poly_ref.resize(n, E::Fr::zero());
+                }
+                poly_ref.push(*coeffs_it.next().unwrap_or(&zero));
             }
-            poly_ref.push(*coeffs_it.next().unwrap_or(&zero));
-        }
 
-        debug_assert!(coeffs_it.next().is_none(), "must consume all the coefficients for gate");
+            debug_assert!(coeffs_it.next().is_none(), "must consume all the coefficients for gate");
+
+        }
 
         let mut variable_it = variables_assignments.iter();
 
@@ -1889,12 +1881,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     pub fn n(&self) -> usize {
         self.num_input_gates + self.num_aux_gates
     }
-
-    // fn add_gate_setup_polys_into_list<G: Gate<E>>(&mut self, gate: &G) {
-    //     for key in gate.setup_polynomials().into_iter() {
-    //         self.sorted_setup_polynomial_ids.push(key);
-    //     }
-    // }
 
     fn add_gate_into_list<G: Gate<E>>(&mut self, gate: &G) {
         if !self.gates.contains(gate.as_internal() as &dyn GateInternal<E>) {
@@ -1962,7 +1948,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             num_table_lookups: 0,
             num_multitable_lookups: 0,
 
-            _marker: std::marker::PhantomData
+            _marker_p: std::marker::PhantomData,
+            _marker_s: std::marker::PhantomData,
         };
 
         tmp.add_gate_into_list(&MG::default());
@@ -2020,18 +2007,20 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         let new_size_for_aux = new_size - self.num_input_gates;
 
-        // pad gate selectors
-        for (_, tracker) in self.aux_gate_density.0.iter_mut() {
-            tracker.grow(new_size_for_aux, false);
-        }
+        if S::PRODUCE_SETUP {
+            // pad gate selectors
+            for (_, tracker) in self.aux_gate_density.0.iter_mut() {
+                tracker.grow(new_size_for_aux, false);
+            }
 
-        // pad lookup selectors
-        for (_, selector) in self.table_selectors.iter_mut() {
-            selector.grow(new_size_for_aux, false);
-        }
+            // pad lookup selectors
+            for (_, selector) in self.table_selectors.iter_mut() {
+                selector.grow(new_size_for_aux, false);
+            }
 
-        // pad special purpose table selector poly
-        self.table_ids_poly.resize(new_size_for_aux, E::Fr::zero());
+            // pad special purpose table selector poly
+            self.table_ids_poly.resize(new_size_for_aux, E::Fr::zero());
+        }
 
         assert!((self.n()+1).is_power_of_two());
         self.is_finalized = true;
@@ -2046,6 +2035,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     }
 
     pub fn is_satisfied(&self) -> bool {
+        if !S::PRODUCE_SETUP || !S::PRODUCE_WITNESS {
+            // only testing mode can run this check for now
+            return true;
+        }
         // expect a small number of inputs
 
         // TODO: handle public inputs
@@ -2088,8 +2081,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         true
     }
 
-    pub(crate) fn make_permutations(&self, worker: &Worker) -> Vec<Polynomial::<E::Fr, Values>> {
+    pub(crate) fn make_permutations(&self, worker: &Worker) -> Result<Vec<Polynomial::<E::Fr, Values>>, SynthesisError> {
         assert!(self.is_finalized);
+
+        if !S::PRODUCE_SETUP {
+            return Err(SynthesisError::AssignmentMissing);
+        }
 
         let num_gates = self.n();
         let num_partitions = self.num_inputs + self.num_aux;
@@ -2207,7 +2204,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             }
         }
 
-        sigmas
+        Ok(sigmas)
     }
 
     fn make_setup_polynomials(
@@ -2216,6 +2213,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, SynthesisError> {
         if with_finalization {
             assert!(self.is_finalized);
+        }
+
+        if !S::PRODUCE_SETUP {
+            return Err(SynthesisError::AssignmentMissing);
         }
 
         let total_num_gates = self.n();
@@ -2255,7 +2256,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
     SynthesisError
     > {
         let map = self.make_setup_polynomials(true)?;
-        let permutation_polys = self.make_permutations(&worker);
+        let permutation_polys = self.make_permutations(&worker)?;
 
         Ok((map, permutation_polys))
     }
@@ -2304,6 +2305,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
     pub fn calculate_t_polynomial_values_for_single_application_tables(&self) -> 
         Result<Vec<Vec<E::Fr>>, SynthesisError> {
+
+        if !S::PRODUCE_SETUP {
+            return Err(SynthesisError::AssignmentMissing);
+        }
         
         if self.tables.len() == 0 {
             return Ok(vec![])
@@ -2466,6 +2471,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         Result<Vec<E::Fr>, SynthesisError>
     {
         assert!(self.is_finalized);
+
+        if !S::PRODUCE_SETUP {
+            return Err(SynthesisError::AssignmentMissing);
+        }
+
         if self.tables.len() == 0 {
             return Ok(vec![]);
         }
@@ -2492,6 +2502,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         &self
     ) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(self.is_finalized);
+
+        if !S::PRODUCE_SETUP {
+            return Err(SynthesisError::AssignmentMissing);
+        }
+
         if self.tables.len() == 0 {
             return Ok(vec![]);
         }
@@ -2624,6 +2639,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             assert!(self.is_finalized);
         }
 
+        if !S::PRODUCE_WITNESS {
+            return Err(SynthesisError::AssignmentMissing);
+        }
+
         let mut full_assignments = if with_finalization {
             vec![Vec::with_capacity((self.n()+1).next_power_of_two()); P::STATE_WIDTH]
         } else {
@@ -2679,7 +2698,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         Ok((full_assignments, vec![]))
     }
 
-    pub fn make_assembled_poly_storage(&self, worker: &Worker, with_finalization: bool) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
+    pub fn make_assembled_poly_storage<'a>(
+        &self, 
+        worker: &Worker, 
+        with_finalization: bool
+    ) -> Result<AssembledPolynomialStorage<'a, E>, SynthesisError> {
         if with_finalization {
             assert!(self.is_finalized);
         }
@@ -2692,6 +2715,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         for (idx, poly) in state_polys.into_iter().enumerate() {
             let key = PolyIdentifier::VariablesPolynomial(idx);
             let p = Polynomial::from_values_unpadded(poly)?;
+            let p = PolynomialProxy::from_owned(p);
             state_polys_map.insert(key, p);
         }
 
@@ -2699,22 +2723,32 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         for (idx, poly) in witness_polys.into_iter().enumerate() {
             let key = PolyIdentifier::WitnessPolynomial(idx);
             let p = Polynomial::from_values_unpadded(poly)?;
+            let p = PolynomialProxy::from_owned(p);
             witness_polys_map.insert(key, p);
         }
 
         let mut gate_selectors_map = std::collections::HashMap::new();
         for (gate, poly) in self.sorted_gates.iter().zip(gate_selectors.into_iter()) {
-            let key = gate.clone();
+            // let key = gate.clone();
+            let key = PolyIdentifier::GateSelector(gate.name());
             let p = Polynomial::from_values_unpadded(poly)?;
+            let p = PolynomialProxy::from_owned(p);
             gate_selectors_map.insert(key, p);
+        }
+
+        let mut setup_map = std::collections::HashMap::new();
+        for (key, p) in setup_polys_map.into_iter() {
+            let p = PolynomialProxy::from_owned(p);
+            setup_map.insert(key, p);
         }
 
         let assembled = AssembledPolynomialStorage::<E> {
             state_map: state_polys_map,
             witness_map: witness_polys_map,
-            setup_map: setup_polys_map,
+            setup_map: setup_map,
             scratch_space: std::collections::HashMap::new(),
             gate_selectors: gate_selectors_map,
+            named_polys: std::collections::HashMap::new(),
             is_bitreversed: false,
             lde_factor: 1
         };
@@ -2722,65 +2756,60 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         Ok(assembled)
     }
 
-    pub fn create_monomial_storage(
+    pub fn create_monomial_storage<'a, 'b>(
         worker: &Worker,
         omegas_inv: &OmegasInvBitreversed<E::Fr>,
-        value_form_storage: &AssembledPolynomialStorage<E>,
+        value_form_storage: &'a AssembledPolynomialStorage<E>,
         include_setup: bool,
-    ) -> Result<AssembledPolynomialStorageForMonomialForms<E>, SynthesisError> {
+    ) -> Result<AssembledPolynomialStorageForMonomialForms<'b, E>, SynthesisError> {
         assert_eq!(value_form_storage.lde_factor, 1);
         assert!(value_form_storage.is_bitreversed == false);
 
         let mut monomial_storage = AssembledPolynomialStorageForMonomialForms::<E>::new();
 
         for (&k, v) in value_form_storage.state_map.iter() {
-            let mon_form = v.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
+            let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
                 &worker, 
                 omegas_inv, 
                 &E::Fr::one()
             )?;
+            let mon_form = PolynomialProxy::from_owned(mon_form);
             monomial_storage.state_map.insert(k, mon_form);
         }
 
         for (&k, v) in value_form_storage.witness_map.iter() {
-            let mon_form = v.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
+            let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
                 &worker, 
                 omegas_inv, 
                 &E::Fr::one()
             )?;
+            let mon_form = PolynomialProxy::from_owned(mon_form);
             monomial_storage.witness_map.insert(k, mon_form);
         }
 
-        for (k, v) in value_form_storage.gate_selectors.iter() {
-            let mon_form = v.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
+        for (&k, v) in value_form_storage.gate_selectors.iter() {
+            let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
                 &worker, 
                 omegas_inv, 
                 &E::Fr::one()
             )?;
-            monomial_storage.gate_selectors.insert(k.box_clone(), mon_form);
+            let mon_form = PolynomialProxy::from_owned(mon_form);
+            monomial_storage.gate_selectors.insert(k, mon_form);
         }
 
         if include_setup {
             for (&k, v) in value_form_storage.setup_map.iter() {
-                let mon_form = v.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
+                let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
                     &worker, 
                     omegas_inv, 
                     &E::Fr::one()
                 )?;
+                let mon_form = PolynomialProxy::from_owned(mon_form);
                 monomial_storage.setup_map.insert(k, mon_form);
             }
         }
 
         Ok(monomial_storage)
-    }
-
-    pub fn create_lde_storage(
-        _worker: &Worker, 
-        _omegas: &BitReversedOmegas<E::Fr>, 
-        _lde_factor: usize,
-        _monomial_storage: &AssembledPolynomialStorageForMonomialForms<E>
-    ) -> Result<AssembledPolynomialStorage<E>, SynthesisError> {
-        unimplemented!()
     }
 
     pub fn prover_stub(self, worker: &Worker) -> Result<(), SynthesisError> {
@@ -2789,7 +2818,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         assert!(self.is_finalized);
 
         let values_storage = self.make_assembled_poly_storage(worker, true)?;
-        let permutation_polys = self.make_permutations(&worker);
+        let permutation_polys = self.make_permutations(&worker)?;
 
         let num_state_polys = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
         let num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
@@ -2983,7 +3012,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         for i in 0..num_state_polys {
             let id = PolyIdentifier::VariablesPolynomial(i);
 
-            let mut p = values_storage.state_map.get(&id).unwrap().clone();
+            let mut p = values_storage.state_map.get(&id).unwrap().as_ref().clone();
             p.add_constant(&worker, &gamma_for_copy_permutation);
 
             grand_products_protos_with_gamma.push(p);
@@ -3241,8 +3270,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             if num_different_gates > 1 {
                 // we have to multiply by the masking poly (selector)
-                
-                let monomial_selector = monomials_storage.gate_selectors.get(gate.as_internal()).unwrap();
+                let key = PolyIdentifier::GateSelector(gate.name());
+                let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
                 let lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
                     &worker, 
                     lde_factor, 
@@ -3276,8 +3305,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             {
                 // we have to multiply by the masking poly (selector)
-                
-                let monomial_selector = monomials_storage.gate_selectors.get(&gate).unwrap();
+                let key = PolyIdentifier::GateSelector(gate.name());
+                let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
                 let lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
                     &worker, 
                     lde_factor, 
@@ -3349,7 +3378,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
             // A + beta*X + gamma
 
-            let mut tmp = ldes_storage.state_map.get(&PolyIdentifier::VariablesPolynomial(0)).unwrap().clone();
+            let mut tmp = ldes_storage.state_map.get(&PolyIdentifier::VariablesPolynomial(0)).unwrap().as_ref().clone();
             tmp.add_constant(&worker, &gamma_for_copy_permutation);
             tmp.add_assign_scaled(&worker, &x_poly, &beta_for_copy_permutation);
             contrib_z.mul_assign(&worker, &tmp);
@@ -3361,7 +3390,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 factor.mul_assign(&non_res);
 
                 let key = PolyIdentifier::VariablesPolynomial(poly_idx);
-                tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap());
+                tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap().as_ref());
                 tmp.add_constant(&worker, &gamma_for_copy_permutation);
                 tmp.add_assign_scaled(&worker, &x_poly, &factor);
                 contrib_z.mul_assign(&worker, &tmp);
@@ -3380,7 +3409,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             for (poly_idx, perm) in (0..4).zip(permutation_polys_in_monomial_form.iter()) {
                 let key = PolyIdentifier::VariablesPolynomial(poly_idx);
 
-                tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap());
+                tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap().as_ref());
                 tmp.add_constant(&worker, &gamma_for_copy_permutation);
                 let perm = perm.clone().bitreversed_lde_using_bitreversed_ntt(
                     &worker, 
@@ -3518,7 +3547,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 // add up ldes of a,b,c and table_type poly and multiply by selector
                 
                 let a_ref = get_from_map_unchecked(
-                    PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+                    PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
                     &ldes_storage
                 );
                 let mut tmp = a_ref.clone();
@@ -3529,7 +3558,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 let mut current = eta;
 
                 let b_ref = get_from_map_unchecked(
-                    PolynomialInConstraint::VariablesPolynomial(1, TimeDilation(0)),
+                    PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
                     &ldes_storage
                 );
 
@@ -3539,7 +3568,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 current.mul_assign(&eta);
 
                 let c_ref = get_from_map_unchecked(
-                    PolynomialInConstraint::VariablesPolynomial(2, TimeDilation(0)),
+                    PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
                     &ldes_storage
                 );
 
@@ -3774,25 +3803,22 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
         let mut query_values_map = std::collections::HashMap::new();
 
         for p in sorted_opening_requests.into_iter() {
-            let (poly_ref, d) = match p {
-                PolynomialInConstraint::VariablesPolynomial(idx, dilation) => {
-                    let key = PolyIdentifier::VariablesPolynomial(idx);
-
-                    (monomials_storage.state_map.get(&key).unwrap(), dilation)
+            let (id, dilation_value) = p.into_id_and_raw_dilation();
+            let poly_ref = match id {
+                p @ PolyIdentifier::VariablesPolynomial(..) => {
+                    monomials_storage.state_map.get(&p).unwrap().as_ref()
                 },
-                PolynomialInConstraint::WitnessPolynomial(idx, dilation) => {
-                    let key = PolyIdentifier::WitnessPolynomial(idx);
-
-                    (monomials_storage.witness_map.get(&key).unwrap(), dilation)
+                p @ PolyIdentifier::WitnessPolynomial(..) => {
+                    monomials_storage.witness_map.get(&p).unwrap().as_ref()
                 },
-                PolynomialInConstraint::SetupPolynomial(name, idx, dilation) => {
-                    let key = PolyIdentifier::SetupPolynomial(name, idx);
-
-                    (monomials_storage.setup_map.get(&key).unwrap(), dilation)
+                p @ PolyIdentifier::GateSetupPolynomial(..) => {
+                    monomials_storage.setup_map.get(&p).unwrap().as_ref()
+                },
+                _ => {
+                    unreachable!();
                 }
             };
 
-            let dilation_value = d.0;
             let mut opening_point = z;
             for _ in 0..dilation_value {
                 opening_point.mul_assign(&omega);
@@ -3815,7 +3841,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
 
         let mut selector_values = vec![];
         for s in sorted_selector_for_opening.into_iter() {
-            let poly_ref = monomials_storage.gate_selectors.get(&s).unwrap();
+            let key = PolyIdentifier::GateSelector(s.name());
+            let poly_ref = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
             let value = poly_ref.evaluate_at(&worker, z);
 
             selector_values.push(value);
@@ -3906,7 +3933,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                         for_gate
                     )?;
 
-                    let gate_selector_ref = monomials_storage.gate_selectors.get(&gate).expect("must get monomial form of gate selector");
+                    let key = PolyIdentifier::GateSelector(gate.name());
+                    let gate_selector_ref = monomials_storage.gate_selectors.get(&key).expect("must get monomial form of gate selector").as_ref();
 
                     r.add_assign_scaled(&worker, gate_selector_ref, &gate_value_at_z);
                 }
@@ -3932,8 +3960,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             let mut factor = alpha_0;
 
             for idx in 0..num_state_polys {
-                let wire_value = query_values_map.get(&PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)))
-                .ok_or(SynthesisError::AssignmentMissing)?;
+                let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
+                let wire_value = query_values_map.get(&key)
+                    .ok_or(SynthesisError::AssignmentMissing)?;
                 let mut t = z;
                 let non_res = non_residues_iterator.next().unwrap();
                 t.mul_assign(&non_res);
@@ -3955,7 +3984,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             factor.mul_assign(&copy_permutation_z_at_z_omega);
 
             for idx in 0..(num_state_polys-1) {
-                let wire_value = query_values_map.get(&PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)))
+                let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
+                let wire_value = query_values_map.get(&key)
                     .ok_or(SynthesisError::AssignmentMissing)?;
                 let permutation_at_z = copy_permutation_queries[idx];
                 let mut t = permutation_at_z;
@@ -4044,7 +4074,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
             let eta = lookup_data.as_ref().unwrap().eta;
             // a,b,c
             for idx in 0..(num_state_polys-1) {
-                let mut value = *query_values_map.get(&PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)))
+                let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
+                let mut value = *query_values_map.get(&key)
                     .ok_or(SynthesisError::AssignmentMissing)?;
 
                 value.mul_assign(&current);
@@ -4173,7 +4204,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                 factor.mul_assign(&copy_permutation_z_at_z_omega);
 
                 for idx in 0..(num_state_polys-1) {
-                    let wire_value = query_values_map.get(&PolynomialInConstraint::VariablesPolynomial(idx, TimeDilation(0)))
+                    let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
+                    let wire_value = query_values_map.get(&key)
                         .ok_or(SynthesisError::AssignmentMissing)?;
                     let permutation_at_z = copy_permutation_queries[idx];
                     let mut t = permutation_at_z;
@@ -4185,7 +4217,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> TrivialAssem
                     factor.mul_assign(&t);
                 }
 
-                let mut tmp = *query_values_map.get(&PolynomialInConstraint::VariablesPolynomial(num_state_polys-1, TimeDilation(0)))
+                let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(num_state_polys-1));
+                let mut tmp = *query_values_map.get(&key)
                     .ok_or(SynthesisError::AssignmentMissing)?;
                 tmp.add_assign(&gamma_for_copy_permutation);
 
@@ -4844,7 +4877,7 @@ mod test {
 
         fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
             vec![
-                PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+                PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
             ]
         }
 
@@ -4874,7 +4907,7 @@ mod test {
             1
         }
 
-        fn verify_on_row(&self, row: usize, poly_storage: &AssembledPolynomialStorage<E>, _last_row: bool) -> E::Fr {
+        fn verify_on_row<'a>(&self, row: usize, poly_storage: &AssembledPolynomialStorage<'a, E>, _last_row: bool) -> E::Fr {
             let q_a = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(0), row);
             
             // (A - 1) * A 
@@ -4885,11 +4918,11 @@ mod test {
             tmp
         }
 
-        fn contribute_into_quotient(
+        fn contribute_into_quotient<'a, 'b>(
             &self, 
             domain_size: usize,
-            poly_storage: &mut AssembledPolynomialStorage<E>,
-            monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+            poly_storage: &mut AssembledPolynomialStorage<'a, E>,
+            monomials_storage: & AssembledPolynomialStorageForMonomialForms<'b, E>,
             challenges: &[E::Fr],
             omegas_bitreversed: &BitReversedOmegas<E::Fr>,
             _omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
@@ -4921,7 +4954,7 @@ mod test {
 
             // (A - 1) * A 
             let a_ref = get_from_map_unchecked(
-                PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)),
+                PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
                 ldes_storage
             );
 
@@ -4945,12 +4978,12 @@ mod test {
             Ok(tmp)
         }
 
-        fn contribute_into_linearization(
+        fn contribute_into_linearization<'a>(
             &self, 
             _domain_size: usize,
             _at: E::Fr,
             _queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
-            _monomials_storage: & AssembledPolynomialStorageForMonomialForms<E>,
+            _monomials_storage: & AssembledPolynomialStorageForMonomialForms<'a, E>,
             _challenges: &[E::Fr],
             _worker: &Worker
         ) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError> {
@@ -4965,7 +4998,7 @@ mod test {
         ) -> Result<E::Fr, SynthesisError> {
             assert_eq!(challenges.len(), 1);
             // (A-1) * A 
-            let a_value = *queried_values.get(&PolynomialInConstraint::VariablesPolynomial(0, TimeDilation(0)))
+            let a_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)))
                 .ok_or(SynthesisError::AssignmentMissing)?;
             let mut result = a_value;
             result.sub_assign(&E::Fr::one());

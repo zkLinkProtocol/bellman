@@ -12,6 +12,7 @@ use crate::plonk::polynomials::*;
 pub use crate::plonk::cs::variable::*;
 use crate::plonk::better_cs::utils::*;
 use super::cs::*;
+use super::data_structures::*;
 
 pub trait LookupTableInternal<E: Engine>: Send 
     + Sync 
