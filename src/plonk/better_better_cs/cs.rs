@@ -17,6 +17,24 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::utils::*;
 
+pub trait SynthesisMode {
+    const PRODUCE_WITNESS: bool;
+}
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct SynthesisModeGenerateSetup;
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct SynthesisModeProve;
+
+impl SynthesisMode for SynthesisModeGenerateSetup {
+    const PRODUCE_WITNESS: bool = false;
+}
+
+impl SynthesisMode for SynthesisModeProve {
+    const PRODUCE_WITNESS: bool = true;
+}
+
+
 pub trait Circuit<E: Engine> {
     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
 }
@@ -78,9 +96,6 @@ pub trait GateInternal<E: Engine>: Send
     fn benefits_from_linearization(&self) -> bool;
     fn linearizes_over(&self) -> Vec<PolynomialInConstraint>;
     fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint>;
-    // fn compute_linearization_contribution(&self, values: &[E::Fr]) -> Vec<E::Fr> {
-    //     vec![]
-    // } 
     fn num_quotient_terms(&self) -> usize;
     fn verify_on_row(&self, row: usize, poly_storage: &AssembledPolynomialStorage<E>, last_row: bool) -> E::Fr;
     fn contribute_into_quotient(
@@ -1421,7 +1436,7 @@ impl<E: Engine> GateConstantCoefficientsStorage<E> {
 }
 
 #[derive(Clone)]
-pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> {
+pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> {
     pub inputs_storage: PolynomialStorage<E>,
     pub aux_storage: PolynomialStorage<E>,
     pub num_input_gates: usize,
@@ -1456,7 +1471,8 @@ pub struct TrivialAssembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: Mai
     pub num_table_lookups: usize,
     pub num_multitable_lookups: usize,
 
-    _marker: std::marker::PhantomData<P>
+    _marker_p: std::marker::PhantomData<P>,
+    _marker_s: std::marker::PhantomData<S>,
 }
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>> ConstraintSystem<E> for TrivialAssembly<E, P, MG> {
