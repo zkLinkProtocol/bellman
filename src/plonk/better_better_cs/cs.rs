@@ -17,6 +17,7 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::utils::*;
 use super::data_structures::*;
+use super::setup::*;
 
 pub trait SynthesisMode: Clone + Send + Sync + std::fmt::Debug {
     const PRODUCE_WITNESS: bool;
@@ -48,6 +49,9 @@ impl SynthesisMode for SynthesisModeTesting {
 
 pub trait Circuit<E: Engine> {
     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
+    fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
+        unimplemented!("Circuits must declare used gates")
+    }
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -1315,82 +1319,6 @@ impl<E: Engine> PolynomialStorage<E> {
     }
 }
 
-// pub struct AssembledPolynomialStorage<E: Engine> {
-//     pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-//     pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-//     pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
-//     pub scratch_space: std::collections::HashMap<PolynomialInConstraint, Polynomial<E::Fr, Values>>,
-//     pub gate_selectors: std::collections::HashMap<Box<dyn GateInternal<E>>, Polynomial<E::Fr, Values>>,
-//     pub is_bitreversed: bool,
-//     pub lde_factor: usize
-// }
-
-// pub struct AssembledPolynomialStorageForMonomialForms<E: Engine> {
-//     pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
-//     pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
-//     pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
-//     pub gate_selectors: std::collections::HashMap<Box<dyn GateInternal<E>>, Polynomial<E::Fr, Coefficients>>,
-// }
-
-// impl<E: Engine> AssembledPolynomialStorage<E> {
-//     pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values> {
-//         match id {
-//             p @ PolyIdentifier::VariablesPolynomial(..) => {
-//                 self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
-//             },
-//             p @ PolyIdentifier::WitnessPolynomial(..) => {
-//                 self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
-//             },
-//             p @ PolyIdentifier::GateSetupPolynomial(..) => {
-//                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
-//             }
-//         }
-//     }
-//     pub fn get_poly_at_step(&self, id: PolyIdentifier, step: usize) -> E::Fr {
-//         assert!(self.is_bitreversed == false);
-//         assert!(self.lde_factor == 1);
-//         let p = self.get_poly(id);
-//         p.as_ref()[step]
-//     }
-
-//     pub fn new(bitreversed: bool, lde_factor: usize) -> Self {
-//         Self {
-//             state_map: std::collections::HashMap::new(),
-//             witness_map: std::collections::HashMap::new(),
-//             setup_map: std::collections::HashMap::new(),
-//             gate_selectors: std::collections::HashMap::new(),
-//             scratch_space: std::collections::HashMap::new(),
-//             is_bitreversed: bitreversed,
-//             lde_factor
-//         }
-//     }
-// }
-
-// impl<E: Engine> AssembledPolynomialStorageForMonomialForms<E> {
-//     pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Coefficients> {
-//         match id {
-//             p @ PolyIdentifier::VariablesPolynomial(..) => {
-//                 self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
-//             },
-//             p @ PolyIdentifier::WitnessPolynomial(..) => {
-//                 self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
-//             },
-//             p @ PolyIdentifier::GateSetupPolynomial(..) => {
-//                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
-//             }
-//         }
-//     }
-
-//     pub fn new() -> Self {
-//         Self {
-//             state_map: std::collections::HashMap::new(),
-//             witness_map: std::collections::HashMap::new(),
-//             setup_map: std::collections::HashMap::new(),
-//             gate_selectors: std::collections::HashMap::new()
-//         }
-//     }
-// }
-
 #[derive(Clone)]
 pub struct GateDensityStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateInternal<E>>, BitVec>);
 
@@ -1670,8 +1598,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let table_name = table.functional_name();
         let table_id = table.table_id();
         let number_of_entries = table.size();
-
-        dbg!(&table_name, number_of_entries);
 
         self.tables.push(Arc::from(table));
         self.individual_table_entries.insert(table_name.clone(), vec![]);
@@ -2165,7 +2091,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         fn rotate<T: Sized>(mut vec: Vec<T>) -> Vec<T> {
             if vec.len() > 1 {
                 let mut els: Vec<_> = vec.drain(0..1).collect();
-                els.reverse();
+                debug_assert_eq!(els.len(), 1);
+                // els.reverse();
                 vec.push(els.pop().unwrap());
             }
 
@@ -2246,6 +2173,95 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
 
         Ok(map)
+    }
+
+    pub fn create_setup<C: Circuit<E>>(
+        &self,
+        worker: &Worker
+    ) -> Result<Setup<E, C>, SynthesisError> {
+        assert!(self.is_finalized);
+
+        assert!(S::PRODUCE_SETUP);
+
+        let claimed_gates_list = C::declare_used_gates()?;
+        let known_gates_list = &self.sorted_gates;
+
+        assert_eq!(&claimed_gates_list, known_gates_list, "trying to perform setup for a circuit that has different gates set from synthesized one");
+
+        let mut setup = Setup::<E, C>::empty();
+
+        setup.n = self.n();
+        setup.num_inputs = self.num_inputs;
+
+        let (mut setup_polys_values_map, permutation_polys) = self.perform_setup(&worker)?;
+        for gate in known_gates_list.iter() {
+            let setup_polys = gate.setup_polynomials();
+            for id in setup_polys.into_iter() {
+                let values = setup_polys_values_map.remove(&id).expect("must contain setup poly").clone_padded_to_domain()?;
+                let mon = values.icoset_fft_for_generator(&worker, &E::Fr::one());
+
+                setup.gate_setup_monomials.push(mon);
+            }
+        }
+
+        for perm in permutation_polys.into_iter() {
+            let mon = perm.icoset_fft_for_generator(&worker, &E::Fr::one());
+
+            setup.permutation_monomials.push(mon);
+        }
+
+        let gate_selector_values = self.output_gate_selectors(&worker)?;
+        
+        if known_gates_list.len() > 1 {
+            assert_eq!(gate_selector_values.len(), known_gates_list.len(), "numbers of selectors and known gates mismatch");
+        }
+
+        for values in gate_selector_values.into_iter() {
+            let poly = Polynomial::from_values(values)?;
+            let mon = poly.icoset_fft_for_generator(&worker, &E::Fr::one());
+
+            setup.gate_selectors_monomials.push(mon);
+        }
+
+        if self.tables.len() > 0 && self.num_table_lookups > 0 {
+            // we have lookup tables, so add them to setup
+
+            let num_lookups = self.num_table_lookups;
+            setup.total_lookup_entries_length = num_lookups;
+
+            let mut table_tails = self.calculate_t_polynomial_values_for_single_application_tables()?;
+            table_tails.pop(); // we use table type
+            assert_eq!(table_tails.len(), 3);
+
+            let tails_len = table_tails[0].len();
+
+            // total number of gates, Input + Aux
+            let size = self.n();
+
+            let copy_start = size - tails_len;
+
+            for tail in table_tails.into_iter() {
+                let mut values = vec![E::Fr::zero(); size];
+                values[copy_start..].copy_from_slice(&tail[..]);
+
+                let poly = Polynomial::from_values(values)?;
+                let mon = poly.icoset_fft_for_generator(&worker, &E::Fr::one());
+
+                setup.lookup_tables_monomials.push(mon);
+            }
+
+            let selector_for_lookup_values = self.calculate_lookup_selector_values()?;
+            let poly = Polynomial::from_values(selector_for_lookup_values)?;
+            let mon = poly.icoset_fft_for_generator(&worker, &E::Fr::one());
+            setup.lookup_selector_monomial = Some(mon);
+
+            let table_type_values = self.calculate_table_type_values()?;
+            let poly = Polynomial::from_values(table_type_values)?;
+            let mon = poly.icoset_fft_for_generator(&worker, &E::Fr::one());
+            setup.lookup_table_type_monomial = Some(mon);
+        }
+
+        Ok(setup)
     }
 
     pub fn perform_setup(
@@ -2817,13 +2833,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         assert!(self.is_finalized);
 
-        let values_storage = self.make_assembled_poly_storage(worker, true)?;
-        let permutation_polys = self.make_permutations(&worker)?;
-
         let num_state_polys = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
         let num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
-        
+
+        let mut values_storage = self.make_assembled_poly_storage(worker, true)?;
+        let permutation_polys = self.make_permutations(&worker)?;
         assert_eq!(permutation_polys.len(), num_state_polys);
+
+        for (idx, poly) in permutation_polys.into_iter().enumerate() {
+            let key = PolyIdentifier::PermutationPolynomial(idx);
+            let poly = PolynomialProxy::from_owned(poly);
+            values_storage.setup_map.insert(key, poly);
+        }
 
         let required_domain_size = self.n() + 1;
         assert!(required_domain_size.is_power_of_two());
@@ -3054,8 +3075,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let mut permutation_polynomials_values_of_size_n_minus_one = vec![];
         
-        for p in permutation_polys.iter() {
-            let mut coeffs = p.clone().into_coeffs();
+        for idx in 0..num_state_polys {
+            let key = PolyIdentifier::PermutationPolynomial(idx);
+
+            let mut coeffs = values_storage.get_poly(key).clone().into_coeffs();
             coeffs.pop().unwrap();
 
             let p = Polynomial::from_values_unpadded(coeffs)?;
@@ -3101,17 +3124,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             &E::Fr::one()
         )?;
 
-        // TODO: move to setup
-        let mut permutation_polys_in_monomial_form = vec![];
-        for p in permutation_polys.into_iter() {
-            let p = p.ifft_using_bitreversed_ntt(
-                &worker, 
-                &omegas_inv_bitreversed, 
-                &E::Fr::one()
-            )?;
+        // // TODO: move to setup
+        // let mut permutation_polys_in_monomial_form = vec![];
+        // for idx in 0.. {
+        //     let key = PolyIdentifier::PermutationPolynomial(idx);
+        //     let p = p.ifft_using_bitreversed_ntt(
+        //         &worker, 
+        //         &omegas_inv_bitreversed, 
+        //         &E::Fr::one()
+        //     )?;
 
-            permutation_polys_in_monomial_form.push(p);
-        }
+        //     permutation_polys_in_monomial_form.push(p);
+        // }
 
         let mut beta_for_lookup = None; 
         let mut gamma_for_lookup = None;
@@ -3406,12 +3430,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             // A + beta*perm_a + gamma
 
-            for (poly_idx, perm) in (0..4).zip(permutation_polys_in_monomial_form.iter()) {
-                let key = PolyIdentifier::VariablesPolynomial(poly_idx);
+            for idx in 0..num_state_polys {
+                let key = PolyIdentifier::VariablesPolynomial(idx);
 
                 tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap().as_ref());
                 tmp.add_constant(&worker, &gamma_for_copy_permutation);
-                let perm = perm.clone().bitreversed_lde_using_bitreversed_ntt(
+
+                let key = PolyIdentifier::PermutationPolynomial(idx);
+                let perm = monomials_storage.get_poly(key).clone().bitreversed_lde_using_bitreversed_ntt(
                     &worker, 
                     lde_factor, 
                     &omegas_bitreversed, 
@@ -3855,7 +3881,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let mut copy_permutation_queries = vec![];
 
         for idx in 0..(num_state_polys-1) {
-            let value = permutation_polys_in_monomial_form[idx].evaluate_at(&worker, z);
+            let key = PolyIdentifier::PermutationPolynomial(idx);
+            let value = monomials_storage.get_poly(key).evaluate_at(&worker, z);
 
             copy_permutation_queries.push(value);
         }
@@ -3997,7 +4024,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 factor.mul_assign(&t);
             }
 
-            r_poly.sub_assign_scaled(&worker, &permutation_polys_in_monomial_form.last().expect("last permutation poly"), &factor);
+            let key = PolyIdentifier::PermutationPolynomial(num_state_polys - 1);
+            let last_permutation_poly_ref = monomials_storage.get_poly(key);
+
+            r_poly.sub_assign_scaled(&worker, last_permutation_poly_ref, &factor);
 
             // + L_0(z) * Z(x)
 
@@ -4447,6 +4477,15 @@ mod test {
     }
 
     impl<E: Engine> Circuit<E> for TestCircuit4WithLookups<E> {
+        fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
+            Ok(
+                vec![
+                    Width4MainGateWithDNext::default().into_internal(),
+                    TestBitGate::default().into_internal()
+                ]
+            )
+        }
+
         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let columns = vec![PolyIdentifier::VariablesPolynomial(0), PolyIdentifier::VariablesPolynomial(1), PolyIdentifier::VariablesPolynomial(2)];
             let range_table = LookupTableApplication::new_range_table_of_width_3(2, columns.clone())?;
@@ -4637,6 +4676,14 @@ mod test {
     }
 
     impl<E: Engine> Circuit<E> for TestCircuit4WithLookupsManyGatesSmallTable<E> {
+        fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
+            Ok(
+                vec![
+                    Width4MainGateWithDNext::default().into_internal(),
+                ]
+            )
+        }
+
         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let columns = vec![PolyIdentifier::VariablesPolynomial(0), PolyIdentifier::VariablesPolynomial(1), PolyIdentifier::VariablesPolynomial(2)];
             let range_table = LookupTableApplication::new_range_table_of_width_3(2, columns.clone())?;
@@ -4858,6 +4905,32 @@ mod test {
         let _ = assembly.prover_stub(&worker).unwrap();
     }
 
+    #[test]
+    fn test_circuit_setup() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::worker::Worker;
+
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+
+        let circuit = TestCircuit4WithLookups::<Bn256> {
+            _marker: PhantomData
+        };
+
+        circuit.synthesize(&mut assembly).expect("must work");
+
+        println!("Assembly contains {} gates", assembly.n());
+        assert!(assembly.is_satisfied());
+
+        assembly.finalize();
+
+        println!("Finalized assembly contains {} gates", assembly.n());
+
+        let worker = Worker::new();
+
+        let setup = assembly.create_setup::<TestCircuit4WithLookups<Bn256>>(&worker).unwrap();
+
+        // dbg!(setup);
+    }
 
     #[derive(Clone, Debug, Hash, Default)]
     pub struct TestBitGate;
