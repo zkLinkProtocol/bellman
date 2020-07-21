@@ -325,7 +325,7 @@ pub fn commit_using_monomials<E: Engine>(
     crs: &Crs<E, CrsForMonomialForm>,
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
-    println!("Committing coefficients");
+    // println!("Committing coefficients");
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()

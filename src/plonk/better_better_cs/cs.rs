@@ -1,5 +1,5 @@
 use crate::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
-use crate::pairing::{Engine};
+use crate::pairing::{Engine, CurveAffine, CurveProjective};
 use crate::bit_vec::BitVec;
 
 use crate::{SynthesisError};
@@ -11,7 +11,7 @@ use crate::plonk::polynomials::*;
 
 pub use crate::plonk::cs::variable::*;
 use crate::plonk::better_cs::utils::*;
-pub use super::lookup_tables::*;
+pub use super::lookup_tables::{self, *};
 
 use crate::plonk::fft::cooley_tukey_ntt::*;
 
@@ -48,9 +48,13 @@ impl SynthesisMode for SynthesisModeTesting {
 }
 
 pub trait Circuit<E: Engine> {
+    type MainGate: MainGate<E>;
     fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
     fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
-        unimplemented!("Circuits must declare used gates")
+        Ok(
+            vec![Self::MainGate::default().into_internal()]
+        )
+        // unimplemented!("Circuits must declare used gates")
     }
 }
 
@@ -124,6 +128,14 @@ pub trait GateInternal<E: Engine>: Send
     ) -> Result<E::Fr, SynthesisError>;
     fn put_public_inputs_into_selector_id(&self) -> Option<usize>;
     fn box_clone(&self) -> Box<dyn GateInternal<E>>;
+    fn contribute_into_linearization_commitment(
+        &self, 
+        domain_size: usize,
+        at: E::Fr,
+        queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        commitments_storage: &std::collections::HashMap<PolyIdentifier, E::G1Affine>,
+        challenges: &[E::Fr],
+    ) -> Result<E::G1, SynthesisError>;
 }
 
 pub trait Gate<E: Engine>: GateInternal<E>
@@ -145,6 +157,11 @@ pub trait MainGate<E: Engine>: Gate<E> {
     const NUM_LINEAR_TERMS: usize;
     const NUM_VARIABLES: usize;
     const NUM_VARIABLES_ON_NEXT_STEP: usize;
+
+    // fn num_linear_terms(&self) -> usize;
+    // fn num_variables(&self) -> usize;
+    // fn num_variables_of_next_step(&self) -> usize;
+
     fn range_of_multiplicative_term() -> std::ops::Range<usize>;
     fn range_of_linear_terms() -> std::ops::Range<usize>;
     fn index_for_constant_term() -> usize;
@@ -189,6 +206,15 @@ pub trait MainGate<E: Engine>: Gate<E> {
     //     queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
     //     challenges: &[E::Fr],
     // ) -> Result<E::Fr, SynthesisError>;
+    fn contribute_into_linearization_commitment_for_public_inputs(
+        &self, 
+        domain_size: usize,
+        public_inputs: &[E::Fr],
+        at: E::Fr,
+        queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        commitments_storage: &std::collections::HashMap<PolyIdentifier, E::G1Affine>,
+        challenges: &[E::Fr],
+    ) -> Result<E::G1, SynthesisError>;
 }
 
 impl<E: Engine> std::hash::Hash for dyn GateInternal<E> {
@@ -523,6 +549,16 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
 
     fn box_clone(&self) -> Box<dyn GateInternal<E>> {
         Box::from(self.clone())
+    }
+    fn contribute_into_linearization_commitment(
+        &self, 
+        domain_size: usize,
+        at: E::Fr,
+        queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        commitments_storage: &std::collections::HashMap<PolyIdentifier, E::G1Affine>,
+        challenges: &[E::Fr],
+    ) -> Result<E::G1, SynthesisError> {
+        unreachable!("this gate is indended to be the main gate and should use main gate functions")
     }
 }
 
@@ -949,6 +985,73 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
         Ok(contribution)
     }
+    fn contribute_into_linearization_commitment_for_public_inputs<'a>(
+        &self, 
+        domain_size: usize,
+        public_inputs: &[E::Fr],
+        at: E::Fr,
+        queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+        commitments_storage: &std::collections::HashMap<PolyIdentifier, E::G1Affine>,
+        challenges: &[E::Fr],
+    ) -> Result<E::G1, SynthesisError> {
+        // we actually do not depend on public inputs, but we use this form for consistency
+        assert_eq!(challenges.len(), 1);
+
+        let mut aggregate = E::G1::zero();
+
+        let a_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)))
+        .ok_or(SynthesisError::AssignmentMissing)?;
+        let b_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)))
+        .ok_or(SynthesisError::AssignmentMissing)?;
+        let c_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)))
+        .ok_or(SynthesisError::AssignmentMissing)?;
+        let d_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)))
+        .ok_or(SynthesisError::AssignmentMissing)?;
+        let d_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1))
+        .ok_or(SynthesisError::AssignmentMissing)?;
+
+        let name = <Self as GateInternal<E>>::name(&self);
+
+        // Q_a * A
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 0)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(a_value.into_repr());
+        aggregate.add_assign(&scaled);
+
+        // Q_b * B
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 1)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(b_value.into_repr());
+        aggregate.add_assign(&scaled);
+
+        // Q_c * C
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 2)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(c_value.into_repr());
+        aggregate.add_assign(&scaled);
+
+        // Q_d * D
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 3)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(d_value.into_repr());
+        aggregate.add_assign(&scaled);
+
+        // Q_m * A*B
+        let mut tmp = a_value;
+        tmp.mul_assign(&b_value);
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 4)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(tmp.into_repr());
+        aggregate.add_assign(&scaled);
+
+        // Q_const
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 5)).ok_or(SynthesisError::AssignmentMissing)?;
+        aggregate.add_assign_mixed(&commitment);
+
+        // Q_dNext * D_next
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 6)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(d_next_value.into_repr());
+        aggregate.add_assign(&scaled);
+
+        aggregate.mul_assign(challenges[0]);
+
+        Ok(aggregate)
+    }
 }
 
 pub fn get_from_map_unchecked<'a, 'b: 'a, E: Engine>(
@@ -1337,6 +1440,8 @@ impl<E: Engine> GateConstantCoefficientsStorage<E> {
 }
 
 pub type TrivialAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeTesting>;
+pub type ProvingAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeProve>;
+pub type SetupAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeGenerateSetup>;
 
 #[derive(Clone)]
 pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> {
@@ -2188,10 +2293,27 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         assert_eq!(&claimed_gates_list, known_gates_list, "trying to perform setup for a circuit that has different gates set from synthesized one");
 
+        // check for consistency
+        {
+            dbg!(&claimed_gates_list[0]);
+            let as_any = (&claimed_gates_list[0]) as &dyn std::any::Any;
+            match as_any.downcast_ref::<<Self as ConstraintSystem<E>>::MainGate>() {
+                Some(..) => {
+
+                },
+                None => {
+                    println!("Type mismatch: first gate among used gates must be the main gate of CS");
+                    // panic!("first gate among used gates must be the main gate of CS");
+                }
+            }
+        }
+
         let mut setup = Setup::<E, C>::empty();
 
         setup.n = self.n();
         setup.num_inputs = self.num_inputs;
+        setup.state_width = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
+        setup.num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
 
         let (mut setup_polys_values_map, permutation_polys) = self.perform_setup(&worker)?;
         for gate in known_gates_list.iter() {
@@ -2229,9 +2351,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let num_lookups = self.num_table_lookups;
             setup.total_lookup_entries_length = num_lookups;
 
-            let mut table_tails = self.calculate_t_polynomial_values_for_single_application_tables()?;
-            table_tails.pop(); // we use table type
-            assert_eq!(table_tails.len(), 3);
+            let table_tails = self.calculate_t_polynomial_values_for_single_application_tables()?;
+            assert_eq!(table_tails.len(), 4);
 
             let tails_len = table_tails[0].len();
 
@@ -2594,6 +2715,50 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(contributions_per_column)
     }
 
+    pub fn calculate_masked_lookup_entries_using_selector<'a>(
+        &self,
+        storage: &AssembledPolynomialStorage<E>,
+        selector: &PolynomialProxy<'a, E::Fr, Values>
+    ) -> 
+        Result<Vec<Vec<E::Fr>>, SynthesisError>
+    {
+        assert!(self.is_finalized);
+        if self.tables.len() == 0 {
+            return Ok(vec![]);
+        }
+
+        // total number of gates, Input + Aux
+        let size = self.n();
+
+        let aux_gates_start = self.num_input_gates;
+
+        let num_aux_gates = self.num_aux_gates;
+        // input + aux gates without t-polys
+
+        let selector_ref = selector.as_ref().as_ref();
+
+        let one = E::Fr::one();
+
+        let mut contributions_per_column = vec![vec![E::Fr::zero(); size]; 3];
+        for single_application in self.tables.iter() {
+            let keys_and_values = single_application.applies_over();
+
+            for aux_gate_idx in 0..num_aux_gates {
+                let global_gate_idx = aux_gate_idx + aux_gates_start;
+
+                if selector_ref[global_gate_idx] == one {
+                    // place value into f poly
+                    for (idx, &poly_id) in keys_and_values.iter().enumerate() {
+                        let value = storage.get_poly_at_step(poly_id, global_gate_idx);
+                        contributions_per_column[idx][global_gate_idx] = value;
+                    }
+                }
+            }
+        }
+
+        Ok(contributions_per_column)
+    }
+
     fn sort_by_t(
         witness_entries: &Vec<Vec<E::Fr>>,
         table_entries: &Vec<Vec<E::Fr>>,
@@ -2724,8 +2889,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
         
         let (state_polys, witness_polys) = self.make_state_and_witness_polynomials(&worker, with_finalization)?;
-        let setup_polys_map = self.make_setup_polynomials(with_finalization)?;
-        let gate_selectors = self.output_gate_selectors(&worker)?;
 
         let mut state_polys_map = std::collections::HashMap::new();
         for (idx, poly) in state_polys.into_iter().enumerate() {
@@ -2743,19 +2906,25 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             witness_polys_map.insert(key, p);
         }
 
-        let mut gate_selectors_map = std::collections::HashMap::new();
-        for (gate, poly) in self.sorted_gates.iter().zip(gate_selectors.into_iter()) {
-            // let key = gate.clone();
-            let key = PolyIdentifier::GateSelector(gate.name());
-            let p = Polynomial::from_values_unpadded(poly)?;
-            let p = PolynomialProxy::from_owned(p);
-            gate_selectors_map.insert(key, p);
-        }
-
         let mut setup_map = std::collections::HashMap::new();
-        for (key, p) in setup_polys_map.into_iter() {
-            let p = PolynomialProxy::from_owned(p);
-            setup_map.insert(key, p);
+        let mut gate_selectors_map = std::collections::HashMap::new();
+
+        if S::PRODUCE_SETUP {
+            let setup_polys_map = self.make_setup_polynomials(with_finalization)?;
+            let gate_selectors = self.output_gate_selectors(&worker)?;
+
+            for (gate, poly) in self.sorted_gates.iter().zip(gate_selectors.into_iter()) {
+                // let key = gate.clone();
+                let key = PolyIdentifier::GateSelector(gate.name());
+                let p = Polynomial::from_values_unpadded(poly)?;
+                let p = PolynomialProxy::from_owned(p);
+                gate_selectors_map.insert(key, p);
+            }
+
+            for (key, p) in setup_polys_map.into_iter() {
+                let p = PolynomialProxy::from_owned(p);
+                setup_map.insert(key, p);
+            }
         }
 
         let assembled = AssembledPolynomialStorage::<E> {
@@ -2803,17 +2972,17 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             monomial_storage.witness_map.insert(k, mon_form);
         }
 
-        for (&k, v) in value_form_storage.gate_selectors.iter() {
-            let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
-                &worker, 
-                omegas_inv, 
-                &E::Fr::one()
-            )?;
-            let mon_form = PolynomialProxy::from_owned(mon_form);
-            monomial_storage.gate_selectors.insert(k, mon_form);
-        }
-
         if include_setup {
+            for (&k, v) in value_form_storage.gate_selectors.iter() {
+                let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
+                    &worker, 
+                    omegas_inv, 
+                    &E::Fr::one()
+                )?;
+                let mon_form = PolynomialProxy::from_owned(mon_form);
+                monomial_storage.gate_selectors.insert(k, mon_form);
+            }
+
             for (&k, v) in value_form_storage.setup_map.iter() {
                 let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
                     &worker, 
@@ -2881,7 +3050,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
 
         // step 1.5 - if there are lookup tables then draw random "eta" to linearlize over tables
-        let mut lookup_data: Option<LookupDataHolder<E>> = if self.tables.len() > 0 {
+        let mut lookup_data: Option<lookup_tables::LookupDataHolder<E>> = if self.tables.len() > 0 {
             // TODO: Some of those values are actually part of the setup, but deal with it later
 
             let eta = E::Fr::from_str("987").unwrap();
@@ -2947,6 +3116,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             assert!(full_t_poly_values[0].is_zero());
 
+            dbg!(&full_t_poly_values);
+
             // // these are unsorted rows of lookup tables
             // let mut interleaved_t_polys = self.calculate_interleaved_t_polys()?;
 
@@ -2998,7 +3169,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 &E::Fr::one()
             )?;
 
-            let data = LookupDataHolder::<E> {
+            let data = lookup_tables::LookupDataHolder::<E> {
                 eta,
                 f_poly_unpadded_values: Some(Polynomial::from_values_unpadded(f_poly_values_aggregated)?),
                 t_poly_unpadded_values: Some(Polynomial::from_values_unpadded(full_t_poly_values)?),
@@ -4352,6 +4523,8 @@ mod test {
     }
 
     impl<E: Engine> Circuit<E> for TestCircuit4<E> {
+        type MainGate = Width4MainGateWithDNext;
+
         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let a = cs.alloc(|| {
                 Ok(E::Fr::from_str("10").unwrap())
@@ -4477,6 +4650,8 @@ mod test {
     }
 
     impl<E: Engine> Circuit<E> for TestCircuit4WithLookups<E> {
+        type MainGate = Width4MainGateWithDNext;
+
         fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
             Ok(
                 vec![
@@ -4676,6 +4851,8 @@ mod test {
     }
 
     impl<E: Engine> Circuit<E> for TestCircuit4WithLookupsManyGatesSmallTable<E> {
+        type MainGate = Width4MainGateWithDNext;
+
         fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
             Ok(
                 vec![
@@ -4906,11 +5083,12 @@ mod test {
     }
 
     #[test]
-    fn test_circuit_setup() {
+    fn test_circuit_setup_and_prove() {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;
+        use crate::plonk::better_better_cs::verifier::*;
 
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+        let mut assembly = SetupAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
 
         let circuit = TestCircuit4WithLookups::<Bn256> {
             _marker: PhantomData
@@ -4929,7 +5107,33 @@ mod test {
 
         let setup = assembly.create_setup::<TestCircuit4WithLookups<Bn256>>(&worker).unwrap();
 
-        // dbg!(setup);
+        let mut assembly = ProvingAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+        circuit.synthesize(&mut assembly).expect("must work");
+        assembly.finalize();
+
+        let size = assembly.n().next_power_of_two();
+
+        use crate::plonk::commitments::transcript::keccak_transcript::RollingKeccakTranscript;
+        use crate::kate_commitment::*;
+
+        let crs_mons = Crs::<Bn256, CrsForMonomialForm>::crs_42(size, &worker);
+
+        let proof = assembly.create_proof::<TestCircuit4WithLookups<Bn256>, RollingKeccakTranscript<Fr>>(
+            &worker, 
+            &setup, 
+            &crs_mons, 
+            None
+        ).unwrap();
+
+        let vk = VerificationKey::from_setup(&setup, &worker, &crs_mons).unwrap();
+
+        let valid = verify::<Bn256, TestCircuit4WithLookups<Bn256>, RollingKeccakTranscript<Fr>>(
+            &vk,
+            &proof,
+            None,
+        ).unwrap();
+
+        dbg!(valid);
     }
 
     #[derive(Clone, Debug, Hash, Default)]
@@ -5087,6 +5291,16 @@ mod test {
 
         fn box_clone(&self) -> Box<dyn GateInternal<E>> {
             Box::from(self.clone())
+        }
+        fn contribute_into_linearization_commitment(
+            &self, 
+            _domain_size: usize,
+            _at: E::Fr,
+            _queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
+            _commitments_storage: &std::collections::HashMap<PolyIdentifier, E::G1Affine>,
+            _challenges: &[E::Fr],
+        ) -> Result<E::G1, SynthesisError> {
+            unreachable!("this gate does not contribute into linearization");
         }
     }
 

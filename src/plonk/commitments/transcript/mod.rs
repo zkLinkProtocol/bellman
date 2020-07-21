@@ -20,7 +20,7 @@ pub trait Prng<F: PrimeField>: Sized + Clone {
     type Input;
     type InitializationParameters: Clone;
     fn new() -> Self;
-    fn new_from_params(params: Self::InitializationParameters) -> Self {
+    fn new_from_params(_params: Self::InitializationParameters) -> Self {
         unimplemented!("not implemented by default");
     }
     fn commit_input(&mut self, input: &Self::Input);

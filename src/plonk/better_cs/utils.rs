@@ -188,6 +188,7 @@ use crate::ff::SqrtField;
 
 pub fn make_non_residues<F: PrimeField + SqrtField>(num: usize) -> Vec<F> {
     // create largest domain possible
+    assert!(F::S < 63);
     let domain_size = 1u64 << (F::S as u64);
 
     let domain = Domain::<F>::new_for_size(domain_size).expect("largest domain must exist");

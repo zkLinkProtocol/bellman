@@ -104,14 +104,27 @@ impl<'a, F: PrimeField, P: PolynomialForm> PolynomialProxy<'a, F, P> {
     }
 }
 
+pub fn clone_as_borrowed<'a, 'b: 'a, F: PrimeField, P: PolynomialForm>(
+    src: &'a PolynomialProxy<'b, F, P>
+) -> PolynomialProxy<'a, F, P> {
+    match src {
+        PolynomialProxy::Borrowed(ref b) => {
+            PolynomialProxy::Borrowed(*b)
+        },
+        PolynomialProxy::Owned(ref o) => {
+            PolynomialProxy::Borrowed(o)
+        }
+    }
+}
+
 // impl<'a, F: PrimeField, P: PolynomialForm> Clone for PolynomialProxy<'a, F, P> {
 //     fn clone(&self) -> Self {
 //         match self {
-//             PolynomialProxy::Borrowed(b) => {
-//                 PolynomialProxy::Owned(b.clone())
+//             PolynomialProxy::Borrowed(ref b) => {
+//                 PolynomialProxy::Borrowed(b)
 //             },
-//             PolynomialProxy::Owned(o) => {
-//                 PolynomialProxy::Owned(o.clone())
+//             PolynomialProxy::Owned(ref o) => {
+//                 PolynomialProxy::Borrowed(o)
 //             }
 //         }
 //     }
@@ -148,6 +161,9 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
             },
             p @ PolyIdentifier::GateSetupPolynomial(..) => {
                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            },
+            p @ PolyIdentifier::GateSelector(..) => {
+                self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
             },
             p @ PolyIdentifier::PermutationPolynomial(..) => {
                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
@@ -237,7 +253,7 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
             },
             p @ PolyIdentifier::GateSelector(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
             },
             p @ PolyIdentifier::PermutationPolynomial(..) => {
                 self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
@@ -300,4 +316,17 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
             }
         }
     }
+}
+
+pub struct LookupDataHolder<'a, E: Engine> {
+    pub eta: E::Fr,
+    pub f_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub t_poly_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values>>,
+    pub t_shifted_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values>>,
+    pub s_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
+    pub t_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
+    pub s_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+    pub selector_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
+    pub table_type_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
 }

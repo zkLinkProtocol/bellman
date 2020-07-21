@@ -2401,6 +2401,33 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         Polynomial::from_values(result)
     }
+
+    /// taken in natural enumeration
+    /// outputs in natural enumeration
+    pub fn fft_using_bitreversed_ntt<P: CTPrecomputations<F>>(
+        self, 
+        worker: &Worker, 
+        precomputed_omegas: &P,
+        coset_generator: &F
+    ) -> Result<Polynomial<F, Values>, SynthesisError> {
+        if self.coeffs.len() <= worker.cpus * 4 {
+            return Ok(self.coset_fft_for_generator(&worker, *coset_generator));
+        }
+
+        let mut this = self;
+        if coset_generator != &F::one() {
+            this.distribute_powers(&worker, *coset_generator);
+        }
+
+        let mut coeffs: Vec<_> = this.coeffs;
+        let exp = this.exp;
+        cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        let mut this = Polynomial::from_values(coeffs)?;
+        
+        this.bitreverse_enumeration(&worker);
+
+        Ok(this)
+    }
 }
 
 #[cfg(test)]

@@ -110,6 +110,7 @@ impl<F: PrimeField> Transcript<F> for RollingKeccakTranscript<F> {
     }
 
     fn commit_field_element(&mut self, element: &F) {
+        // dbg!(element);
         // println!("Committing field element {:?}", element);
         let repr = element.into_repr();
         let mut bytes: Vec<u8> = vec![0u8; Self::REPR_SIZE];
