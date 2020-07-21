@@ -1154,7 +1154,7 @@ pub(crate) mod test {
     ) -> Vec<F> {
         let mut result = vec![F::zero(); num_elements];
 
-        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
         let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
@@ -1162,7 +1162,7 @@ pub(crate) mod test {
             for r in result.chunks_mut(chunk)
             {
                 let seed: [u32; 4] = rng.gen();
-                let subrng = XorShiftRng::from_seed(seed);
+                let subrng = ChaChaRng::from_seed(&seed);
                 scope.spawn(move |_| {
                     let mut subrng = subrng;
                     for r in r.iter_mut() {
@@ -1181,7 +1181,7 @@ pub(crate) mod test {
     ) -> Vec<G> {
         let mut result = vec![G::zero(); num_elements];
 
-        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
         let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
@@ -1189,7 +1189,7 @@ pub(crate) mod test {
             for r in result.chunks_mut(chunk)
             {
                 let seed: [u32; 4] = rng.gen();
-                let subrng = XorShiftRng::from_seed(seed);
+                let subrng = ChaChaRng::from_seed(&seed);
                 scope.spawn(move |_| {
                     let mut subrng = subrng;
                     for r in r.iter_mut() {
@@ -1537,7 +1537,8 @@ pub(crate) mod test {
             1
         )[0];
 
-        println!("Random point = {}", random_point);
+        let (x, y) = random_point.into_xy_unchecked();
+        println!("Random point in Montgomery form: X = {}, Y = {}", x.into_raw_repr(), y.into_raw_repr());
 
         let base_path = std::path::Path::new("./");
     
