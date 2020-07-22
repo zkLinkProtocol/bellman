@@ -131,22 +131,19 @@ pub fn make_precomputations<E: Engine, P: PlonkConstraintSystemParams<E>>(
     Ok(precomputations)
 }
 
-pub fn prove_by_steps<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
-    circuit: C,
-    hints: &Vec<(usize, TranspilationVariant)>,
+pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<E, PlonkCsWidth4WithNextStepParams>, T: Transcript<E::Fr>>(
+    circuit: &C,
     setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
     setup_precomputations: Option<&SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams>>,
     csr_mon_basis: &Crs<E, CrsForMonomialForm>,
+    transcript_init_params: Option< <T as Prng<E::Fr> >:: InitializationParameters>,
 ) -> Result<Proof<E, PlonkCsWidth4WithNextStepParams>, SynthesisError> {
-    use crate::plonk::better_cs::cs::Circuit;
     use crate::plonk::better_cs::utils::{commit_point_as_xy};
     use crate::plonk::better_cs::prover::prove_steps::{FirstVerifierMessage, SecondVerifierMessage, ThirdVerifierMessage, FourthVerifierMessage};
 
-    let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
-
     let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
 
-    adapted_curcuit.synthesize(&mut assembly)?;
+    circuit.synthesize(&mut assembly)?;
     assembly.finalize();
 
     let worker = Worker::new();
@@ -154,7 +151,11 @@ pub fn prove_by_steps<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     use std::time::Instant;
     let now = Instant::now();
 
-    let mut transcript = T::new();
+    let mut transcript = if let Some(p) = transcript_init_params {
+        T::new_from_params(p)
+    } else {
+        T::new()
+    };
 
     let mut precomputed_omegas = crate::plonk::better_cs::prover::prove_steps::PrecomputedOmegas::< E::Fr, BitReversedOmegas<E::Fr> >::None;
     let mut precomputed_omegas_inv = crate::plonk::better_cs::prover::prove_steps::PrecomputedOmegas::< E::Fr, OmegasInvBitreversed<E::Fr> >::None;
@@ -296,6 +297,29 @@ pub fn prove_by_steps<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     println!("Proving taken {:?}", now.elapsed());
 
     Ok(proof)
+}
+
+pub fn prove_by_steps<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
+    circuit: C,
+    hints: &Vec<(usize, TranspilationVariant)>,
+    setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
+    setup_precomputations: Option<&SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams>>,
+    csr_mon_basis: &Crs<E, CrsForMonomialForm>,
+    transcript_init_params: Option< <T as Prng<E::Fr> >:: InitializationParameters>,
+) -> Result<Proof<E, PlonkCsWidth4WithNextStepParams>, SynthesisError> {
+    use crate::plonk::better_cs::cs::Circuit;
+    use crate::plonk::better_cs::utils::{commit_point_as_xy};
+    use crate::plonk::better_cs::prover::prove_steps::{FirstVerifierMessage, SecondVerifierMessage, ThirdVerifierMessage, FourthVerifierMessage};
+
+    let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
+
+    prove_native_by_steps::<_, _, T>(
+        &adapted_curcuit, 
+        setup, 
+        setup_precomputations, 
+        csr_mon_basis,
+        transcript_init_params
+    )
 }
 
 pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(

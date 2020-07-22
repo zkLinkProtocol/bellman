@@ -36,7 +36,6 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     let required_domain_size = vk.n.next_power_of_two();
 
     let domain = Domain::<E::Fr>::new_for_size(required_domain_size as u64)?;
-    let omega = domain.generator;
 
     for inp in proof.inputs.iter() {
         transcript.commit_field_element(inp);

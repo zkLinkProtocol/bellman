@@ -737,19 +737,38 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 // we have to multiply by the masking poly (selector)
                 let key = PolyIdentifier::GateSelector(gate.name());
                 let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
-                let lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
+                let selector_lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
                     &worker, 
                     lde_factor, 
                     &omegas_bitreversed, 
                     &coset_factor
                 )?;
 
-                t.mul_assign(&worker, &lde);
-                drop(lde);
+                t.mul_assign(&worker, &selector_lde);
+                drop(selector_lde);
             }
 
             t
         };
+
+        // {            
+        //     {
+        //         println!("MAIN GATE * SELECTOR");
+        //         let mut tt = t_poly.clone();
+        //         tt.bitreverse_enumeration(&worker);
+        //         // tt.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
+        //         let mons = tt.icoset_fft_for_generator(&worker, &coset_factor);
+        //         // dbg!(mons.as_ref());
+        //         let values = mons.fft(&worker);
+        //         // dbg!(values.as_ref());
+        //         for i in (0..values.as_ref().len()).step_by(4) {
+        //             if !values.as_ref()[i].is_zero() {
+        //                 dbg!((i/4, values.as_ref()[i]));
+        //                 panic!("unsatisfied");
+        //             }
+        //         }
+        //     }
+        // }
 
         let non_main_gates = all_gates;
 
@@ -772,18 +791,45 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 // we have to multiply by the masking poly (selector)
                 let key = PolyIdentifier::GateSelector(gate.name());
                 let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
-                let lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
+                let selector_lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
                     &worker, 
                     lde_factor, 
                     &omegas_bitreversed, 
                     &coset_factor
                 )?;
 
-                contribution.mul_assign(&worker, &lde);
-                drop(lde);
+                contribution.mul_assign(&worker, &selector_lde);
+                drop(selector_lde);
             }
 
             t_poly.add_assign(&worker, &contribution);
+
+            // {
+            //     let inverse_divisor_on_coset_lde_natural_ordering = {
+            //         let mut vanishing_poly_inverse_bitreversed =
+            //             evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
+            //                 required_domain_size as u64,
+            //                 &coset_factor,
+            //                 (required_domain_size * lde_factor) as u64,
+            //                 &worker,
+            //             )?;
+            //         vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
+            //         // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
+        
+            //         vanishing_poly_inverse_bitreversed
+            //     };
+
+            //     {
+            //         println!("QUOTIENT");
+            //         let mut tt = t_poly.clone();
+            //         tt.bitreverse_enumeration(&worker);
+            //         tt.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
+            //         let mons = tt.icoset_fft_for_generator(&worker, &coset_factor);
+            //         // dbg!(mons.as_ref());
+            //         let l = mons.as_ref().len();
+            //         assert_eq!(&mons.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large after gate {:?}", gate);
+            //     }
+            // }
         }
 
         assert_eq!(challenges_slice.len(), 0);
@@ -1166,7 +1212,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         {
             // degree is 4n-4
             let l = t_poly.as_ref().len();
-            assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..]);
+            assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
         }
 
         println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
@@ -1796,6 +1842,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let rhs = t_num_on_full_domain;
 
             if lhs != rhs {
+                dbg!("Circuit is not satisfied");
                 return Err(SynthesisError::Unsatisfiable);
             }
         }

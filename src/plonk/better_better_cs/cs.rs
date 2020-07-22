@@ -16,8 +16,8 @@ pub use super::lookup_tables::{self, *};
 use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::utils::*;
-use super::data_structures::*;
-use super::setup::*;
+pub use super::data_structures::*;
+pub use super::setup::*;
 
 pub trait SynthesisMode: Clone + Send + Sync + std::fmt::Debug {
     const PRODUCE_WITNESS: bool;
@@ -328,18 +328,15 @@ impl<E: Engine> MainGateTerm<E> {
         match &other {
             ArithmeticTerm::Product(_, _) => {
                 self.num_multiplicative_terms += 1;
-                self.terms.push(other);
             },
-            ArithmeticTerm::SingleVariable(_, _) => {
-                self.terms.push(other);
-            },
+            ArithmeticTerm::SingleVariable(_, _) => {},
             ArithmeticTerm::Constant(_) => {
                 self.num_constant_terms += 1;
-                self.terms.push(other);
             },
         }
+        self.terms.push(other);
 
-        debug_assert!(self.num_constant_terms <= 1, "must not duplicate constants");        
+        debug_assert!(self.num_constant_terms <= 1, "must duplicate constants");        
     }
 
     pub fn sub_assign(&mut self, mut other: ArithmeticTerm<E>) {
@@ -888,7 +885,7 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
             ldes_storage
         );
         let d_next_ref = get_from_map_unchecked(
-            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(0), 0),
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
             ldes_storage
         );
         tmp.reuse_allocation(q_d_next_ref);
@@ -979,6 +976,8 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         for (idx, inp) in public_inputs.iter().enumerate() {
             let mut tmp = evaluate_lagrange_poly_at_point(idx, &domain, at)?;
             tmp.mul_assign(&inp);
+
+            contribution.add_assign(&tmp);
         }
 
         contribution.mul_assign(&challenges[0]);
@@ -1064,20 +1063,20 @@ pub fn get_from_map_unchecked<'a, 'b: 'a, E: Engine>(
     let r = if dilation_value == 0 {
         match key {
             k @ PolyIdentifier::VariablesPolynomial(..) => {
-                ldes_map.state_map.get(&k).unwrap().as_ref()
+                ldes_map.state_map.get(&k).expect(&format!("Must get poly {:?} from ldes storage", &k)).as_ref()
             },
             k @ PolyIdentifier::WitnessPolynomial(..) => {
-                ldes_map.witness_map.get(&k).unwrap().as_ref()
+                ldes_map.witness_map.get(&k).expect(&format!("Must get poly {:?} from ldes storage", &k)).as_ref()
             },           
             k @ PolyIdentifier::GateSetupPolynomial(..) => {
-                ldes_map.setup_map.get(&k).unwrap().as_ref()
+                ldes_map.setup_map.get(&k).expect(&format!("Must get poly {:?} from ldes storage", &k)).as_ref()
             },
             _ => {
                 unreachable!();
             }
         }
     } else {
-        ldes_map.scratch_space.get(&key_with_dilation).unwrap().as_ref()
+        ldes_map.scratch_space.get(&key_with_dilation).expect(&format!("Must get poly {:?} from lde storage", &key_with_dilation)).as_ref()
     };
 
     r
@@ -1677,7 +1676,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             return Ok(var);
         }
 
-        let zero = self.alloc(|| Ok(E::Fr::zero()))?;
+        let value = E::Fr::zero();
+        let zero = self.alloc(|| Ok(value))?;
+
+        let self_term = ArithmeticTerm::from_variable(zero);
+        let other_term = ArithmeticTerm::constant(value);
+        let mut term = MainGateTerm::new();
+        term.add_assign(self_term);
+        term.sub_assign(other_term);
+
+        self.allocate_main_gate(term)?;
 
         self.explicit_zero_variable = Some(zero);
 
@@ -1689,7 +1697,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             return Ok(var);
         }
 
-        let one = self.alloc(|| Ok(E::Fr::one()))?;
+        let value = E::Fr::one();
+        let one = self.alloc(|| Ok(value))?;
+
+        let self_term = ArithmeticTerm::from_variable(one);
+        let other_term = ArithmeticTerm::constant(value);
+        let mut term = MainGateTerm::new();
+        term.add_assign(self_term);
+        term.sub_assign(other_term);
+
+        self.allocate_main_gate(term)?;
 
         self.explicit_one_variable = Some(one);
 
@@ -2295,17 +2312,19 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         // check for consistency
         {
-            dbg!(&claimed_gates_list[0]);
-            let as_any = (&claimed_gates_list[0]) as &dyn std::any::Any;
-            match as_any.downcast_ref::<<Self as ConstraintSystem<E>>::MainGate>() {
-                Some(..) => {
+            assert!(&<Self as ConstraintSystem<E>>::MainGate::default().into_internal() == &claimed_gates_list[0]);
+            assert!(&C::MainGate::default().into_internal() == &claimed_gates_list[0]);
+            // dbg!(&claimed_gates_list[0]);
+            // let as_any = (&claimed_gates_list[0]) as &dyn std::any::Any;
+            // match as_any.downcast_ref::<<Self as ConstraintSystem<E>>::MainGate>() {
+            //     Some(..) => {
 
-                },
-                None => {
-                    println!("Type mismatch: first gate among used gates must be the main gate of CS");
-                    // panic!("first gate among used gates must be the main gate of CS");
-                }
-            }
+            //     },
+            //     None => {
+            //         println!("Type mismatch: first gate among used gates must be the main gate of CS");
+            //         // panic!("first gate among used gates must be the main gate of CS");
+            //     }
+            // }
         }
 
         let mut setup = Setup::<E, C>::empty();
@@ -4498,6 +4517,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let rhs = t_num_on_full_domain;
 
             if lhs != rhs {
+                dbg!("Circuit is not satisfied");
                 return Err(SynthesisError::Unsatisfiable);
             }
         }

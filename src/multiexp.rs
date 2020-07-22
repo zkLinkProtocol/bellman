@@ -505,7 +505,10 @@ pub fn dense_multiexp<G: CurveAffine>(
     let c = if exponents.len() < 32 {
         3u32
     } else {
-        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+        let chunk_len = pool.get_chunk_size(exponents.len());
+        (f64::from(chunk_len as u32)).ln().ceil() as u32
+
+        // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
 
     dense_multiexp_inner(pool, bases, exponents, 0, c, true)
