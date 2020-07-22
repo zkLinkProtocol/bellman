@@ -1610,6 +1610,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
 use crate::pairing::bn256;
 
+#[cfg(feature = "redshift")]
 pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
     circuit: &C
 ) -> Result<(), SynthesisError> {
@@ -1779,7 +1780,7 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
     Ok(())
 }
 
-
+#[cfg(feature = "redshift")]
 pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
     circuit: &C
 ) -> Result<(), SynthesisError> {
@@ -1949,7 +1950,7 @@ pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, M
     Ok(())
 }
 
-
+#[cfg(feature = "redshift")]
 pub fn prove_with_hash_counting_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
     circuit: &C
 ) -> Result<(), SynthesisError> {
@@ -2284,6 +2285,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "redshift")]
     fn test_make_setup_for_trivial_circuit() {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;

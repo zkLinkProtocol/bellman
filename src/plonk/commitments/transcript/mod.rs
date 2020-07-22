@@ -3,7 +3,10 @@ use crate::pairing::ff::{PrimeField, PrimeFieldRepr};
 
 pub mod prng;
 pub mod keccak_transcript;
+
+#[cfg(feature = "redshift")]
 pub mod rescue_transcript;
+#[cfg(feature = "redshift")]
 pub mod poseidon_transcript;
 
 lazy_static! {
