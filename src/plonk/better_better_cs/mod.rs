@@ -6,6 +6,7 @@ pub mod data_structures;
 pub mod setup;
 pub mod proof;
 pub mod verifier;
+pub mod trees;
 
 #[cfg(feature = "redshift")]
 pub mod redshift;
