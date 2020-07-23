@@ -2303,7 +2303,8 @@ fn transpile_xor_and_prove_with_no_precomputations() {
         &hints,
         &setup,
         None,
-        &crs_mons
+        &crs_mons,
+        None
     ).unwrap();
 
     let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key, None).unwrap();

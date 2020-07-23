@@ -17,7 +17,88 @@ use super::utils::*;
 
 use crate::plonk::fft::cooley_tukey_ntt::*;
 
-#[derive(Clone)]
+use crate::byteorder::BigEndian;
+use crate::byteorder::ReadBytesExt;
+use crate::byteorder::WriteBytesExt;
+use std::io::{Read, Write};
+
+use crate::plonk::better_cs::keys::*;
+
+pub fn write_tuple_with_one_index<F: PrimeField, W: Write>(
+    tuple: &(usize, F),
+    mut writer: W
+) -> std::io::Result<()> {
+    writer.write_u64::<BigEndian>(tuple.0 as u64)?;
+    write_fr(&tuple.1, &mut writer)?;
+
+    Ok(())
+}
+
+pub fn write_tuple_with_one_index_vec<F: PrimeField, W: Write>(p: &[(usize, F)], mut writer: W) -> std::io::Result<()> {
+    writer.write_u64::<BigEndian>(p.len() as u64)?;
+    for p in p.iter() {
+        write_tuple_with_one_index(p, &mut writer)?;
+    }
+    Ok(())
+}
+
+pub fn read_tuple_with_one_index<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<(usize, F)> {
+    let index = reader.read_u64::<BigEndian>()?;
+    let el = read_fr(&mut reader)?;
+
+    Ok((index as usize, el))
+}
+
+pub fn read_tuple_with_one_index_vec<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Vec<(usize, F)>> {
+    let num_elements = reader.read_u64::<BigEndian>()?;
+    let mut elements = vec![];
+    for _ in 0..num_elements {
+        let el = read_tuple_with_one_index(&mut reader)?;
+        elements.push(el);
+    }
+
+    Ok(elements)
+}
+
+pub fn write_tuple_with_two_indexes<F: PrimeField, W: Write>(
+    tuple: &(usize, usize, F),
+    mut writer: W
+) -> std::io::Result<()> {
+    writer.write_u64::<BigEndian>(tuple.0 as u64)?;
+    writer.write_u64::<BigEndian>(tuple.1 as u64)?;
+    write_fr(&tuple.2, &mut writer)?;
+
+    Ok(())
+}
+
+pub fn write_tuple_with_two_indexes_vec<F: PrimeField, W: Write>(p: &[(usize, usize, F)], mut writer: W) -> std::io::Result<()> {
+    writer.write_u64::<BigEndian>(p.len() as u64)?;
+    for p in p.iter() {
+        write_tuple_with_two_indexes(p, &mut writer)?;
+    }
+    Ok(())
+}
+
+pub fn read_tuple_with_two_indexes<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<(usize, usize, F)> {
+    let index_0 = reader.read_u64::<BigEndian>()?;
+    let index_1 = reader.read_u64::<BigEndian>()?;
+    let el = read_fr(&mut reader)?;
+
+    Ok((index_0 as usize, index_1 as usize, el))
+}
+
+pub fn read_tuple_with_two_indexes_vec<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Vec<(usize, usize, F)>> {
+    let num_elements = reader.read_u64::<BigEndian>()?;
+    let mut elements = vec![];
+    for _ in 0..num_elements {
+        let el = read_tuple_with_two_indexes(&mut reader)?;
+        elements.push(el);
+    }
+
+    Ok(elements)
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct Proof<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub inputs: Vec<E::Fr>,
@@ -103,6 +184,97 @@ impl<E: Engine, C: Circuit<E>> Proof<E, C> {
 
             _marker: std::marker::PhantomData
         }
+    }
+    
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u64::<BigEndian>(self.n as u64)?;
+
+        write_fr_vec(&self.inputs, &mut writer)?;
+
+        write_curve_affine_vec(&self.state_polys_commitments, &mut writer)?;
+        write_curve_affine_vec(&self.witness_polys_commitments, &mut writer)?;
+
+        write_curve_affine(&self.copy_permutation_grand_product_commitment, &mut writer)?;
+
+        write_optional_curve_affine(&self.lookup_s_poly_commitment, &mut writer)?;
+        write_optional_curve_affine(&self.lookup_grand_product_commitment, &mut writer)?;
+
+        write_curve_affine_vec(&self.quotient_poly_parts_commitments, &mut writer)?;
+
+        write_fr_vec(&self.state_polys_openings_at_z, &mut writer)?;
+        write_tuple_with_two_indexes_vec(&self.state_polys_openings_at_dilations, &mut writer)?;
+
+        write_fr_vec(&self.witness_polys_openings_at_z, &mut writer)?;
+        write_tuple_with_two_indexes_vec(&self.witness_polys_openings_at_dilations, &mut writer)?;
+
+        write_tuple_with_two_indexes_vec(&self.gate_setup_openings_at_z, &mut writer)?;
+        write_tuple_with_one_index_vec(&self.gate_selectors_openings_at_z, &mut writer)?;
+
+        write_fr_vec(&self.copy_permutation_polys_openings_at_z, &mut writer)?;
+        write_fr(&self.copy_permutation_grand_product_opening_at_z_omega, &mut writer)?;
+
+        write_optional_fr(&self.lookup_s_poly_opening_at_z_omega, &mut writer)?;
+        write_optional_fr(&self.lookup_grand_product_opening_at_z_omega, &mut writer)?;
+
+        write_optional_fr(&self.lookup_t_poly_opening_at_z, &mut writer)?;
+        write_optional_fr(&self.lookup_t_poly_opening_at_z_omega, &mut writer)?;
+
+        write_optional_fr(&self.lookup_selector_poly_opening_at_z, &mut writer)?;
+        write_optional_fr(&self.lookup_table_type_poly_opening_at_z, &mut writer)?;
+
+        write_fr(&self.quotient_poly_opening_at_z, &mut writer)?;
+        write_fr(&self.linearization_poly_opening_at_z, &mut writer)?;
+
+        write_curve_affine(&self.opening_proof_at_z, &mut writer)?;
+        write_curve_affine(&self.opening_proof_at_z_omega, &mut writer)?;
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        let new = Self {
+            n: reader.read_u64::<BigEndian>()? as usize,
+            inputs: read_fr_vec(&mut reader)?,
+            state_polys_commitments: read_curve_affine_vector(&mut reader)?,
+            witness_polys_commitments: read_curve_affine_vector(&mut reader)?,
+            copy_permutation_grand_product_commitment: read_curve_affine(&mut reader)?,
+
+            lookup_s_poly_commitment: read_optional_curve_affine(&mut reader)?,
+            lookup_grand_product_commitment: read_optional_curve_affine(&mut reader)?,
+
+            quotient_poly_parts_commitments: read_curve_affine_vector(&mut reader)?,
+
+            state_polys_openings_at_z: read_fr_vec(&mut reader)?,
+            state_polys_openings_at_dilations: read_tuple_with_two_indexes_vec(&mut reader)?,
+            witness_polys_openings_at_z: read_fr_vec(&mut reader)?,
+            witness_polys_openings_at_dilations: read_tuple_with_two_indexes_vec(&mut reader)?,
+
+            gate_setup_openings_at_z: read_tuple_with_two_indexes_vec(&mut reader)?,
+            gate_selectors_openings_at_z: read_tuple_with_one_index_vec(&mut reader)?,
+
+            copy_permutation_polys_openings_at_z: read_fr_vec(&mut reader)?,
+            copy_permutation_grand_product_opening_at_z_omega: read_fr(&mut reader)?,
+
+            lookup_s_poly_opening_at_z_omega: read_optional_fr(&mut reader)?,
+            lookup_grand_product_opening_at_z_omega: read_optional_fr(&mut reader)?,
+
+            lookup_t_poly_opening_at_z: read_optional_fr(&mut reader)?,
+            lookup_t_poly_opening_at_z_omega: read_optional_fr(&mut reader)?,
+        
+            lookup_selector_poly_opening_at_z: read_optional_fr(&mut reader)?,
+            lookup_table_type_poly_opening_at_z: read_optional_fr(&mut reader)?,
+
+            quotient_poly_opening_at_z: read_fr(&mut reader)?,
+
+            linearization_poly_opening_at_z: read_fr(&mut reader)?,
+
+            opening_proof_at_z: read_curve_affine(&mut reader)?,
+            opening_proof_at_z_omega: read_curve_affine(&mut reader)?,
+
+            _marker: std::marker::PhantomData
+        };
+
+        Ok(new)
     }
 }
 

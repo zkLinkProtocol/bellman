@@ -2,7 +2,7 @@ use crate::pairing::ff::*;
 use crate::pairing::*;
 
 use super::setup::VerificationKey;
-use super::proof::*;
+use super::proof::{Proof, sort_queries_for_linearization};
 use super::cs::*;
 use super::data_structures::*;
 

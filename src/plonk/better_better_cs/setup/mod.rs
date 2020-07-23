@@ -13,7 +13,14 @@ use crate::kate_commitment::*;
 
 use super::super::better_cs::utils::make_non_residues;
 
-#[derive(Clone)]
+use crate::byteorder::BigEndian;
+use crate::byteorder::ReadBytesExt;
+use crate::byteorder::WriteBytesExt;
+use std::io::{Read, Write};
+
+use crate::plonk::better_cs::keys::*;
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct Setup<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub num_inputs: usize,
@@ -28,6 +35,8 @@ pub struct Setup<E: Engine, C: Circuit<E>> {
     pub lookup_selector_monomial: Option<Polynomial<E::Fr, Coefficients>>,
     pub lookup_tables_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
     pub lookup_table_type_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+
+    pub non_residues: Vec<E::Fr>,
 
     _marker: std::marker::PhantomData<C>
 }
@@ -63,13 +72,74 @@ impl<E: Engine, C: Circuit<E>> Setup<E, C> {
             lookup_selector_monomial: None,
             lookup_tables_monomials: vec![],
             lookup_table_type_monomial: None,
+            non_residues: vec![],
         
             _marker: std::marker::PhantomData
         }
     }
+
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u64::<BigEndian>(self.n as u64)?;
+        writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
+        writer.write_u64::<BigEndian>(self.state_width as u64)?;
+        writer.write_u64::<BigEndian>(self.num_witness_polys as u64)?;
+
+        write_polynomials_vec(&self.gate_setup_monomials, &mut writer)?;
+        write_polynomials_vec(&self.gate_selectors_monomials, &mut writer)?;
+        write_polynomials_vec(&self.permutation_monomials, &mut writer)?;
+
+        writer.write_u64::<BigEndian>(self.total_lookup_entries_length as u64)?;
+        write_optional_polynomial(&self.lookup_selector_monomial, &mut writer)?;
+        write_polynomials_vec(&self.lookup_tables_monomials, &mut writer)?;
+        write_optional_polynomial(&self.lookup_table_type_monomial, &mut writer)?;
+
+        write_fr_vec(&self.non_residues, &mut writer)?;
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        use crate::pairing::CurveAffine;
+        use crate::pairing::EncodedPoint;
+
+        let n = reader.read_u64::<BigEndian>()?;
+        let num_inputs = reader.read_u64::<BigEndian>()?;
+        let state_width = reader.read_u64::<BigEndian>()?;
+        let num_witness_polys = reader.read_u64::<BigEndian>()?;
+
+        let gate_setup_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+        let gate_selectors_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+        let permutation_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+
+        let total_lookup_entries_length = reader.read_u64::<BigEndian>()?;
+        let lookup_selector_monomial = read_optional_polynomial_coeffs(&mut reader)?;
+        let lookup_tables_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+        let lookup_table_type_monomial = read_optional_polynomial_coeffs(&mut reader)?;
+
+        let non_residues = read_fr_vec(&mut reader)?;
+
+        let new = Self {
+            n: n as usize,
+            num_inputs: num_inputs as usize,
+            state_width: state_width as usize,
+            num_witness_polys: num_witness_polys as usize,
+            gate_setup_monomials,
+            gate_selectors_monomials,
+            permutation_monomials,
+            total_lookup_entries_length: total_lookup_entries_length as usize,
+            lookup_selector_monomial,
+            lookup_tables_monomials,
+            lookup_table_type_monomial,
+            non_residues,
+
+            _marker: std::marker::PhantomData,
+        };
+
+        Ok(new)
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VerificationKey<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub num_inputs: usize,
@@ -113,8 +183,6 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
         worker: &Worker,
         crs: &Crs<E, CrsForMonomialForm>,
     ) -> Result<Self, SynthesisError> {
-        let state_width = setup.permutation_monomials.len();
-
         let mut new = Self {
             n: setup.n,
             num_inputs: setup.num_inputs,
@@ -157,131 +225,81 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
             new.lookup_table_type_commitment = Some(commitment);
         }
 
-        new.non_residues
-            .extend(make_non_residues::<E::Fr>(state_width - 1));
+        new.non_residues = setup.non_residues.clone();
+
+        // new.non_residues
+        //     .extend(make_non_residues::<E::Fr>(state_width - 1));
 
         Ok(new)
     }
 
-    // pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-    //     use crate::pairing::CurveAffine;
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        writer.write_u64::<BigEndian>(self.n as u64)?;
+        writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
+        writer.write_u64::<BigEndian>(self.state_width as u64)?;
+        writer.write_u64::<BigEndian>(self.num_witness_polys as u64)?;
 
-    //     writer.write_u64::<BigEndian>(self.n as u64)?;
-    //     writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
+        write_curve_affine_vec(&self.gate_setup_commitments, &mut writer)?;
+        write_curve_affine_vec(&self.gate_selectors_commitments, &mut writer)?;
+        write_curve_affine_vec(&self.permutation_commitments, &mut writer)?;
 
-    //     writer.write_u64::<BigEndian>(self.selector_commitments.len() as u64)?;
-    //     for p in self.selector_commitments.iter() {
-    //         writer.write_all(p.into_uncompressed().as_ref())?;
-    //     }
+        writer.write_u64::<BigEndian>(self.total_lookup_entries_length as u64)?;
+        write_optional_curve_affine(&self.lookup_selector_commitment, &mut writer)?;
+        write_curve_affine_vec(&self.lookup_tables_commitments, &mut writer)?;
+        write_optional_curve_affine(&self.lookup_table_type_commitment, &mut writer)?;
 
-    //     writer.write_u64::<BigEndian>(self.next_step_selector_commitments.len() as u64)?;
-    //     for p in self.next_step_selector_commitments.iter() {
-    //         writer.write_all(p.into_uncompressed().as_ref())?;
-    //     }
+        write_fr_vec(&self.non_residues, &mut writer)?;
 
-    //     writer.write_u64::<BigEndian>(self.permutation_commitments.len() as u64)?;
-    //     for p in self.permutation_commitments.iter() {
-    //         writer.write_all(p.into_uncompressed().as_ref())?;
-    //     }
+        write_curve_affine(&self.g2_elements[0], &mut writer)?;
+        write_curve_affine(&self.g2_elements[1], &mut writer)?;
 
-    //     writer.write_u64::<BigEndian>(self.non_residues.len() as u64)?;
-    //     for p in self.non_residues.iter() {
-    //         write_fr(p, &mut writer)?;
-    //     }
+        Ok(())
+    }
 
-    //     writer.write_all(self.g2_elements[0].into_uncompressed().as_ref())?;
-    //     writer.write_all(self.g2_elements[1].into_uncompressed().as_ref())?;
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        use crate::pairing::CurveAffine;
+        use crate::pairing::EncodedPoint;
 
-    //     Ok(())
-    // }
+        let n = reader.read_u64::<BigEndian>()?;
+        let num_inputs = reader.read_u64::<BigEndian>()?;
+        let state_width = reader.read_u64::<BigEndian>()?;
+        let num_witness_polys = reader.read_u64::<BigEndian>()?;
 
-    // pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-    //     use crate::pairing::CurveAffine;
-    //     use crate::pairing::EncodedPoint;
+        let gate_setup_commitments = read_curve_affine_vector(&mut reader)?;
+        let gate_selectors_commitments = read_curve_affine_vector(&mut reader)?;
+        let permutation_commitments = read_curve_affine_vector(&mut reader)?;
 
-    //     let n = reader.read_u64::<BigEndian>()?;
-    //     let num_inputs = reader.read_u64::<BigEndian>()?;
+        let total_lookup_entries_length = reader.read_u64::<BigEndian>()?;
+        let lookup_selector_commitment = read_optional_curve_affine(&mut reader)?;
+        let lookup_tables_commitments = read_curve_affine_vector(&mut reader)?;
+        let lookup_table_type_commitment = read_optional_curve_affine(&mut reader)?;
 
-    //     let read_g1 = |reader: &mut R| -> std::io::Result<E::G1Affine> {
-    //         let mut repr = <E::G1Affine as CurveAffine>::Uncompressed::empty();
-    //         reader.read_exact(repr.as_mut())?;
+        let non_residues = read_fr_vec(&mut reader)?;
 
-    //         let e = repr
-    //             .into_affine()
-    //             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let h = read_curve_affine(&mut reader)?;
+        let h_x = read_curve_affine(&mut reader)?;
 
-    //         Ok(e)
-    //     };
+        let new = Self {
+            n: n as usize,
+            num_inputs: num_inputs as usize,
+            state_width: state_width as usize,
+            num_witness_polys: num_witness_polys as usize,
+            gate_setup_commitments,
+            gate_selectors_commitments,
+            permutation_commitments,
+            total_lookup_entries_length: total_lookup_entries_length as usize,
+            lookup_selector_commitment,
+            lookup_tables_commitments,
+            lookup_table_type_commitment,
+            non_residues,
 
-    //     let read_g2_not_zero = |reader: &mut R| -> std::io::Result<E::G2Affine> {
-    //         let mut repr = <E::G2Affine as CurveAffine>::Uncompressed::empty();
-    //         reader.read_exact(repr.as_mut())?;
+            g2_elements: [h, h_x],
 
-    //         let e = repr
-    //             .into_affine()
-    //             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-    //             .and_then(|e| {
-    //                 if e.is_zero() {
-    //                     Err(std::io::Error::new(
-    //                         std::io::ErrorKind::InvalidData,
-    //                         "point at infinity",
-    //                     ))?
-    //                 } else {
-    //                     Ok(e)
-    //                 }
-    //             });
+            _marker: std::marker::PhantomData,
+        };
 
-    //         e
-    //     };
-
-    //     let num_selectors = reader.read_u64::<BigEndian>()?;
-    //     let mut selectors = Vec::with_capacity(num_selectors as usize);
-    //     for _ in 0..num_selectors {
-    //         let p = read_g1(&mut reader)?;
-    //         selectors.push(p);
-    //     }
-
-    //     let num_next_step_selectors = reader.read_u64::<BigEndian>()?;
-    //     let mut next_step_selectors = Vec::with_capacity(num_next_step_selectors as usize);
-    //     for _ in 0..num_next_step_selectors {
-    //         let p = read_g1(&mut reader)?;
-    //         next_step_selectors.push(p);
-    //     }
-
-    //     let num_permutation_polys = reader.read_u64::<BigEndian>()?;
-    //     let mut permutation_polys = Vec::with_capacity(num_permutation_polys as usize);
-    //     for _ in 0..num_permutation_polys {
-    //         let p = read_g1(&mut reader)?;
-    //         permutation_polys.push(p);
-    //     }
-
-    //     let num_non_residues = reader.read_u64::<BigEndian>()?;
-    //     let mut non_residues = Vec::with_capacity(num_non_residues as usize);
-    //     for _ in 0..num_non_residues {
-    //         let p = read_fr(&mut reader)?;
-    //         non_residues.push(p);
-    //     }
-
-    //     let g2_points = [
-    //         read_g2_not_zero(&mut reader)?,
-    //         read_g2_not_zero(&mut reader)?,
-    //     ];
-
-    //     let new = Self {
-    //         n: n as usize,
-    //         num_inputs: num_inputs as usize,
-    //         selector_commitments: selectors,
-    //         next_step_selector_commitments: next_step_selectors,
-    //         permutation_commitments: permutation_polys,
-    //         non_residues: non_residues,
-
-    //         g2_elements: g2_points,
-
-    //         _marker: std::marker::PhantomData,
-    //     };
-
-    //     Ok(new)
-    // }
+        Ok(new)
+    }
 }
 
 use super::data_structures::AssembledPolynomialStorageForMonomialForms;

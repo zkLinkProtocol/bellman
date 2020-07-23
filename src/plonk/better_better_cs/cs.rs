@@ -2334,6 +2334,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         setup.state_width = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
         setup.num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
 
+        setup.non_residues = make_non_residues::<E::Fr>(setup.state_width - 1);
+
         let (mut setup_polys_values_map, permutation_polys) = self.perform_setup(&worker)?;
         for gate in known_gates_list.iter() {
             let setup_polys = gate.setup_polynomials();
