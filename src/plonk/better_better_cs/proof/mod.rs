@@ -302,6 +302,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let input_values = self.input_assingments.clone();
 
+        proof.n = self.n();
         proof.inputs = input_values.clone();
 
         for inp in input_values.iter() {
