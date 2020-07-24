@@ -242,7 +242,7 @@ construct_poseidon_params! {
 }
 
 construct_poseidon_params! {
-    pub struct Stark_4_to_1_80s(StarkFr, 1, 4, 13, 26, 80, SBoxType::CubicSxox);
+    pub struct Stark_4_to_1_80s(StarkFr, 1, 4, 19, 38, 80, SBoxType::CubicSxox);
 }
 
 construct_sponge! {

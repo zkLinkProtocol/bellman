@@ -280,14 +280,6 @@ fn measure_poseidon_speed() {
     }).collect();
 
     {
-        let params = Bn256_2_to_1_128s::new::<BlakeHasher>();
-        let now = Instant::now();
-        let tree = PoseidonBN256Tree::create(&bn_values[..], SIZE, VALUES_PER_LEAF, &params, TreeType::Tree2To1);
-
-        println!("Poseidon_BN_256_2_1_128 MerkleTreeConstruction of size {} took {}s", SIZE, now.elapsed().as_secs());
-    }
-
-    {
         let params = Bn256_2_to_1_80s::new::<BlakeHasher>();
         let now = Instant::now();
         let tree = PoseidonBN256Tree::create(&bn_values[..], SIZE, VALUES_PER_LEAF, &params, TreeType::Tree2To1);
