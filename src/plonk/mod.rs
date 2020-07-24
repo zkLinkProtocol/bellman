@@ -270,6 +270,7 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
 
     transcript.commit_field_element(&proof.quotient_polynomial_at_z);
     transcript.commit_field_element(&proof.linearization_polynomial_at_z);
+    transcript.commit_field_element(&proof.grand_product_at_z_omega);
 
     let v = transcript.get_challenge();
 

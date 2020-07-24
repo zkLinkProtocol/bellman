@@ -986,9 +986,9 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
     }
     fn contribute_into_linearization_commitment_for_public_inputs<'a>(
         &self, 
-        domain_size: usize,
-        public_inputs: &[E::Fr],
-        at: E::Fr,
+        _domain_size: usize,
+        _public_inputs: &[E::Fr],
+        _at: E::Fr,
         queried_values: &std::collections::HashMap<PolynomialInConstraint, E::Fr>,
         commitments_storage: &std::collections::HashMap<PolyIdentifier, E::G1Affine>,
         challenges: &[E::Fr],

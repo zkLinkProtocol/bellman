@@ -101,6 +101,7 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     let mut copy_grand_product_alphas = None;
 
     {
+        current_alpha.mul_assign(&alpha);
         let alpha_0 = current_alpha;
 
         current_alpha.mul_assign(&alpha);
@@ -965,9 +966,11 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     let mut pair_with_x = pair_with_x.into_affine();
     pair_with_x.negate();
 
+    let pair_with_generator = pair_with_generator.into_affine();
+
     let valid = E::final_exponentiation(
         &E::miller_loop(&[
-            (&pair_with_generator.into_affine().prepare(), &vk.g2_elements[0].prepare()),
+            (&pair_with_generator.prepare(), &vk.g2_elements[0].prepare()),
             (&pair_with_x.prepare(), &vk.g2_elements[1].prepare())
         ])
     ).ok_or(SynthesisError::Unsatisfiable)? == E::Fqk::one();

@@ -110,6 +110,8 @@ pub fn verify_and_aggregate<E: Engine, P: PlonkConstraintSystemParams<E>, T: Tra
 
     transcript.commit_field_element(&proof.linearization_polynomial_at_z);
 
+    transcript.commit_field_element(&proof.grand_product_at_z_omega);
+
 
     // do the actual check for relationship at z
 

@@ -799,6 +799,8 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
         transcript.commit_field_element(&proof.linearization_polynomial_at_z);
 
+        transcript.commit_field_element(&proof.grand_product_at_z_omega);
+
         // sanity check - verification
         {
             let mut lhs = t_at_z;

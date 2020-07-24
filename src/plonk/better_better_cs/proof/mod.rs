@@ -1027,6 +1027,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let x_poly_lde_bitreversed = {
             // now compute the permutation argument
 
+            // bump alpha
+            current_alpha.mul_assign(&alpha);
+            let alpha_0 = current_alpha;
+
             let z_coset_lde_bitreversed = copy_permutation_z_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
                 &worker, 
                 lde_factor, 
@@ -1081,8 +1085,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             }
 
             t_poly.add_assign_scaled(&worker, &contrib_z, &current_alpha);
-
-            let alpha_0 = current_alpha;
 
             drop(contrib_z);
 
