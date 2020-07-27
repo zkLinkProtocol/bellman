@@ -314,6 +314,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let mut values_storage = self.make_assembled_poly_storage(worker, true)?;
 
+        let required_domain_size = self.n() + 1;
+        assert!(required_domain_size.is_power_of_two());
+
+        let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(required_domain_size);
+        let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(required_domain_size);
+
         // if we simultaneously produce setup then grab permutation polys in values forms
         if S::PRODUCE_SETUP {
             let permutation_polys = self.make_permutations(&worker)?;
@@ -328,18 +334,17 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             // compute from setup
             for idx in 0..num_state_polys {
                 let key = PolyIdentifier::PermutationPolynomial(idx);
-                let vals = setup.permutation_monomials[idx].clone().fft(&worker).into_coeffs();
+                // let vals = setup.permutation_monomials[idx].clone().fft(&worker).into_coeffs();
+                let vals = setup.permutation_monomials[idx].clone().fft_using_bitreversed_ntt(
+                    &worker,
+                    &omegas_bitreversed,
+                    &E::Fr::one()
+                )?.into_coeffs();
                 let poly = Polynomial::from_values_unpadded(vals)?;
                 let poly = PolynomialProxy::from_owned(poly);
                 values_storage.setup_map.insert(key, poly);
             }
         }
-
-        let required_domain_size = self.n() + 1;
-        assert!(required_domain_size.is_power_of_two());
-
-        let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(required_domain_size);
-        let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(required_domain_size);
 
         let mut ldes_storage = AssembledPolynomialStorage::<E>::new(
             true, 
@@ -429,7 +434,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 let table_type_poly_ref = setup.lookup_table_type_monomial.as_ref().expect("setup must contain lookup table type poly");
                 let table_type_poly = PolynomialProxy::from_borrowed(table_type_poly_ref);
 
-                let mut table_type_values = table_type_poly_ref.clone().fft(&worker).into_coeffs();
+                // let mut table_type_values = table_type_poly_ref.clone().fft(&worker).into_coeffs();
+                let mut table_type_values = table_type_poly_ref.clone().fft_using_bitreversed_ntt(
+                    &worker,
+                    &omegas_bitreversed,
+                    &E::Fr::one()
+                )?.into_coeffs();
                 table_type_values.pop().unwrap();
 
                 (selector_poly, table_type_poly, table_type_values)
@@ -441,7 +451,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 let mut table_contributions_values = if S::PRODUCE_SETUP {
                     self.calculate_masked_lookup_entries(&values_storage)?
                 } else {
-                    let selector_values = PolynomialProxy::from_owned(selector_poly.as_ref().clone().fft(&worker));
+                    // let selector_values = PolynomialProxy::from_owned(selector_poly.as_ref().clone().fft(&worker));
+                    let selector_values = selector_poly.as_ref().clone().fft_using_bitreversed_ntt(
+                        &worker,
+                        &omegas_bitreversed,
+                        &E::Fr::one()
+                    )?;
+
+                    let selector_values = PolynomialProxy::from_owned(selector_values);
 
                     self.calculate_masked_lookup_entries_using_selector(
                         &values_storage,
@@ -524,7 +541,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     current.mul_assign(&eta);
                 }
 
-                let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft(&worker);
+                // let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft(&worker);
+                let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft_using_bitreversed_ntt(
+                    &worker,
+                    &omegas_bitreversed,
+                    &E::Fr::one()
+                )?;
                 let mut t_values_shifted_coeffs = t_poly_values.clone().into_coeffs();
                 let _ = t_poly_values.pop_last()?;
 
@@ -924,25 +946,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             t
         };
 
-        // {            
-        //     {
-        //         println!("MAIN GATE * SELECTOR");
-        //         let mut tt = t_poly.clone();
-        //         tt.bitreverse_enumeration(&worker);
-        //         // tt.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
-        //         let mons = tt.icoset_fft_for_generator(&worker, &coset_factor);
-        //         // dbg!(mons.as_ref());
-        //         let values = mons.fft(&worker);
-        //         // dbg!(values.as_ref());
-        //         for i in (0..values.as_ref().len()).step_by(4) {
-        //             if !values.as_ref()[i].is_zero() {
-        //                 dbg!((i/4, values.as_ref()[i]));
-        //                 panic!("unsatisfied");
-        //             }
-        //         }
-        //     }
-        // }
-
         let non_main_gates = all_gates;
 
         for gate in non_main_gates.into_iter() {
@@ -976,33 +979,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             }
 
             t_poly.add_assign(&worker, &contribution);
-
-            // {
-            //     let inverse_divisor_on_coset_lde_natural_ordering = {
-            //         let mut vanishing_poly_inverse_bitreversed =
-            //             evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
-            //                 required_domain_size as u64,
-            //                 &coset_factor,
-            //                 (required_domain_size * lde_factor) as u64,
-            //                 &worker,
-            //             )?;
-            //         vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
-            //         // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
-        
-            //         vanishing_poly_inverse_bitreversed
-            //     };
-
-            //     {
-            //         println!("QUOTIENT");
-            //         let mut tt = t_poly.clone();
-            //         tt.bitreverse_enumeration(&worker);
-            //         tt.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
-            //         let mons = tt.icoset_fft_for_generator(&worker, &coset_factor);
-            //         // dbg!(mons.as_ref());
-            //         let l = mons.as_ref().len();
-            //         assert_eq!(&mons.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large after gate {:?}", gate);
-            //     }
-            // }
         }
 
         assert_eq!(challenges_slice.len(), 0);
