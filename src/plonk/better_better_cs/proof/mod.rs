@@ -1363,10 +1363,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         {
             // degree is 4n-4
             let l = t_poly.as_ref().len();
-            assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
+            if &t_poly.as_ref()[(l-4)..] != &[E::Fr::zero(); 4][..] {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+            // assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
         }
 
-        println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
+        // println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
 
         let mut t_poly_parts = t_poly.break_into_multiples(required_domain_size)?;
 
