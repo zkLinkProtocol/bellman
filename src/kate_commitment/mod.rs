@@ -1415,14 +1415,11 @@ pub(crate) mod test {
         buckets
     }
 
-    #[test]
-    #[ignore]
-    fn test_different_multiexps() {
+    fn test_multiexps_inner(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
         use crate::pairing::bn256::{Bn256, Fr};
         use std::time::Instant;
         use std::sync::Arc;
 
-        let max_size = 1 << 20;
         let worker = Worker::new();
 
         println!("Generating scalars");
@@ -1431,9 +1428,8 @@ pub(crate) mod test {
         let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
         println!("Done");
 
-        for size in vec![1 << 20] {
-            for cpus in vec![2, 4, 8] {
-            // for cpus in vec![16, 24, 32] {
+        for size in sizes {
+            for &cpus in &num_cpus {
                 let s = &scalars[..size];
                 let g = points[..size].to_vec();
 
@@ -1466,30 +1462,69 @@ pub(crate) mod test {
 
                 let subtime = Instant::now();
 
-                let _ = multiexp::dense_multiexp_with_manual_unrolling::<<Bn256 as Engine>::G1Affine>(
+                let _ = multiexp::dense_multiexp_uniform::<<Bn256 as Engine>::G1Affine>(
                     &subworker,
                     &g,
                     &scalars_repr
                 ).unwrap();
 
-                println!("Dense manually unrolled multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
-
-                let g = Arc::from(g);
-                let scalars_repr = Arc::from(scalars_repr);
+                println!("Dense uniform multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
 
                 let subtime = Instant::now();
 
-                let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                let _ = multiexp::stack_allocated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
                     &subworker,
-                    Arc::clone(&g),
-                    Arc::clone(&scalars_repr)
-                ).wait();
+                    &g,
+                    &scalars_repr
+                ).unwrap();
 
-                println!("Future based multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+                println!("Stack allocated dense multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
 
                 
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::dense_multiexp_with_manual_unrolling::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense manually unrolled multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+
+                // let g = Arc::from(g);
+                // let scalars_repr = Arc::from(scalars_repr);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     Arc::clone(&g),
+                //     Arc::clone(&scalars_repr)
+                // ).wait();
+
+                // println!("Future based multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
             }
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_different_multiexps() {
+        test_multiexps_inner(1<<20, vec![1 << 20], vec![3, 4, 6]);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_large_data_different_multiexps() {
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        
+        let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        test_multiexps_inner(max_size, sizes, cpus);
     }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(

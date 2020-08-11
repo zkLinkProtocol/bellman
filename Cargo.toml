@@ -24,7 +24,6 @@ byteorder = "1"
 futures= {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
 num_cpus = "1"
 crossbeam = {version = "0.7", optional = true}
-
 prefetch = {version = "0.2", optional = true}
 
 web-sys = {version = "0.3", optional = true, features = ["console", "Performance", "Window"]}
