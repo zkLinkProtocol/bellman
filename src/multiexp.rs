@@ -1266,18 +1266,6 @@ macro_rules! construct_stack_multiexp {
             if exponents.len() != bases.len() {
                 return Err(SynthesisError::AssignmentMissing);
             }
-            // do some heuristics here
-            // we proceed chunks of all points, and all workers do the same work over 
-            // some scalar width, so to have expected number of additions into buckets to 1
-            // we have to take log2 from the expected chunk(!) length
-            let c = if exponents.len() < 32 {
-                3u32
-            } else {
-                let chunk_len = pool.get_chunk_size(exponents.len());
-                (f64::from(chunk_len as u32)).ln().ceil() as u32
-
-                // (f64::from(exponents.len() as u32)).ln().ceil() as u32
-            };
 
             const WINDOW_SIZE: usize = $n_words;
             const SYNCHRONIZATION_STEP: usize = 1 << 17;
@@ -1287,7 +1275,6 @@ macro_rules! construct_stack_multiexp {
             const MASK: u64 = (1 << WINDOW_SIZE) - 1;
 
             assert!(SYNCHRONIZATION_STEP % READ_BY == 0);
-            assert_eq!(c as usize, WINDOW_SIZE, "windows size mismatch");
 
             let num_threads = pool.cpus;
 
@@ -1296,8 +1283,8 @@ macro_rules! construct_stack_multiexp {
             use std::sync::{Arc, Barrier};
 
             let num_rounds = bases.len() / SYNCHRONIZATION_STEP;
-            let mut num_windows = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
-            if <G::Engine as ScalarEngine>::Fr::NUM_BITS % c != 0 {
+            let mut num_windows = (<G::Engine as ScalarEngine>::Fr::NUM_BITS as usize) / WINDOW_SIZE;
+            if (<G::Engine as ScalarEngine>::Fr::NUM_BITS as usize) % WINDOW_SIZE != 0 {
                 num_windows += 1;
             }
             
