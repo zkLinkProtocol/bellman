@@ -1254,7 +1254,7 @@ macro_rules! construct_stack_multiexp {
             const MASK: u64 = (1 << WINDOW_SIZE) - 1;
 
             assert!(SYNCHRONIZATION_STEP % READ_BY == 0);
-            assert_eq!(c as usize, WINDOW_SIZE);
+            assert_eq!(c as usize, WINDOW_SIZE, "windows size mismatch");
 
             let num_threads = pool.cpus;
 
