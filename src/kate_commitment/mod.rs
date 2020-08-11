@@ -1448,7 +1448,7 @@ pub(crate) mod test {
                     &scalars_repr
                 ).unwrap();
 
-                println!("Dense multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                println!("Dense simple multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 let subtime = Instant::now();
 
@@ -1478,7 +1478,7 @@ pub(crate) mod test {
                     &scalars_repr
                 ).unwrap();
 
-                println!("Stack allocated dense multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                println!("Dense stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 
 
