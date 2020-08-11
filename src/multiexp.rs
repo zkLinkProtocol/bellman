@@ -988,13 +988,12 @@ pub fn dense_multiexp_uniform<G: CurveAffine>(
     Ok(result)
 }
 
-
 /// Perform multi-exponentiation. The caller is responsible for ensuring that
 /// the number of bases is the same as the number of exponents.
 pub fn stack_allocated_dense_multiexp<G: CurveAffine>(
     pool: &Worker,
     bases: & [G],
-    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr]
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
 ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
 {
     if exponents.len() != bases.len() {
@@ -1013,6 +1012,25 @@ pub fn stack_allocated_dense_multiexp<G: CurveAffine>(
         // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
 
+    match c {
+        12 => stack_allocated_dense_multiexp_12(pool, bases, exponents),
+        13 => stack_allocated_dense_multiexp_13(pool, bases, exponents),
+        14 => stack_allocated_dense_multiexp_14(pool, bases, exponents),
+        15 => stack_allocated_dense_multiexp_15(pool, bases, exponents),
+        16 => stack_allocated_dense_multiexp_16(pool, bases, exponents),
+        17 => stack_allocated_dense_multiexp_17(pool, bases, exponents),
+        _ => unimplemented!("not implemented for windows = {}", c)
+    }
+
+}
+
+fn stack_allocated_dense_multiexp_inner<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
     const WINDOW_SIZE: usize = 13;
     const SYNCHRONIZATION_STEP: usize = 1 << 17;
     const READ_BY: usize = 1 << 7;
@@ -1202,6 +1220,231 @@ pub fn stack_allocated_dense_multiexp<G: CurveAffine>(
 
     Ok(result)
 }
+
+#[macro_export]
+macro_rules! construct_stack_multiexp {
+	( $visibility:vis fn $name:ident ( $n_words:tt ); ) => {
+        $visibility fn $name<G: CurveAffine>(
+            pool: &Worker,
+            bases: & [G],
+            exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr]
+        ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+        {
+            if exponents.len() != bases.len() {
+                return Err(SynthesisError::AssignmentMissing);
+            }
+            // do some heuristics here
+            // we proceed chunks of all points, and all workers do the same work over 
+            // some scalar width, so to have expected number of additions into buckets to 1
+            // we have to take log2 from the expected chunk(!) length
+            let c = if exponents.len() < 32 {
+                3u32
+            } else {
+                let chunk_len = pool.get_chunk_size(exponents.len());
+                (f64::from(chunk_len as u32)).ln().ceil() as u32
+
+                // (f64::from(exponents.len() as u32)).ln().ceil() as u32
+            };
+
+            const WINDOW_SIZE: usize = $n_words;
+            const SYNCHRONIZATION_STEP: usize = 1 << 17;
+            const READ_BY: usize = 1 << 7;
+            const MIN_STACK_SIZE: usize = 1 << 21; // 2MB
+            const NUM_BUCKETS: usize = 1 << WINDOW_SIZE;
+            const MASK: u64 = (1 << WINDOW_SIZE) - 1;
+
+            assert!(SYNCHRONIZATION_STEP % READ_BY == 0);
+            assert_eq!(c as usize, WINDOW_SIZE);
+
+            let num_threads = pool.cpus;
+
+            let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_threads];
+
+            use std::sync::{Arc, Barrier};
+
+            let num_rounds = bases.len() / SYNCHRONIZATION_STEP;
+            let mut num_windows = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
+            if <G::Engine as ScalarEngine>::Fr::NUM_BITS % c != 0 {
+                num_windows += 1;
+            }
+            
+            let mut barriers = Vec::with_capacity(num_windows);
+            for _ in 0..num_windows {
+                let mut tt = Vec::with_capacity(num_rounds);
+                for _ in 0..num_rounds {
+                    let t = Barrier::new(num_threads);
+                    tt.push(t);
+                }
+                barriers.push(tt);
+            }
+
+            let barrs = &barriers;
+
+            let g1_projective_size = std::mem::size_of::<<G as CurveAffine>::Projective>();
+            let g1_affine_size = std::mem::size_of::<G>();
+            let scalar_size = std::mem::size_of::<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>();
+            let usize_size = std::mem::size_of::<usize>();
+
+            // potentially we can keep all the buckets on a stack,
+            // but it would be around 2.6 MB for BN254 for c = 18;
+            let space_to_keep_buckets_on_stack = (1 << WINDOW_SIZE) * g1_projective_size;
+
+            let mut stack_size = (g1_affine_size + scalar_size + usize_size) * READ_BY + space_to_keep_buckets_on_stack + (1<<16);
+            if stack_size < MIN_STACK_SIZE {
+                stack_size = MIN_STACK_SIZE;
+            }
+
+            let thread_step = num_threads * READ_BY;
+
+            use crossbeam::thread;
+
+            thread::scope(|s| {
+                for (thread_idx, subresult) in subresults.iter_mut().enumerate() {
+                    let builder = s.builder().stack_size(stack_size);
+                    builder.spawn(move |_| {
+                        let limit = bases.len();
+                        let bases = &bases[..limit];
+                        let exponents = &exponents[..limit];
+                        let mut buckets = [<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
+                        let mut skip_bits = 0;
+                        for chunk_schedule_idx in 0..num_windows {
+                            if chunk_schedule_idx != 0 {
+                                buckets = [<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
+                            }
+                            for (i, (bases, exponents)) in bases.chunks(SYNCHRONIZATION_STEP)
+                                            .zip(exponents.chunks(SYNCHRONIZATION_STEP))
+                                            .enumerate() {
+                                let num_subchunks = bases.len() / thread_step;
+                                let remainder_start = num_subchunks * thread_step;
+                                let remainder_end = bases.len();
+                                // assert_eq!(remainder_start, remainder_end, "only support power of two multiexp size for now");
+                                let mut bases_holder = [G::zero(); READ_BY];
+                                let mut exponents_holder = [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr::default(); READ_BY];
+                                let mut indexes_holder = [0usize; READ_BY];
+                                for subchunk_start_idx in ((thread_idx*READ_BY)..remainder_start).step_by(thread_step) {
+                                    exponents_holder.copy_from_slice(&exponents[subchunk_start_idx..(subchunk_start_idx+READ_BY)]);
+                                    for (index, &exp) in indexes_holder.iter_mut().zip(exponents_holder.iter()) {
+                                        let mut exp = exp;
+                                        exp.shr(skip_bits);
+                                        *index = (exp.as_ref()[0] & MASK) as usize;
+                                    }
+                                    bases_holder.copy_from_slice(&bases[subchunk_start_idx..(subchunk_start_idx+READ_BY)]);
+
+                                    let mut bases_iter = bases_holder.iter();
+                                    let mut indexes_iter = indexes_holder.iter();
+
+                                    // semi-unroll first
+                                    let mut this_exp = *(&mut indexes_iter).next().unwrap();
+                                    let mut base_prefetch_counter = 0;
+                                    crate::prefetch::prefetch_l1_pointer(&buckets[this_exp]);
+                                    crate::prefetch::prefetch_l1_pointer(&bases_holder[base_prefetch_counter]);
+
+                                    for (&index, this_base) in indexes_iter.zip(&mut bases_iter) {
+                                        if this_exp != 0 {
+                                            buckets[this_exp].add_assign_mixed(&this_base);
+                                        }
+
+                                        this_exp = index;
+
+                                        base_prefetch_counter += 1;
+                                        crate::prefetch::prefetch_l1_pointer(&buckets[this_exp]);
+                                        crate::prefetch::prefetch_l1_pointer(&bases_holder[base_prefetch_counter]);
+                                    }
+
+                                    // finish
+                                    if this_exp != 0 {
+                                        let last_base = bases_iter.next().unwrap();
+                                        buckets[this_exp].add_assign_mixed(&last_base);
+                                    }
+                                }
+
+                                // process the remainder
+                                let remainder_start = remainder_start + (thread_idx*READ_BY);
+                                if remainder_start < remainder_end {
+                                    let remainder_end = if remainder_start + READ_BY > remainder_end {
+                                        remainder_end
+                                    } else {
+                                        remainder_start + READ_BY
+                                    };
+
+                                    let limit = remainder_end - remainder_start;
+                                    exponents_holder[..limit].copy_from_slice(&exponents[remainder_start..remainder_end]);
+                                    for (index, &exp) in indexes_holder.iter_mut().zip(exponents_holder.iter()) {
+                                        let mut exp = exp;
+                                        exp.shr(skip_bits);
+                                        *index = (exp.as_ref()[0] & MASK) as usize;
+                                    }
+                                    bases_holder[..limit].copy_from_slice(&bases[remainder_start..remainder_end]);
+
+                                    let mut bases_iter = bases_holder[..limit].iter();
+                                    let mut indexes_iter = indexes_holder[..limit].iter();
+
+                                    // semi-unroll first
+                                    let mut this_exp = *indexes_iter.next().unwrap();
+
+                                    let mut base_prefetch_counter = 0;
+                                    crate::prefetch::prefetch_l1_pointer(&buckets[this_exp]);
+                                    crate::prefetch::prefetch_l1_pointer(&bases_holder[base_prefetch_counter]);
+
+                                    for (&index, this_base) in indexes_iter.zip(&mut bases_iter) {
+                                        if this_exp != 0 {
+                                            buckets[this_exp].add_assign_mixed(this_base);
+                                        }
+
+                                        this_exp = index;
+
+                                        base_prefetch_counter += 1;
+                                        crate::prefetch::prefetch_l1_pointer(&buckets[this_exp]);
+                                        crate::prefetch::prefetch_l1_pointer(&bases_holder[base_prefetch_counter]);
+                                    }
+
+                                    // finish
+                                    if this_exp != 0 {
+                                        let last_base = bases_iter.next().unwrap();
+                                        buckets[this_exp].add_assign_mixed(last_base);
+                                    }
+                                }
+
+                                (&barrs[chunk_schedule_idx][i]).wait();
+                            }
+
+                            // buckets are filled with the corresponding accumulated value, now sum
+                            let mut acc = buckets[1];
+                            let mut running_sum = G::Projective::zero();
+                            for exp in buckets.iter().skip(2).rev() {
+                                running_sum.add_assign(&exp);
+                                acc.add_assign(&running_sum);
+                            }
+
+                            for _ in 0..skip_bits {
+                                acc.double();
+                            }
+
+                            subresult.add_assign(&acc);
+                            
+                            skip_bits += WINDOW_SIZE as u32;
+                        }
+                    }).unwrap();
+                }
+            }).unwrap();
+
+            let mut result = subresults.drain(0..1).collect::<Vec<_>>()[0];
+            for t in subresults.into_iter() {
+                result.add_assign(&t);
+            }
+
+            Ok(result)
+        }
+    }
+}
+
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_12(12););
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_13(13););
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_14(14););
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_15(15););
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_16(16););
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_17(17););
+
 
 #[allow(dead_code)]
 pub fn dense_unrolled_multiexp_with_prefetch<G: CurveAffine>(
