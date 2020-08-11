@@ -1019,9 +1019,42 @@ pub fn stack_allocated_dense_multiexp<G: CurveAffine>(
         15 => stack_allocated_dense_multiexp_15(pool, bases, exponents),
         16 => stack_allocated_dense_multiexp_16(pool, bases, exponents),
         17 => stack_allocated_dense_multiexp_17(pool, bases, exponents),
+        18 => stack_allocated_dense_multiexp_18(pool, bases, exponents),
         _ => unimplemented!("not implemented for windows = {}", c)
     }
+}
 
+/// Perform multi-exponentiation. The caller is responsible for ensuring that
+/// the number of bases is the same as the number of exponents.
+pub fn stack_allocated_uncompensated_dense_multiexp<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    if exponents.len() != bases.len() {
+        return Err(SynthesisError::AssignmentMissing);
+    }
+    // do some heuristics here
+    // we proceed chunks of all points, and all workers do the same work over 
+    // some scalar width, so to have expected number of additions into buckets to 1
+    // we have to take log2 from the expected chunk(!) length
+    let c = if exponents.len() < 32 {
+        3u32
+    } else {
+        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+    };
+
+    match c {
+        12 => stack_allocated_dense_multiexp_12(pool, bases, exponents),
+        13 => stack_allocated_dense_multiexp_13(pool, bases, exponents),
+        14 => stack_allocated_dense_multiexp_14(pool, bases, exponents),
+        15 => stack_allocated_dense_multiexp_15(pool, bases, exponents),
+        16 => stack_allocated_dense_multiexp_16(pool, bases, exponents),
+        17 => stack_allocated_dense_multiexp_17(pool, bases, exponents),
+        18 => stack_allocated_dense_multiexp_18(pool, bases, exponents),
+        _ => unimplemented!("not implemented for windows = {}", c)
+    }
 }
 
 fn stack_allocated_dense_multiexp_inner<G: CurveAffine>(
@@ -1444,7 +1477,7 @@ construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_14(14););
 construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_15(15););
 construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_16(16););
 construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_17(17););
-
+construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_18(18););
 
 #[allow(dead_code)]
 pub fn dense_unrolled_multiexp_with_prefetch<G: CurveAffine>(

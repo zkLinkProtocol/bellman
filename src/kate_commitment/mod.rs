@@ -1480,7 +1480,15 @@ pub(crate) mod test {
 
                 println!("Dense stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
-                
+                let subtime = Instant::now();
+
+                let _ = multiexp::stack_allocated_uncompensated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Uncompensated stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 // let subtime = Instant::now();
 
