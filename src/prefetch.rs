@@ -40,7 +40,10 @@ cfg_if! {
             
 
             unsafe {
+                #[cfg(target_arch = "x86_64")]
                 _mm_prefetch(pointer as *const i8, core::arch::x86_64::_MM_HINT_T0);
+                #[cfg(target_arch = "x86")]
+                _mm_prefetch(pointer as *const i8, core::arch::x86::_MM_HINT_T0);
             }
         }
 
@@ -53,7 +56,10 @@ cfg_if! {
             
 
             unsafe {
+                #[cfg(target_arch = "x86_64")]
                 _mm_prefetch(pointer as *const i8, core::arch::x86_64::_MM_HINT_T1);
+                #[cfg(target_arch = "x86")]
+                _mm_prefetch(pointer as *const i8, core::arch::x86::_MM_HINT_T1);
             }
         }
 
@@ -66,7 +72,10 @@ cfg_if! {
             
 
             unsafe {
+                #[cfg(target_arch = "x86_64")]
                 _mm_prefetch(pointer as *const i8, core::arch::x86_64::_MM_HINT_T2);
+                #[cfg(target_arch = "x86")]
+                _mm_prefetch(pointer as *const i8, core::arch::x86::_MM_HINT_T2);
             }
         }
 
@@ -79,7 +88,10 @@ cfg_if! {
             
 
             unsafe {
+                #[cfg(target_arch = "x86_64")]
                 _mm_prefetch(reference as *const T as *const i8, core::arch::x86_64::_MM_HINT_T0);
+                #[cfg(target_arch = "x86")]
+                _mm_prefetch(reference as *const T as *const i8, core::arch::x86::_MM_HINT_T0);
             }
         }
 
@@ -92,7 +104,10 @@ cfg_if! {
             
 
             unsafe {
+                #[cfg(target_arch = "x86_64")]
                 _mm_prefetch(reference as *const T as *const i8, core::arch::x86_64::_MM_HINT_T1);
+                #[cfg(target_arch = "x86")]
+                _mm_prefetch(reference as *const T as *const i8, core::arch::x86::_MM_HINT_T1);
             }
         }
 
@@ -105,7 +120,10 @@ cfg_if! {
             
 
             unsafe {
+                #[cfg(target_arch = "x86_64")]
                 _mm_prefetch(reference as *const T as *const i8, core::arch::x86_64::_MM_HINT_T2);
+                #[cfg(target_arch = "x86")]
+                _mm_prefetch(reference as *const T as *const i8, core::arch::x86::_MM_HINT_T2);
             }
         }
     } else {
