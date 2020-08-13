@@ -1482,13 +1482,23 @@ pub(crate) mod test {
 
                 let subtime = Instant::now();
 
-                let _ = multiexp::producer_consumer_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                let _ = multiexp::map_reduce_multiexp::<<Bn256 as Engine>::G1Affine>(
                     &subworker,
                     &g,
                     &scalars_repr
                 ).unwrap();
 
-                println!("ProdCons stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                println!("Map reduce multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::producer_consumer_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("ProdCons stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 // let subtime = Instant::now();
 

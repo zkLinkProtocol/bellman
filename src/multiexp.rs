@@ -1357,6 +1357,87 @@ fn stack_allocated_dense_multiexp_inner<G: CurveAffine>(
     Ok(result)
 }
 
+pub fn map_reduce_multiexp<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    if exponents.len() != bases.len() {
+        return Err(SynthesisError::AssignmentMissing);
+    }
+    // do some heuristics here
+    // we proceed chunks of all points, and all workers do the same work over 
+    // some scalar width, so to have expected number of additions into buckets to 1
+    // we have to take log2 from the expected chunk(!) length
+    let c = if exponents.len() < 32 {
+        3u32
+    } else {
+        let chunk_len = pool.get_chunk_size(exponents.len());
+        (f64::from(chunk_len as u32)).ln().ceil() as u32
+    };
+
+    let chunk_len = pool.get_chunk_size(exponents.len());
+
+    pool.scope(0, |scope, _| {
+        for (b, e) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)) {
+            scope.spawn(move |_| {
+                serial_multiexp_inner(b, e, c).unwrap();
+            });
+        }
+    });
+
+    Ok(<G as CurveAffine>::Projective::zero())
+}
+
+fn serial_multiexp_inner<G: CurveAffine>(
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    let num_buckets = (1 << c) - 1;
+    let mask: u64 = (1u64 << c) - 1u64;
+
+    let bases = bases.to_vec();
+    let exponents = exponents.to_vec();
+
+    let mut result = <G as CurveAffine>::Projective::zero();
+
+    let num_runs = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
+    let mut buckets = vec![vec![<G as CurveAffine>::Projective::zero(); num_buckets]; num_runs as usize];
+    for (base, mut exp) in bases.into_iter().zip(exponents.into_iter()) {
+        for window_index in 0..num_runs {
+            exp.shr(c);
+            let index = (exp.as_ref()[0] & mask) as usize;
+            if index != 0 {
+                buckets[window_index][index - 1].add_assign_mixed(&base);
+            }
+        }
+    }
+
+    let mut skip_bits = 0;
+    for b in buckets.into_iter() {
+        // buckets are filled with the corresponding accumulated value, now sum
+        let mut acc = G::Projective::zero();
+        let mut running_sum = G::Projective::zero();
+        for exp in b.iter().rev() {
+            running_sum.add_assign(&exp);
+            acc.add_assign(&running_sum);
+        }
+
+        for _ in 0..skip_bits {
+            acc.double();
+        }
+
+        result.add_assign(&acc);
+                
+        skip_bits += c as u32;
+    }
+
+    Ok(result)
+}
+
 #[macro_export]
 macro_rules! construct_stack_multiexp {
 	( $visibility:vis fn $name:ident ( $n_words:tt ); ) => {
