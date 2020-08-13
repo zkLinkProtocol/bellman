@@ -1545,6 +1545,53 @@ pub(crate) mod test {
         }
     }
 
+    fn test_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use crate::pairing::bn256::Bn256;
+        test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    }
+
+    fn test_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let worker = Worker::new();
+
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in sizes {
+            for &cpus in &num_cpus {
+                for &window in &windows {
+                    let s = &scalars[..size];
+                    let g = points[..size].to_vec();
+
+                    let subworker = Worker::new_with_cpus(cpus);
+
+                    let scalars_repr = super::elements_into_representations::<E>(
+                        &subworker,
+                        s
+                    ).unwrap();
+
+                    let subtime = Instant::now();
+
+                    let window = window as u32;
+
+                    let _ = multiexp::map_reduce_multiexp_over_fixed_window::<E::G1Affine>(
+                        &subworker,
+                        &g,
+                        &scalars_repr,
+                        window
+                    ).unwrap();
+
+                    println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn test_different_multiexps() {
@@ -1563,6 +1610,20 @@ pub(crate) mod test {
         let cpus = vec![8, 12, 16, 24, 32, 48];
         test_multiexp_bn254(max_size, sizes, cpus);
         // test_multiexp_bn254_compact(max_size, sizes, cpus);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_large_data_different_windows() {
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        
+        let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        let windows = vec![13, 14, 15, 16, 17, 18, 19, 20];
+        test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
     }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(

@@ -1390,6 +1390,31 @@ pub fn map_reduce_multiexp<G: CurveAffine>(
     Ok(<G as CurveAffine>::Projective::zero())
 }
 
+
+pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    if exponents.len() != bases.len() {
+        return Err(SynthesisError::AssignmentMissing);
+    }
+
+    let chunk_len = pool.get_chunk_size(exponents.len());
+
+    pool.scope(0, |scope, _| {
+        for (b, e) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)) {
+            scope.spawn(move |_| {
+                serial_multiexp_inner(b, e, c).unwrap();
+            });
+        }
+    });
+
+    Ok(<G as CurveAffine>::Projective::zero())
+}
+
 fn serial_multiexp_inner<G: CurveAffine>(
     bases: & [G],
     exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
