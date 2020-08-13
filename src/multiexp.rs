@@ -1429,7 +1429,10 @@ fn serial_multiexp_inner<G: CurveAffine>(
 
     let mut result = <G as CurveAffine>::Projective::zero();
 
-    let num_runs = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
+    let mut num_runs = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
+    if <G::Engine as ScalarEngine>::Fr::NUM_BITS % c != 0 {
+        num_runs += 1;
+    }
     let mut buckets = vec![vec![<G as CurveAffine>::Projective::zero(); num_buckets]; num_runs as usize];
     for (&base, &exp) in bases.into_iter().zip(exponents.into_iter()) {
         for window_index in 0..num_runs {
