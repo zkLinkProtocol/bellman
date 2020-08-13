@@ -1450,11 +1450,19 @@ fn serial_multiexp_inner<G: CurveAffine>(
         // buckets are filled with the corresponding accumulated value, now sum
         let mut acc = G::Projective::zero();
         let mut running_sum = G::Projective::zero();
+        let mut running_sums = Vec::with_capacity(b.len());
         <G as CurveAffine>::Projective::batch_normalization(&mut b);
         for exp in b.into_iter().rev() {
             let exp = exp.into_affine();
             running_sum.add_assign_mixed(&exp);
-            acc.add_assign(&running_sum);
+            running_sums.push(running_sum);
+            // acc.add_assign(&running_sum);
+        }
+
+        <G as CurveAffine>::Projective::batch_normalization(&mut running_sums);
+        for sum in running_sums.into_iter() {
+            let sum = sum.into_affine();
+            acc.add_assign_mixed(&sum);
         }
 
         for _ in 0..skip_bits {
