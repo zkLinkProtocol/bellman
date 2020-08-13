@@ -1399,15 +1399,16 @@ fn serial_multiexp_inner<G: CurveAffine>(
     let num_buckets = (1 << c) - 1;
     let mask: u64 = (1u64 << c) - 1u64;
 
-    let bases = bases.to_vec();
-    let exponents = exponents.to_vec();
+    // let bases = bases.to_vec();
+    // let exponents = exponents.to_vec();
 
     let mut result = <G as CurveAffine>::Projective::zero();
 
     let num_runs = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
     let mut buckets = vec![vec![<G as CurveAffine>::Projective::zero(); num_buckets]; num_runs as usize];
-    for (base, mut exp) in bases.into_iter().zip(exponents.into_iter()) {
+    for (&base, &exp) in bases.into_iter().zip(exponents.into_iter()) {
         for window_index in 0..num_runs {
+            let mut exp = exp;
             exp.shr(c);
             let index = (exp.as_ref()[0] & mask) as usize;
             if index != 0 {

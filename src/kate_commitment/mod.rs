@@ -1416,12 +1416,12 @@ pub(crate) mod test {
     }
 
     fn test_multiexp_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
-        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::pairing::bn256::Bn256;
         test_multiexps_inner::<Bn256>(max_size, sizes, num_cpus);
     }
 
     fn test_multiexp_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
-        use crate::pairing::compact_bn256::{Bn256, Fr};
+        use crate::pairing::compact_bn256::Bn256;
         test_multiexps_inner::<Bn256>(max_size, sizes, num_cpus);
     }
 
@@ -1561,8 +1561,8 @@ pub(crate) mod test {
         
         let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
         let cpus = vec![8, 12, 16, 24, 32, 48];
-        // test_multiexp_bn254(max_size, sizes, cpus);
-        test_multiexp_bn254_compact(max_size, sizes, cpus);
+        test_multiexp_bn254(max_size, sizes, cpus);
+        // test_multiexp_bn254_compact(max_size, sizes, cpus);
     }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(
