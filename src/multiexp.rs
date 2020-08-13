@@ -1059,7 +1059,7 @@ pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
 
     use crossbeam::thread;
     use crossbeam_queue::{ArrayQueue};
-    const CAPACITY: usize = 1 << 10;
+    const CAPACITY: usize = 1 << 16;
     let mask = (1u64 << window_size) - 1u64;
 
     use std::sync::atomic::{AtomicBool, Ordering};
