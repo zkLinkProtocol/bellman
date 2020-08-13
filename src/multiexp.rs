@@ -1053,6 +1053,7 @@ pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
     }
 
     if window_size <= 20 {
+        println!("Degrading to normal one");
         return dense_multiexp(pool, bases, exponents);
     }
 
