@@ -762,6 +762,23 @@ fn dense_multiexp_inner<G: CurveAffine>(
     }
 }
 
+fn get_window_size_for_length(length: usize, chunk_length: usize) -> u32 {
+    if length < 32 {
+        return 3u32;
+    } else {
+        let exact = (f64::from(chunk_length as u32)).ln();
+        let floor = exact.floor();
+        if exact > floor + 0.5f64 {
+            return exact.ceil() as u32;
+        } else {
+            return floor as u32;
+        }
+
+        // (f64::from(chunk_length as u32)).ln().ceil() as u32
+        // (f64::from(length as u32)).ln().ceil() as u32
+    };
+}
+
 
 /// Perform multi-exponentiation. The caller is responsible for ensuring that
 /// the number of bases is the same as the number of exponents.
@@ -999,18 +1016,10 @@ pub fn stack_allocated_dense_multiexp<G: CurveAffine>(
     if exponents.len() != bases.len() {
         return Err(SynthesisError::AssignmentMissing);
     }
-    // do some heuristics here
-    // we proceed chunks of all points, and all workers do the same work over 
-    // some scalar width, so to have expected number of additions into buckets to 1
-    // we have to take log2 from the expected chunk(!) length
-    let c = if exponents.len() < 32 {
-        3u32
-    } else {
-        let chunk_len = pool.get_chunk_size(exponents.len());
-        (f64::from(chunk_len as u32)).ln().ceil() as u32
 
-        // (f64::from(exponents.len() as u32)).ln().ceil() as u32
-    };
+    let chunk_len = pool.get_chunk_size(exponents.len());
+
+    let c = get_window_size_for_length(exponents.len(), chunk_len);
 
     match c {
         12 => stack_allocated_dense_multiexp_12(pool, bases, exponents),
@@ -2171,202 +2180,246 @@ fn dense_multiexp_inner_consume<G: CurveAffine>(
     Ok(result)
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
 
-#[test]
-fn test_new_multiexp_with_bls12() {
-    fn naive_multiexp<G: CurveAffine>(
-        bases: Arc<Vec<G>>,
-        exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
-    ) -> G::Projective
-    {
-        assert_eq!(bases.len(), exponents.len());
+    #[test]
+    fn test_new_multiexp_with_bls12() {
+        fn naive_multiexp<G: CurveAffine>(
+            bases: Arc<Vec<G>>,
+            exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
+        ) -> G::Projective
+        {
+            assert_eq!(bases.len(), exponents.len());
 
-        let mut acc = G::Projective::zero();
+            let mut acc = G::Projective::zero();
 
-        for (base, exp) in bases.iter().zip(exponents.iter()) {
-            acc.add_assign(&base.mul(*exp));
+            for (base, exp) in bases.iter().zip(exponents.iter()) {
+                acc.add_assign(&base.mul(*exp));
+            }
+
+            acc
         }
 
-        acc
+        use rand::{self, Rand};
+        use crate::pairing::bls12_381::Bls12;
+
+        use self::futures::executor::block_on;
+
+        const SAMPLES: usize = 1 << 14;
+
+        let rng = &mut rand::thread_rng();
+        let v = Arc::new((0..SAMPLES).map(|_| <Bls12 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>());
+        let g = Arc::new((0..SAMPLES).map(|_| <Bls12 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
+
+        let naive = naive_multiexp(g.clone(), v.clone());
+
+        let pool = Worker::new();
+
+        let fast = block_on(
+            multiexp(
+                &pool,
+                (g, 0),
+                FullDensity,
+                v
+            )
+        ).unwrap();
+
+        assert_eq!(naive, fast);
     }
 
-    use rand::{self, Rand};
-    use crate::pairing::bls12_381::Bls12;
+    #[test]
+    #[ignore]
+    fn test_new_multexp_speed_with_bn256() {
+        use rand::{self, Rand};
+        use crate::pairing::bn256::Bn256;
+        use num_cpus;
 
-    use self::futures::executor::block_on;
+        let cpus = num_cpus::get();
+        const SAMPLES: usize = 1 << 22;
 
-    const SAMPLES: usize = 1 << 14;
+        let rng = &mut rand::thread_rng();
+        let v = Arc::new((0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>());
+        let g = Arc::new((0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
 
-    let rng = &mut rand::thread_rng();
-    let v = Arc::new((0..SAMPLES).map(|_| <Bls12 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>());
-    let g = Arc::new((0..SAMPLES).map(|_| <Bls12 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
+        let pool = Worker::new();
 
-    let naive = naive_multiexp(g.clone(), v.clone());
+        use self::futures::executor::block_on;
 
-    let pool = Worker::new();
+        let start = std::time::Instant::now();
 
-    let fast = block_on(
-        multiexp(
-            &pool,
-            (g, 0),
-            FullDensity,
-            v
-        )
-    ).unwrap();
-
-    assert_eq!(naive, fast);
-}
-
-#[test]
-#[ignore]
-fn test_new_multexp_speed_with_bn256() {
-    use rand::{self, Rand};
-    use crate::pairing::bn256::Bn256;
-    use num_cpus;
-
-    let cpus = num_cpus::get();
-    const SAMPLES: usize = 1 << 22;
-
-    let rng = &mut rand::thread_rng();
-    let v = Arc::new((0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>());
-    let g = Arc::new((0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
-
-    let pool = Worker::new();
-
-    use self::futures::executor::block_on;
-
-    let start = std::time::Instant::now();
-
-    let _fast = block_on(
-        multiexp(
-            &pool,
-            (g, 0),
-            FullDensity,
-            v
-        )
-    ).unwrap();
+        let _fast = block_on(
+            multiexp(
+                &pool,
+                (g, 0),
+                FullDensity,
+                v
+            )
+        ).unwrap();
 
 
-    let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("Elapsed {} ns for {} samples", duration_ns, SAMPLES);
-    let time_per_sample = duration_ns/(SAMPLES as f64);
-    println!("Tested on {} samples on {} CPUs with {} ns per multiplication", SAMPLES, cpus, time_per_sample);
-}
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("Elapsed {} ns for {} samples", duration_ns, SAMPLES);
+        let time_per_sample = duration_ns/(SAMPLES as f64);
+        println!("Tested on {} samples on {} CPUs with {} ns per multiplication", SAMPLES, cpus, time_per_sample);
+    }
 
 
-#[test]
-fn test_dense_multiexp_vs_new_multiexp() {
-    use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-    use crate::pairing::bn256::Bn256;
-    use num_cpus;
+    #[test]
+    fn test_dense_multiexp_vs_new_multiexp() {
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::pairing::bn256::Bn256;
+        use num_cpus;
 
-    // const SAMPLES: usize = 1 << 22;
-    const SAMPLES: usize = 1 << 16;
-    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        // const SAMPLES: usize = 1 << 22;
+        const SAMPLES: usize = 1 << 16;
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
-    let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-    let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+        let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+        let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
-    println!("Done generating test points and scalars");
+        println!("Done generating test points and scalars");
 
-    let pool = Worker::new();
+        let pool = Worker::new();
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let dense = dense_multiexp(
-        &pool, &g, &v.clone()).unwrap();
+        let dense = dense_multiexp(
+            &pool, &g, &v.clone()).unwrap();
 
-    let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("{} ns for dense for {} samples", duration_ns, SAMPLES);
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("{} ns for dense for {} samples", duration_ns, SAMPLES);
 
-    use self::futures::executor::block_on;
+        use self::futures::executor::block_on;
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let sparse = block_on(
-        multiexp(
+        let sparse = block_on(
+            multiexp(
+                &pool,
+                (Arc::new(g), 0),
+                FullDensity,
+                Arc::new(v)
+            )
+        ).unwrap();
+
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("{} ns for sparse for {} samples", duration_ns, SAMPLES);
+
+        assert_eq!(dense, sparse);
+    }
+
+
+    #[test]
+    fn test_bench_sparse_multiexp() {
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::pairing::bn256::Bn256;
+        use num_cpus;
+
+        const SAMPLES: usize = 1 << 22;
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+        let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+
+        println!("Done generating test points and scalars");
+
+        let pool = Worker::new();
+        let start = std::time::Instant::now();
+
+        let _sparse = multiexp(
             &pool,
             (Arc::new(g), 0),
             FullDensity,
             Arc::new(v)
-        )
-    ).unwrap();
+        ).wait().unwrap();
 
-    let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("{} ns for sparse for {} samples", duration_ns, SAMPLES);
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("{} ms for sparse for {} samples", duration_ns/1000.0f64, SAMPLES);
+    }
 
-    assert_eq!(dense, sparse);
-}
+    #[test]
+    fn test_bench_dense_consuming_multiexp() {
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::pairing::bn256::Bn256;
+        use num_cpus;
+
+        const SAMPLES: usize = 1 << 20;
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+        let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+
+        println!("Done generating test points and scalars");
+
+        let pool = Worker::new();
+
+        let g = Arc::new(g);
+        let v = Arc::new(v);
+
+        let start = std::time::Instant::now();
+
+        let _sparse = multiexp(
+            &pool,
+            (g.clone(), 0),
+            FullDensity,
+            v.clone()
+        ).wait().unwrap();
+
+        println!("{:?} for sparse for {} samples", start.elapsed(), SAMPLES);
+
+        let g = Arc::try_unwrap(g).unwrap();
+        let v = Arc::try_unwrap(v).unwrap();
+
+        let start = std::time::Instant::now();
+
+        let _dense = dense_multiexp_consume(
+            &pool,
+            &g,
+            v
+        ).unwrap();
+
+        println!("{:?} for dense for {} samples", start.elapsed(), SAMPLES);
+    }
 
 
-#[test]
-fn test_bench_sparse_multiexp() {
-    use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-    use crate::pairing::bn256::Bn256;
-    use num_cpus;
+    fn calculate_parameters(size: usize, threads: usize, bits: u32) {
+        let mut chunk_len = size / threads;
+        if size / threads != 0 {
+            chunk_len += 1;
+        }
+        let raw_size = (f64::from(chunk_len as u32)).ln();
+        let window_size = (f64::from(chunk_len as u32)).ln().ceil() as u32;
 
-    const SAMPLES: usize = 1 << 22;
-    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        let mut num_windows = bits / window_size;
+        let leftover = bits % window_size;
+        if leftover != 0 {
+            num_windows += 1;
+        }
 
-    let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-    let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+        let uncompensated_window = (f64::from(size as u32)).ln().ceil() as u32;
+        let mut num_uncompensated_windows = bits / uncompensated_window;
+        let uncompensated_leftover = bits % uncompensated_window;
+        if uncompensated_leftover != 0 {
+            num_uncompensated_windows += 1;
+        }
 
-    println!("Done generating test points and scalars");
+        println!("For size {} and {} cores: chunk len {}, {} windows, average window {} bits, leftover {} bits", size, threads, chunk_len, num_windows, window_size, leftover);
+        println!("Raw window size = {}", raw_size);
+        // println!("Uncompensated: {} windows, arevage window {} bits, leftover {} bits", num_uncompensated_windows, uncompensated_window, uncompensated_leftover);
 
-    let pool = Worker::new();
-    let start = std::time::Instant::now();
+        // (f64::from(exponents.len() as u32)).ln().ceil() as u32
+    }
 
-    let _sparse = multiexp(
-        &pool,
-        (Arc::new(g), 0),
-        FullDensity,
-        Arc::new(v)
-    ).wait().unwrap();
-
-    let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("{} ms for sparse for {} samples", duration_ns/1000.0f64, SAMPLES);
-}
-
-#[test]
-fn test_bench_dense_consuming_multiexp() {
-    use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-    use crate::pairing::bn256::Bn256;
-    use num_cpus;
-
-    const SAMPLES: usize = 1 << 20;
-    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
-
-    let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-    let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
-
-    println!("Done generating test points and scalars");
-
-    let pool = Worker::new();
-
-    let g = Arc::new(g);
-    let v = Arc::new(v);
-
-    let start = std::time::Instant::now();
-
-    let _sparse = multiexp(
-        &pool,
-        (g.clone(), 0),
-        FullDensity,
-        v.clone()
-    ).wait().unwrap();
-
-    println!("{:?} for sparse for {} samples", start.elapsed(), SAMPLES);
-
-    let g = Arc::try_unwrap(g).unwrap();
-    let v = Arc::try_unwrap(v).unwrap();
-
-    let start = std::time::Instant::now();
-
-    let _dense = dense_multiexp_consume(
-        &pool,
-        &g,
-        v
-    ).unwrap();
-
-    println!("{:?} for dense for {} samples", start.elapsed(), SAMPLES);
+    #[test]
+    fn test_sizes_for_bn254() {
+        let sizes = vec![1<<23, 1<<24];
+        let cores = vec![8, 12, 16, 24, 32, 48];
+        for size in sizes {
+            for &core in &cores {
+                calculate_parameters(size, core, 254);
+            }
+        }
+    }
 }
