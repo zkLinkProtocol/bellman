@@ -1056,6 +1056,7 @@ pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
         println!("Degrading to normal one");
         return dense_multiexp(pool, bases, exponents);
     }
+    println!("Windows size = {} for {} multiexp size on {} CPUs", window_size, exponents.len(), pool.cpus);
 
     use crossbeam::thread;
     use crossbeam_queue::{ArrayQueue};
