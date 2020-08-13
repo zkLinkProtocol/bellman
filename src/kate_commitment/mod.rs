@@ -1596,7 +1596,7 @@ pub(crate) mod test {
                     a.1.cmp(&b.1)
                 });
 
-                println!("Map reduce multiexp of size {}:", size);
+                println!("Map reduce multiexp of size {} on {} CPUs:", size, cpus);
                 for (window, time_ms) in &subresults[0..3] {
                     println!("Window = {}, time = {} ms", window, time_ms);
                 }
