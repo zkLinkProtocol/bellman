@@ -1450,45 +1450,55 @@ pub(crate) mod test {
 
                 println!("Dense simple multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::dense_unrolled_multiexp_with_prefetch::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense unrolled multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::dense_multiexp_uniform::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::stack_allocated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
                 let subtime = Instant::now();
 
-                let _ = multiexp::dense_unrolled_multiexp_with_prefetch::<<Bn256 as Engine>::G1Affine>(
+                let _ = multiexp::producer_consumer_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
                     &subworker,
                     &g,
                     &scalars_repr
                 ).unwrap();
 
-                println!("Dense unrolled multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                println!("ProdCons stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
-                let subtime = Instant::now();
+                // let subtime = Instant::now();
 
-                let _ = multiexp::dense_multiexp_uniform::<<Bn256 as Engine>::G1Affine>(
-                    &subworker,
-                    &g,
-                    &scalars_repr
-                ).unwrap();
+                // let _ = multiexp::stack_allocated_uncompensated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
 
-                println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
-
-                let subtime = Instant::now();
-
-                let _ = multiexp::stack_allocated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
-                    &subworker,
-                    &g,
-                    &scalars_repr
-                ).unwrap();
-
-                println!("Dense stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
-
-                let subtime = Instant::now();
-
-                let _ = multiexp::stack_allocated_uncompensated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
-                    &subworker,
-                    &g,
-                    &scalars_repr
-                ).unwrap();
-
-                println!("Uncompensated stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                // println!("Uncompensated stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 // let subtime = Instant::now();
 
