@@ -1415,17 +1415,26 @@ pub(crate) mod test {
         buckets
     }
 
-    fn test_multiexps_inner(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
+    fn test_multiexp_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
         use crate::pairing::bn256::{Bn256, Fr};
+        test_multiexps_inner::<Bn256>(max_size, sizes, num_cpus);
+    }
+
+    fn test_multiexp_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
+        use crate::pairing::compact_bn256::{Bn256, Fr};
+        test_multiexps_inner::<Bn256>(max_size, sizes, num_cpus);
+    }
+
+    fn test_multiexps_inner<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
         use std::time::Instant;
         use std::sync::Arc;
 
         let worker = Worker::new();
 
         println!("Generating scalars");
-        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
         println!("Generating points");
-        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
         println!("Done");
 
         for size in sizes {
@@ -1435,14 +1444,14 @@ pub(crate) mod test {
 
                 let subworker = Worker::new_with_cpus(cpus);
 
-                let scalars_repr = super::elements_into_representations::<Bn256>(
+                let scalars_repr = super::elements_into_representations::<E>(
                     &subworker,
                     s
                 ).unwrap();
 
                 let subtime = Instant::now();
 
-                let _ = multiexp::dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                let _ = multiexp::dense_multiexp::<E::G1Affine>(
                     &subworker,
                     &g,
                     &scalars_repr
@@ -1482,7 +1491,7 @@ pub(crate) mod test {
 
                 let subtime = Instant::now();
 
-                let _ = multiexp::map_reduce_multiexp::<<Bn256 as Engine>::G1Affine>(
+                let _ = multiexp::map_reduce_multiexp::<E::G1Affine>(
                     &subworker,
                     &g,
                     &scalars_repr
@@ -1539,7 +1548,7 @@ pub(crate) mod test {
     #[test]
     #[ignore]
     fn test_different_multiexps() {
-        test_multiexps_inner(1<<20, vec![1 << 20], vec![3, 4, 6]);
+        test_multiexp_bn254(1<<20, vec![1 << 20], vec![3, 4, 6]);
     }
 
     #[test]
@@ -1552,7 +1561,8 @@ pub(crate) mod test {
         
         let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
         let cpus = vec![8, 12, 16, 24, 32, 48];
-        test_multiexps_inner(max_size, sizes, cpus);
+        // test_multiexp_bn254(max_size, sizes, cpus);
+        test_multiexp_bn254_compact(max_size, sizes, cpus);
     }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(
