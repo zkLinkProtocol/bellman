@@ -1052,7 +1052,7 @@ pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
         window_size += 1;
     }
 
-    if window_size <= 20 {
+    if window_size > 20 {
         println!("Degrading to normal one");
         return dense_multiexp(pool, bases, exponents);
     }
@@ -1087,7 +1087,7 @@ pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
                     skip += window_size as u32;
                     'inner: loop {
                         if !c.is_full() {
-                            c.push((base, index)).expect("queue can not be full");
+                            c.push((base, index)).unwrap();
                             break 'inner;
                         }
                     }
@@ -1101,7 +1101,7 @@ pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
                 let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << window_size) - 1];
                 loop {
                     if !rx.is_empty() {
-                        let (base, index) = rx.pop().expect("queue can not be empty");
+                        let (base, index) = rx.pop().unwrap();
                         if index != 0 {
                             buckets[index - 1].add_assign_mixed(&base);
                         }
