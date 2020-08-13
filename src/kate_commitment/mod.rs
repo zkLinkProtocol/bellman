@@ -1564,6 +1564,7 @@ pub(crate) mod test {
 
         for size in sizes {
             for &cpus in &num_cpus {
+                let mut subresults = vec![];
                 for &window in &windows {
                     let s = &scalars[..size];
                     let g = points[..size].to_vec();
@@ -1586,7 +1587,18 @@ pub(crate) mod test {
                         window
                     ).unwrap();
 
-                    println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+                    subresults.push((window, subtime.elapsed().as_millis()));
+
+                    // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+                }
+
+                subresults.sort_by(|a, b| {
+                    a.1.cmp(&b.1)
+                });
+
+                println!("Map reduce multiexp of size {}:", size);
+                for (window, time_ms) in &subresults[0..3] {
+                    println!("Window = {}, time = {} ms", window, time_ms);
                 }
             }
         }
