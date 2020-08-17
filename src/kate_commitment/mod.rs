@@ -1632,7 +1632,7 @@ pub(crate) mod test {
 
         assert!(worker.cpus >= 16, "should be tested only on large machines");
         
-        let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
         let cpus = vec![8, 12, 16, 24, 32, 48];
         let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
@@ -1709,6 +1709,53 @@ pub(crate) mod test {
             let scalars = make_random_field_elements::<<Bls12 as ScalarEngine>::Fr>(&worker, size);
             let points = make_random_g1_points::<<Bls12 as Engine>::G1Affine>(&worker, size);
             let buckets = simulate_first_buckets::<Bls12>(&points, &scalars, 13, random_point);
+
+            serialize_affine_points_for_fpga::<Bls12, _>(&points, &mut points_file).unwrap();
+            serialize_scalars_for_fpga::<Bls12, _>(&scalars, &mut scalars_file).unwrap();
+            serialize_projective_points_for_fpga::<Bls12, _>(&buckets, &mut buckets_file).unwrap();
+        }
+    }
+
+    #[test]
+    fn produce_fpga_window_12_test_vectors() {
+        let width = 12;
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::bls12_381::Bls12;
+
+        let worker = crate::worker::Worker::new();
+
+        let random_point = make_random_points_with_unknown_discrete_log::<Bls12>(
+            &b"fpga_dst"[..], 
+            &hex::decode(crate::constants::ETH_BLOCK_10_000_000_HASH).unwrap(), 
+            1
+        )[0];
+
+        let (x, y) = random_point.into_xy_unchecked();
+        println!("Random point in Montgomery form: X = {}, Y = {}", x.into_raw_repr(), y.into_raw_repr());
+
+        let base_path = std::path::Path::new("./");
+    
+        for n in vec![6, 7, 20] {
+            let points_path = base_path.join(&format!("input_points_2^{}.key", n));
+            let scalars_path = base_path.join(&format!("input_scalars_2^{}.key", n));
+            let buckets_path = base_path.join(&format!("width_{}_output_buckets_2^{}.key", width, n));
+
+            println!("Opening {}", points_path.to_string_lossy());
+
+            let file = std::fs::File::create(points_path).unwrap();
+            let mut points_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(scalars_path).unwrap();
+            let mut scalars_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(buckets_path).unwrap();
+            let mut buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let size = 1 << n;
+
+            let scalars = make_random_field_elements::<<Bls12 as ScalarEngine>::Fr>(&worker, size);
+            let points = make_random_g1_points::<<Bls12 as Engine>::G1Affine>(&worker, size);
+            let buckets = simulate_first_buckets::<Bls12>(&points, &scalars, width, random_point);
 
             serialize_affine_points_for_fpga::<Bls12, _>(&points, &mut points_file).unwrap();
             serialize_scalars_for_fpga::<Bls12, _>(&scalars, &mut scalars_file).unwrap();
