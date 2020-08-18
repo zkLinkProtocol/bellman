@@ -1640,10 +1640,13 @@ pub(crate) mod test {
     #[test]
     fn test_optimal_bn254_multiexp() {
         use crate::pairing::bn256::Bn256;
-        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12);
+        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
+        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, false);
+        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
+        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, false);
     }
 
-    fn test_optimal_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
+    fn test_optimal_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize, same_base: bool) {
         use futures::executor::block_on;
         use futures::future::join_all;
 
@@ -1683,7 +1686,12 @@ pub(crate) mod test {
             let window = window as u32;
 
             for idx in 0..num_jobs {
-                let p = Arc::clone(&bases[0]);
+                let id = if same_base {
+                    0
+                } else {
+                    idx
+                };
+                let p = Arc::clone(&bases[id]);
                 let s = Arc::clone(&scalars[idx]);
 
                 let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
@@ -1702,8 +1710,12 @@ pub(crate) mod test {
             let _ = block_on(joiner);
 
             let elapsed = subtime.elapsed();
-
-            println!("{} jobs of size {} with {} CPUs per job taken {:?}", num_jobs, max_size, cpus_per_job, elapsed);
+            if same_base {
+                print!("For same bases: ");
+            } else {
+                print!("For different bases: ");
+            }
+            println!("{} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", num_jobs, max_size, cpus_per_job, window, elapsed);
         }
     }
 
