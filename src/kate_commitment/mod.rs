@@ -1604,6 +1604,74 @@ pub(crate) mod test {
         }
     }
 
+    fn test_future_based_multiexps_over_window_sizes_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use crate::pairing::compact_bn256::Bn256;
+        test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    }
+
+    fn test_future_based_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use crate::pairing::bn256::Bn256;
+        test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    }
+
+    fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use std::time::Instant;
+        use std::sync::Arc;
+        use crate::source::FullDensity;
+
+        let worker = Worker::new();
+
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in sizes {
+            for &cpus in &num_cpus {
+                let mut subresults = vec![];
+
+                let s = &scalars[..size];
+                let g = points[..size].to_vec();
+
+                let scalars_repr = super::elements_into_representations::<E>(
+                    &worker,
+                    s
+                ).unwrap();
+
+                let g = Arc::from(g);
+                let s = Arc::from(scalars_repr);
+
+                for &window in &windows {
+                    let subworker = Worker::new_with_cpus(cpus);
+
+                    let subtime = Instant::now();
+
+                    let window = window as u32;
+
+                    let _ = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+                        &subworker,
+                        (Arc::clone(&g), 0),
+                        FullDensity,
+                        Arc::clone(&s),
+                        window
+                    ).wait();
+
+                    subresults.push((window, subtime.elapsed().as_millis()));
+                }
+
+                subresults.sort_by(|a, b| {
+                    a.1.cmp(&b.1)
+                });
+
+                println!("Future based multiexp of size {} on {} CPUs:", size, cpus);
+                for (window, time_ms) in &subresults[0..3] {
+                    println!("Window = {}, time = {} ms", window, time_ms);
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn test_different_multiexps() {
@@ -1624,12 +1692,10 @@ pub(crate) mod test {
         // test_multiexp_bn254_compact(max_size, sizes, cpus);
     }
 
-
     #[test]
     #[ignore]
     fn test_small_data_different_windows() {
         let max_size = 1 << 20;
-        let worker = Worker::new();
         
         let sizes = vec![1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20];
         let cpus = vec![3, 4, 6];
@@ -1649,6 +1715,20 @@ pub(crate) mod test {
         let cpus = vec![8, 12, 16, 24, 32, 48];
         let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_large_data_different_windows_future_based_multiexps() {
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        
+        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        test_future_based_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
     }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(
