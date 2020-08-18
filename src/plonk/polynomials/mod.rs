@@ -60,7 +60,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     }
 
     pub fn reuse_allocation<PP: PolynomialForm> (&mut self, other: &Polynomial<F, PP>) {
-        assert!(self.coeffs.len() == other.coeffs.len());
+        assert_eq!(self.coeffs.len(), other.coeffs.len());
         self.coeffs.copy_from_slice(&other.coeffs);
     }
 
@@ -144,7 +144,20 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         func(v);
-                        // v.negate();
+                    }
+                });
+            }
+        });
+    }
+
+    pub fn map_indexed<M: Fn(usize, &mut F) -> () + Send + Copy>(&mut self, worker: &Worker, func: M)
+    {
+        worker.scope(self.coeffs.len(), |scope, chunk| {
+            for (chunk_idx, v) in self.coeffs.chunks_mut(chunk).enumerate() {
+                scope.spawn(move |_| {
+                    let base = chunk_idx * chunk;
+                    for (in_chunk_idx, v) in v.iter_mut().enumerate() {
+                        func(base + in_chunk_idx, v);
                     }
                 });
             }
@@ -1295,12 +1308,12 @@ impl<F: PrimeField> Polynomial<F, Values> {
         &self, 
         subset_factor: usize,
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
-        assert!(subset_factor.is_power_of_two());
-        
         if subset_factor == 1 {
             return Ok(self.clone());
         }
 
+        assert!(subset_factor.is_power_of_two());
+        
         let current_size = self.coeffs.len();
         let new_size = current_size / subset_factor;
 
@@ -2053,6 +2066,40 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         Ok(())
     }
+
+    pub fn pop_last(&mut self) -> Result<F, SynthesisError> {
+        let last = self.coeffs.pop().ok_or(SynthesisError::AssignmentMissing)?;
+
+        Ok(last)
+    }
+
+    pub fn clone_shifted_assuming_natural_ordering(&self, by: usize) -> Result<Self, SynthesisError> {
+        let len = self.coeffs.len();
+        assert!(by < len);
+        let mut new_coeffs = vec![F::zero(); self.coeffs.len()];
+        new_coeffs[..(len - by)].copy_from_slice(&self.coeffs[by..]);
+        new_coeffs[(len-by)..].copy_from_slice(&self.coeffs[..by]);
+
+        Self::from_values(new_coeffs)
+    }
+
+    pub fn clone_shifted_assuming_bitreversed(&self, by: usize, worker: &Worker) -> Result<Self, SynthesisError> {
+        let len = self.coeffs.len();
+        assert!(by < len);
+        let mut extended_clone = Vec::with_capacity(len + by);
+        extended_clone.extend_from_slice(&self.coeffs);
+        let mut tmp = Self::from_values(extended_clone)?;
+        tmp.bitreverse_enumeration(&worker);
+
+        let mut coeffs = tmp.into_coeffs();
+        let tmp: Vec<_> = coeffs.drain(..by).collect();
+        coeffs.extend(tmp);
+
+        let mut tmp = Self::from_values(coeffs)?;
+        tmp.bitreverse_enumeration(&worker);
+
+        Ok(tmp)
+    }
 }
 
 impl<F: PartialTwoBitReductionField> Polynomial<F, Coefficients> {
@@ -2206,6 +2253,8 @@ impl<F: PartialTwoBitReductionField> Polynomial<F, Values> {
 }
 
 impl<F: PrimeField> Polynomial<F, Values> {
+    /// taken in natural enumeration
+    /// outputs in natural enumeration
     pub fn ifft_using_bitreversed_ntt<P: CTPrecomputations<F>>(
         self, 
         worker: &Worker, 
@@ -2351,6 +2400,33 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         });
 
         Polynomial::from_values(result)
+    }
+
+    /// taken in natural enumeration
+    /// outputs in natural enumeration
+    pub fn fft_using_bitreversed_ntt<P: CTPrecomputations<F>>(
+        self, 
+        worker: &Worker, 
+        precomputed_omegas: &P,
+        coset_generator: &F
+    ) -> Result<Polynomial<F, Values>, SynthesisError> {
+        if self.coeffs.len() <= worker.cpus * 4 {
+            return Ok(self.coset_fft_for_generator(&worker, *coset_generator));
+        }
+
+        let mut this = self;
+        if coset_generator != &F::one() {
+            this.distribute_powers(&worker, *coset_generator);
+        }
+
+        let mut coeffs: Vec<_> = this.coeffs;
+        let exp = this.exp;
+        cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        let mut this = Polynomial::from_values(coeffs)?;
+        
+        this.bitreverse_enumeration(&worker);
+
+        Ok(this)
     }
 }
 

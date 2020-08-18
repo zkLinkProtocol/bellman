@@ -11,7 +11,7 @@ pub trait CTPrecomputations<F: PrimeField>: Send + Sync {
 }
 
 #[inline(always)]
-pub(crate) fn bitreverse(n: usize, l: usize) -> usize {
+pub fn bitreverse(n: usize, l: usize) -> usize {
     let mut r = n.reverse_bits();
     // now we need to only use the bits that originally were "last" l, so shift
 

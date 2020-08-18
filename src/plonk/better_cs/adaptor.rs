@@ -2180,7 +2180,7 @@ fn transpile_xor_using_new_adaptor() {
     let size = setup.permutation_polynomials[0].size();
 
     let domain = Domain::<Fr>::new_for_size(size as u64).unwrap();
-    let non_residues = make_non_residues::<Fr>(3, &domain);
+    let non_residues = make_non_residues::<Fr>(3);
     println!("Non residues = {:?}", non_residues);
 
     type Transcr = RollingKeccakTranscript<Fr>;
@@ -2196,9 +2196,10 @@ fn transpile_xor_using_new_adaptor() {
         &crs_mons,
         &omegas_bitreversed,
         &omegas_inv_bitreversed,
+        None
     ).unwrap();
 
-    let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key).unwrap();
+    let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key, None).unwrap();
 
     assert!(is_valid);
 
@@ -2292,7 +2293,7 @@ fn transpile_xor_and_prove_with_no_precomputations() {
     let size = setup.permutation_polynomials[0].size();
 
     let domain = Domain::<Fr>::new_for_size(size as u64).unwrap();
-    let non_residues = make_non_residues::<Fr>(3, &domain);
+    let non_residues = make_non_residues::<Fr>(3);
     println!("Non residues = {:?}", non_residues);
 
     type Transcr = RollingKeccakTranscript<Fr>;
@@ -2302,10 +2303,11 @@ fn transpile_xor_and_prove_with_no_precomputations() {
         &hints,
         &setup,
         None,
-        &crs_mons
+        &crs_mons,
+        None
     ).unwrap();
 
-    let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key).unwrap();
+    let is_valid = verify::<Bn256, PlonkCsWidth4WithNextStepParams, Transcr>(&proof, &verification_key, None).unwrap();
 
     assert!(is_valid);
 
