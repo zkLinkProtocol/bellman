@@ -1727,7 +1727,7 @@ pub(crate) mod test {
         
         let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
         let cpus = vec![8, 12, 16, 24, 32, 48];
-        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
         test_future_based_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
     }
 
