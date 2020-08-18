@@ -1034,98 +1034,98 @@ pub fn stack_allocated_dense_multiexp<G: CurveAffine>(
 }
 
 
-/// Perform multi-exponentiation. The caller is responsible for ensuring that
-/// the number of bases is the same as the number of exponents.
-pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
-    pool: &Worker,
-    bases: & [G],
-    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
-) -> Result<<G as CurveAffine>::Projective, SynthesisError>
-{
-    if exponents.len() != bases.len() {
-        return Err(SynthesisError::AssignmentMissing);
-    }
+// /// Perform multi-exponentiation. The caller is responsible for ensuring that
+// /// the number of bases is the same as the number of exponents.
+// pub fn producer_consumer_dense_multiexp<G: CurveAffine>(
+//     pool: &Worker,
+//     bases: & [G],
+//     exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+// ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+// {
+//     if exponents.len() != bases.len() {
+//         return Err(SynthesisError::AssignmentMissing);
+//     }
 
-    let num_workers = pool.cpus - 1;
-    let mut window_size = (<G::Engine as ScalarEngine>::Fr::NUM_BITS as usize) / num_workers;
-    if (<G::Engine as ScalarEngine>::Fr::NUM_BITS as usize) % num_workers != 0 {
-        window_size += 1;
-    }
+//     let num_workers = pool.cpus - 1;
+//     let mut window_size = (<G::Engine as ScalarEngine>::Fr::NUM_BITS as usize) / num_workers;
+//     if (<G::Engine as ScalarEngine>::Fr::NUM_BITS as usize) % num_workers != 0 {
+//         window_size += 1;
+//     }
 
-    if window_size > 20 {
-        println!("Degrading to normal one");
-        return dense_multiexp(pool, bases, exponents);
-    }
-    println!("Windows size = {} for {} multiexp size on {} CPUs", window_size, exponents.len(), pool.cpus);
+//     if window_size > 20 {
+//         println!("Degrading to normal one");
+//         return dense_multiexp(pool, bases, exponents);
+//     }
+//     println!("Windows size = {} for {} multiexp size on {} CPUs", window_size, exponents.len(), pool.cpus);
 
-    use crossbeam::thread;
-    use crossbeam_queue::{ArrayQueue};
-    const CAPACITY: usize = 1 << 16;
-    let mask = (1u64 << window_size) - 1u64;
+//     use crossbeam::thread;
+//     use crossbeam_queue::{ArrayQueue};
+//     const CAPACITY: usize = 1 << 16;
+//     let mask = (1u64 << window_size) - 1u64;
 
-    use std::sync::atomic::{AtomicBool, Ordering};
-    let end = AtomicBool::from(false);
-    let finished = &end;
+//     use std::sync::atomic::{AtomicBool, Ordering};
+//     let end = AtomicBool::from(false);
+//     let finished = &end;
 
-    thread::scope(|s| {
-        let mut txes = Vec::with_capacity(num_workers);
-        let mut rxes = Vec::with_capacity(num_workers);
+//     thread::scope(|s| {
+//         let mut txes = Vec::with_capacity(num_workers);
+//         let mut rxes = Vec::with_capacity(num_workers);
 
-        for _ in 0..num_workers {
-            let queue = ArrayQueue::<(G, usize)>::new(CAPACITY);
-            let queue = Arc::from(queue);
-            txes.push(queue.clone());
-            rxes.push(queue);
-        }
-        // first we spawn thread that produces indexes
-        s.spawn(move |_| {
-            for (exp, base) in (exponents.iter().copied()).zip(bases.iter().copied()) {
-                let mut exp = exp;
-                let mut skip = 0u32;
-                for c in txes.iter() {
-                    exp.shr(skip);
-                    let index = (exp.as_ref()[0] & mask) as usize;
-                    skip += window_size as u32;
-                    'inner: loop {
-                        if !c.is_full() {
-                            c.push((base, index)).unwrap();
-                            break 'inner;
-                        }
-                    }
-                }
-            }
-            finished.store(true, Ordering::Relaxed);
-        });
+//         for _ in 0..num_workers {
+//             let queue = ArrayQueue::<(G, usize)>::new(CAPACITY);
+//             let queue = Arc::from(queue);
+//             txes.push(queue.clone());
+//             rxes.push(queue);
+//         }
+//         // first we spawn thread that produces indexes
+//         s.spawn(move |_| {
+//             for (exp, base) in (exponents.iter().copied()).zip(bases.iter().copied()) {
+//                 let mut exp = exp;
+//                 let mut skip = 0u32;
+//                 for c in txes.iter() {
+//                     exp.shr(skip);
+//                     let index = (exp.as_ref()[0] & mask) as usize;
+//                     skip += window_size as u32;
+//                     'inner: loop {
+//                         if !c.is_full() {
+//                             c.push((base, index)).unwrap();
+//                             break 'inner;
+//                         }
+//                     }
+//                 }
+//             }
+//             finished.store(true, Ordering::Relaxed);
+//         });
 
-        for rx in rxes.into_iter() {
-            s.spawn(move |_| {
-                let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << window_size) - 1];
-                loop {
-                    if !rx.is_empty() {
-                        let (base, index) = rx.pop().unwrap();
-                        if index != 0 {
-                            buckets[index - 1].add_assign_mixed(&base);
-                        }
-                    } else {
-                        let ended = finished.load(Ordering::Relaxed);
-                        if ended {
-                            break;
-                        }
-                    }
-                }
+//         for rx in rxes.into_iter() {
+//             s.spawn(move |_| {
+//                 let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << window_size) - 1];
+//                 loop {
+//                     if !rx.is_empty() {
+//                         let (base, index) = rx.pop().unwrap();
+//                         if index != 0 {
+//                             buckets[index - 1].add_assign_mixed(&base);
+//                         }
+//                     } else {
+//                         let ended = finished.load(Ordering::Relaxed);
+//                         if ended {
+//                             break;
+//                         }
+//                     }
+//                 }
 
-                let mut running_sum = G::Projective::zero();
-                let mut acc = G::Projective::zero();
-                for exp in buckets.into_iter().rev() {
-                    running_sum.add_assign(&exp);
-                    acc.add_assign(&running_sum);
-                }
-            });
-        }
-    }).unwrap();
+//                 let mut running_sum = G::Projective::zero();
+//                 let mut acc = G::Projective::zero();
+//                 for exp in buckets.into_iter().rev() {
+//                     running_sum.add_assign(&exp);
+//                     acc.add_assign(&running_sum);
+//                 }
+//             });
+//         }
+//     }).unwrap();
 
-    Ok(G::Projective::zero())
-}
+//     Ok(G::Projective::zero())
+// }
 
 /// Perform multi-exponentiation. The caller is responsible for ensuring that
 /// the number of bases is the same as the number of exponents.
