@@ -92,7 +92,7 @@ impl Worker {
         let chunk_size = if elements <= self.cpus {
             1
         } else {
-            elements / self.cpus
+            Self::chunk_size_for_num_spawned_threads(elements, self.cpus)
         };
 
         chunk_size

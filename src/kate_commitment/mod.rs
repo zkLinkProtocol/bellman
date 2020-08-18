@@ -1148,15 +1148,27 @@ pub(crate) mod test {
         assert!(new == crs);
     }
 
+    use rand::{Rng};
+
     pub(crate) fn make_random_field_elements<F: PrimeField>(
         worker: &Worker,
         num_elements: usize,
     ) -> Vec<F> {
-        let mut result = vec![F::zero(); num_elements];
-
         use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
         let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        make_random_field_elements_for_rng(worker, num_elements, rng)
+    }
+
+    pub(crate) fn make_random_field_elements_for_rng<F: PrimeField, R: Rng>(
+        worker: &Worker,
+        num_elements: usize,
+        mut rng: R
+    ) -> Vec<F> {
+        let mut result = vec![F::zero(); num_elements];
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
 
         worker.scope(result.len(), |scope, chunk| {
             for r in result.chunks_mut(chunk)
@@ -1179,12 +1191,22 @@ pub(crate) mod test {
         worker: &Worker,
         num_elements: usize,
     ) -> Vec<G> {
-        let mut result = vec![G::zero(); num_elements];
-
         use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
         let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
+        make_random_g1_points_for_rng(worker, num_elements, rng) 
+    }
+
+    fn make_random_g1_points_for_rng<G: CurveAffine, R: Rng>(
+        worker: &Worker,
+        num_elements: usize,
+        mut rng: R
+    ) -> Vec<G> {
+        let mut result = vec![G::zero(); num_elements];
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    
         worker.scope(result.len(), |scope, chunk| {
             for r in result.chunks_mut(chunk)
             {
@@ -1612,6 +1634,77 @@ pub(crate) mod test {
     fn test_future_based_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
         use crate::pairing::bn256::Bn256;
         test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    }
+
+    #[ignore]
+    #[test]
+    fn test_optimal_bn254_multiexp() {
+        use crate::pairing::bn256::Bn256;
+        test_optimal_multiexp::<Bn256>(2, 2<<24, 24, 12);
+    }
+
+    fn test_optimal_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
+        use futures::executor::block_on;
+        use futures::future::join_all;
+
+        use std::time::Instant;
+        use std::sync::Arc;
+        use crate::source::FullDensity;
+
+        let mut bases = vec![];
+        let mut scalars = vec![];
+        let worker = Worker::new();
+
+        assert!(max_parallel_jobs >= 1);
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        
+        for _ in 0..max_parallel_jobs {
+            let seed: [u32; 4] = rng.gen();
+            let mut subrng = ChaChaRng::from_seed(&seed);
+
+            let sc = make_random_field_elements_for_rng::<E::Fr, _>(&worker, max_size, &mut subrng);
+            let p = make_random_g1_points_for_rng::<E::G1Affine, _>(&worker, max_size, &mut subrng);
+            let s = super::elements_into_representations::<E>(
+                &worker,
+                &sc
+            ).unwrap();
+
+            bases.push(Arc::from(p));
+            scalars.push(Arc::from(s));
+        }
+
+        for num_jobs in 1..max_parallel_jobs {
+            let mut jobs = vec![];
+            let subworker = Worker::new_with_cpus(cpus_per_job * num_jobs);
+            let subtime = Instant::now();
+            let window = window as u32;
+
+            for idx in 0..num_jobs {
+                let p = Arc::clone(&bases[idx]);
+                let s = Arc::clone(&scalars[idx]);
+
+                let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+                    &subworker,
+                    (p, 0),
+                    FullDensity,
+                    s,
+                    window
+                );
+
+                jobs.push(job);
+            }
+
+            let joiner = join_all(jobs);
+
+            let _ = block_on(joiner);
+
+            let elapsed = subtime.elapsed();
+
+            println!("{} jobs of size {} with {} CPUs per job taken {:?}", num_jobs, max_size, cpus_per_job, elapsed);
+        }
     }
 
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
