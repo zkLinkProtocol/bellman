@@ -1640,7 +1640,7 @@ pub(crate) mod test {
     #[test]
     fn test_optimal_bn254_multiexp() {
         use crate::pairing::bn256::Bn256;
-        test_optimal_multiexp::<Bn256>(2, 2<<24, 24, 12);
+        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12);
     }
 
     fn test_optimal_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
@@ -1683,7 +1683,7 @@ pub(crate) mod test {
             let window = window as u32;
 
             for idx in 0..num_jobs {
-                let p = Arc::clone(&bases[idx]);
+                let p = Arc::clone(&bases[0]);
                 let s = Arc::clone(&scalars[idx]);
 
                 let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
