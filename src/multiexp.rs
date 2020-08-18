@@ -1405,16 +1405,23 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     }
 
     let chunk_len = pool.get_chunk_size(exponents.len());
+    let num_threads = pool.cpus;
+    let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_threads];
 
     pool.scope(0, |scope, _| {
-        for (b, e) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)) {
+        for ((b, e), s) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)).zip(subresults.iter_mut()) {
             scope.spawn(move |_| {
-                serial_multiexp_inner(b, e, c).unwrap();
+                *s = serial_multiexp_inner(b, e, c).unwrap();
             });
         }
     });
 
-    Ok(<G as CurveAffine>::Projective::zero())
+    let mut result = <G as CurveAffine>::Projective::zero();
+    for s in subresults.into_iter() {
+        result.add_assign(&s);
+    }
+
+    Ok(result)
 }
 
 fn map_reduce_multiexp_over_fixed_window_254<G: CurveAffine>(
