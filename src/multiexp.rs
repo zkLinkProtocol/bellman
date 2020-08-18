@@ -2539,51 +2539,20 @@ mod test {
             Arc::new(v)
         ).wait().unwrap();
 
-#[test]
-fn test_bench_sparse_multiexp() {
-    use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-    use num_cpus;
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("{} ms for sparse for {} samples on {:?}", duration_ns/1000.0f64, SAMPLES, Eng{});
+    }
 
-    // type Eng = crate::pairing::bn256::Bn256;
-    type Eng = crate::pairing::bls12_381::Bls12;
+    #[test]
+    fn test_bench_dense_consuming_multiexp() {
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
 
-    const SAMPLES: usize = 1 << 20;
-    let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        // type Eng = crate::pairing::bn256::Bn256;
+        type Eng = crate::pairing::bls12_381::Bls12;
+        use num_cpus;
 
-    println!("Generating scalars");
-    let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-
-    println!("Generating points");
-    let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
-
-        let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-        let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
-
-        println!("Done generating test points and scalars");
-
-        let pool = Worker::new();
-
-    let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("{} ms for sparse for {} samples on {:?}", duration_ns/1000.0f64, SAMPLES, Eng{});
-}
-
-#[test]
-fn test_bench_dense_consuming_multiexp() {
-    use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-
-    // type Eng = crate::pairing::bn256::Bn256;
-    type Eng = crate::pairing::bls12_381::Bls12;
-    use num_cpus;
-
-        let _sparse = multiexp(
-            &pool,
-            (g.clone(), 0),
-            FullDensity,
-            v.clone()
-        ).wait().unwrap();
-
-    let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-    let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+        let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+        let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
         let g = Arc::try_unwrap(g).unwrap();
         let v = Arc::try_unwrap(v).unwrap();

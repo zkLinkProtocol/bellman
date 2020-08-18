@@ -143,13 +143,11 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
 
     use std::time::Instant;
 
-    let adapted_curcuit = AdaptorCircuit::<E, PlonkCsWidth4WithNextStepParams, _>::new(circuit, &hints);
-
     let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
 
     let subtime = Instant::now();
 
-    adapted_curcuit.synthesize(&mut assembly)?;
+    circuit.synthesize(&mut assembly)?;
     assembly.finalize();
 
     println!("Synthesis taken {:?}", subtime.elapsed());
