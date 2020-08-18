@@ -39,7 +39,7 @@ impl Worker {
     }
 
     pub fn new() -> Worker {
-        Self::new_with_cpus(num_cpus::get())
+        Self::new_with_cpus(num_cpus::get_physical())
     }
 
     pub fn log_num_cpus(&self) -> u32 {

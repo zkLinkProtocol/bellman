@@ -2603,7 +2603,6 @@ mod test {
         println!("Tested on {} samples on {} CPUs with {} ns per multiplication", SAMPLES, cpus, time_per_sample);
     }
 
-
     #[test]
     fn test_dense_multiexp_vs_new_multiexp() {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
@@ -2628,6 +2627,20 @@ mod test {
 
         let duration_ns = start.elapsed().as_nanos() as f64;
         println!("{} ns for dense for {} samples", duration_ns, SAMPLES);
+
+        let start = std::time::Instant::now();
+
+        let map_reduce = map_reduce_multiexp_over_fixed_window(
+            &pool,
+            &g,
+            &v,
+            11
+        ).unwrap();
+
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("{} ns for map reduce for {} samples", duration_ns, SAMPLES);
+
+        assert_eq!(dense, map_reduce);
 
         use self::futures::executor::block_on;
 
