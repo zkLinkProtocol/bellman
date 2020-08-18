@@ -1624,6 +1624,19 @@ pub(crate) mod test {
         // test_multiexp_bn254_compact(max_size, sizes, cpus);
     }
 
+
+    #[test]
+    #[ignore]
+    fn test_small_data_different_windows() {
+        let max_size = 1 << 20;
+        let worker = Worker::new();
+        
+        let sizes = vec![1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20];
+        let cpus = vec![3, 4, 6];
+        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    }
+
     #[test]
     #[ignore]
     fn test_large_data_different_windows() {

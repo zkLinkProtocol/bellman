@@ -2,7 +2,7 @@ cfg_if! {
     if #[cfg(
         all(
             any(target_arch = "x86", target_arch = "x86_64"),
-            target_feature = "sse"
+            any(target_feature = "sse", target_feature = "sse4.1", target_feature = "avx", target_feature = "avx2")
         )
     )] {
         #[inline(always)]
