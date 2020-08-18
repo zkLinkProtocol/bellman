@@ -1676,7 +1676,7 @@ pub(crate) mod test {
             scalars.push(Arc::from(s));
         }
 
-        for num_jobs in 1..max_parallel_jobs {
+        for num_jobs in 1..=max_parallel_jobs {
             let mut jobs = vec![];
             let subworker = Worker::new_with_cpus(cpus_per_job * num_jobs);
             let subtime = Instant::now();
