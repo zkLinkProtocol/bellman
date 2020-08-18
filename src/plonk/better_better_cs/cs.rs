@@ -5109,6 +5109,7 @@ mod test {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;
         use crate::plonk::better_better_cs::verifier::*;
+        use crate::plonk::better_better_cs::setup::VerificationKey;
 
         let mut assembly = SetupAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
 

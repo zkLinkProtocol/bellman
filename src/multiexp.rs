@@ -1390,7 +1390,6 @@ pub fn map_reduce_multiexp<G: CurveAffine>(
     Ok(<G as CurveAffine>::Projective::zero())
 }
 
-
 pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     pool: &Worker,
     bases: & [G],
@@ -1398,6 +1397,9 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     c: u32
 ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
 {
+    if <G::Engine as ScalarEngine>::Fr::NUM_BITS == 254 {
+        return map_reduce_multiexp_over_fixed_window_254(pool, bases, exponents, c);
+    }
     if exponents.len() != bases.len() {
         return Err(SynthesisError::AssignmentMissing);
     }
@@ -1413,6 +1415,53 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     });
 
     Ok(<G as CurveAffine>::Projective::zero())
+}
+
+fn map_reduce_multiexp_over_fixed_window_254<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    if exponents.len() != bases.len() {
+        return Err(SynthesisError::AssignmentMissing);
+    }
+
+    let chunk_len = pool.get_chunk_size(exponents.len());
+    let num_threads = pool.cpus;
+    let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_threads];
+
+    pool.scope(0, |scope, _| {
+        for ((b, e), s) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)).zip(subresults.iter_mut()) {
+            scope.spawn(move |_| {
+                let subres = match c {
+                    7 => map_reduce_multiexp_254_inner_7(b, e),
+                    8 => map_reduce_multiexp_254_inner_8(b, e),
+                    9 => map_reduce_multiexp_254_inner_9(b, e),
+                    10 => map_reduce_multiexp_254_inner_10(b, e),
+                    11 => map_reduce_multiexp_254_inner_11(b, e),
+                    12 => map_reduce_multiexp_254_inner_12(b, e),
+                    13 => map_reduce_multiexp_254_inner_13(b, e),
+                    14 => map_reduce_multiexp_254_inner_14(b, e),
+                    15 => map_reduce_multiexp_254_inner_15(b, e),
+                    16 => map_reduce_multiexp_254_inner_16(b, e),
+                    17 => map_reduce_multiexp_254_inner_17(b, e),
+                    18 => map_reduce_multiexp_254_inner_18(b, e),
+                    _ => unimplemented!("window size is not supported"),
+                };
+
+                *s = subres.expect("must calcualate contribution from serial multiexp");
+            });
+        }
+    });
+
+    let mut result = <G as CurveAffine>::Projective::zero();
+    for s in subresults.into_iter() {
+        result.add_assign(&s);
+    }
+
+    Ok(result)
 }
 
 fn serial_multiexp_inner<G: CurveAffine>(
@@ -1467,7 +1516,6 @@ fn serial_multiexp_inner<G: CurveAffine>(
     Ok(result)
 }
 
-#[macro_export]
 macro_rules! construct_stack_multiexp {
 	( $visibility:vis fn $name:ident ( $n_words:tt ); ) => {
         $visibility fn $name<G: CurveAffine>(
@@ -1678,6 +1726,85 @@ construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_15(15););
 construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_16(16););
 construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_17(17););
 construct_stack_multiexp!(pub fn stack_allocated_dense_multiexp_18(18););
+
+macro_rules! construct_map_reduce_multiexp_inner {
+	( $visibility:vis fn $name:ident ( $n_window: tt, $n_bits: tt); ) => {
+        $visibility fn $name<G: CurveAffine>(
+            bases: & [G],
+            exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr]
+        ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+        {
+            const WINDOW: u32 = $n_window;
+            const NUM_BUCKETS: usize = (1 << WINDOW) - 1;
+            const MASK: u64 = (1u64 << WINDOW) - 1u64;
+            const NUM_RUNS: usize = ($n_bits / $n_window) + (($n_bits % $n_window > 0) as u32) as usize;
+
+            let mut num_runs_runtime = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / WINDOW) as usize;
+            if <G::Engine as ScalarEngine>::Fr::NUM_BITS % WINDOW != 0 {
+                num_runs_runtime += 1;
+            }
+
+            assert_eq!(NUM_RUNS, num_runs_runtime, "invalid number of windows in runtime");
+
+            let mut result = <G as CurveAffine>::Projective::zero();
+
+            let mut buckets = vec![vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS]; NUM_RUNS as usize];
+            let mut bucket_indexes = [0usize; NUM_RUNS];
+            for (&base, &exp) in bases.into_iter().zip(exponents.into_iter()) {
+                // first we form bucket indexes
+                let mut exp = exp;
+                for (window_index, bucket_index) in bucket_indexes.iter_mut().enumerate() {
+                    let index = (exp.as_ref()[0] & MASK) as usize;
+                    exp.shr(WINDOW);
+                    if index != 0 {
+                        crate::prefetch::prefetch_l1_pointer(&buckets[window_index][index - 1]);
+                    }
+                    *bucket_index = index;
+                }
+
+                for (window_index, &index) in bucket_indexes.iter().enumerate() {
+                    if index != 0 {
+                        buckets[window_index][index - 1].add_assign_mixed(&base);
+                    }
+                }
+            }
+
+            let mut skip_bits = 0;
+            for b in buckets.into_iter() {
+                // buckets are filled with the corresponding accumulated value, now sum
+                let mut acc = G::Projective::zero();
+                let mut running_sum = G::Projective::zero();
+                for exp in b.into_iter().rev() {
+                    running_sum.add_assign(&exp);
+                    acc.add_assign(&running_sum);
+                }
+
+                for _ in 0..skip_bits {
+                    acc.double();
+                }
+
+                result.add_assign(&acc);
+                        
+                skip_bits += WINDOW;
+            }
+
+            Ok(result)
+        }
+    }
+}
+
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_7(7, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_8(8, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_9(9, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_10(10, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_11(11, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_12(12, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_13(13, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_14(14, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_15(15, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_16(16, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_17(17, 254););
+construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_18(18, 254););
 
 #[allow(dead_code)]
 pub fn dense_unrolled_multiexp_with_prefetch<G: CurveAffine>(
@@ -2518,14 +2645,15 @@ mod test {
     #[test]
     fn test_bench_sparse_multiexp() {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-        use crate::pairing::bn256::Bn256;
         use num_cpus;
+
+        type Eng = crate::pairing::bls12_381::Bls12;
 
         const SAMPLES: usize = 1 << 22;
         let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
-        let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
-        let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+        let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+        let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
         println!("Done generating test points and scalars");
 
@@ -2551,12 +2679,13 @@ mod test {
         type Eng = crate::pairing::bls12_381::Bls12;
         use num_cpus;
 
+        const SAMPLES: usize = 1 << 22;
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
         let v = (0..SAMPLES).map(|_| <Eng as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
         let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
-        let g = Arc::try_unwrap(g).unwrap();
-        let v = Arc::try_unwrap(v).unwrap();
-
+        let pool = Worker::new();
         let start = std::time::Instant::now();
 
         let _dense = dense_multiexp_consume(
