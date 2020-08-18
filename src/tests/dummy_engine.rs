@@ -490,7 +490,7 @@ impl CurveAffine for Fr {
         (&self, &self)
     }
 
-    fn into_xy_unchecked(&self) -> (Self::Base, Self::Base) {
+    fn into_xy_unchecked(self) -> (Self::Base, Self::Base) {
         (<Fr as Field>::zero(), <Fr as Field>::zero())
     }
 

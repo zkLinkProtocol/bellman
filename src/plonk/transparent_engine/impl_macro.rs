@@ -190,7 +190,7 @@ macro_rules! transparent_engine_impl {
                 (&self, &self)
             }
 
-            fn into_xy_unchecked(&self) -> (Self::Base, Self::Base) {
+            fn into_xy_unchecked(self) -> (Self::Base, Self::Base) {
                 (<$fr as crate::ff::Field>::zero(), <$fr as crate::ff::Field>::zero())
             }
 

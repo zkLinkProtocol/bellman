@@ -325,17 +325,32 @@ pub fn commit_using_monomials<E: Engine>(
     crs: &Crs<E, CrsForMonomialForm>,
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
-    // println!("Committing coefficients");
+    println!("Committing coefficients");
+
+    use std::time::Instant;
+
+    let now = Instant::now();
+
+    let subtime = Instant::now();
+
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()
     )?;
+
+    println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+    let subtime = Instant::now();
 
     let res = multiexp::dense_multiexp::<E::G1Affine>(
         &worker,
         &crs.g1_bases[..scalars_repr.len()],
         &scalars_repr
     )?;
+
+    println!("Multiexp taken {:?}", subtime.elapsed());
+
+    println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }
@@ -347,16 +362,31 @@ pub fn commit_using_values<E: Engine>(
 ) -> Result<E::G1Affine, SynthesisError> {
     println!("Committing values over domain");
     assert_eq!(poly.size(), crs.g1_bases.len());
+
+    use std::time::Instant;
+
+    let now = Instant::now();
+
+    let subtime = Instant::now();
+
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()
     )?;
+
+    println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+    let subtime = Instant::now();
 
     let res = multiexp::dense_multiexp::<E::G1Affine>(
         &worker,
         &crs.g1_bases,
         &scalars_repr
     )?;
+
+    println!("Multiexp taken {:?}", subtime.elapsed());
+
+    println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }
@@ -892,7 +922,7 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use crate::pairing::bn256::{Bn256, Fr};
     use crate::worker::Worker;
@@ -1116,6 +1146,621 @@ mod test {
         let new = Crs::<Bn256, CrsForMonomialForm>::read(&buffer[..]).expect("must deserialize CRS");
 
         assert!(new == crs);
+    }
+
+    pub(crate) fn make_random_field_elements<F: PrimeField>(
+        worker: &Worker,
+        num_elements: usize,
+    ) -> Vec<F> {
+        let mut result = vec![F::zero(); num_elements];
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        worker.scope(result.len(), |scope, chunk| {
+            for r in result.chunks_mut(chunk)
+            {
+                let seed: [u32; 4] = rng.gen();
+                let subrng = ChaChaRng::from_seed(&seed);
+                scope.spawn(move |_| {
+                    let mut subrng = subrng;
+                    for r in r.iter_mut() {
+                        *r = subrng.gen();
+                    }
+                });
+            }
+        });
+
+        result 
+    }
+
+    fn make_random_g1_points<G: CurveAffine>(
+        worker: &Worker,
+        num_elements: usize,
+    ) -> Vec<G> {
+        let mut result = vec![G::zero(); num_elements];
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        worker.scope(result.len(), |scope, chunk| {
+            for r in result.chunks_mut(chunk)
+            {
+                let seed: [u32; 4] = rng.gen();
+                let subrng = ChaChaRng::from_seed(&seed);
+                scope.spawn(move |_| {
+                    let mut subrng = subrng;
+                    for r in r.iter_mut() {
+                        let p: G::Projective = subrng.gen();
+                        *r = p.into_affine();
+                    }
+                });
+            }
+        });
+
+        result 
+    }
+
+    #[test]
+    #[ignore]
+    fn test_multiexp_performance_on_large_data() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
+                let s = &scalars[..size];
+                let g = &points[..size];
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let now = Instant::now();
+
+                // copy-paste, but ok
+
+                let subtime = Instant::now();
+
+                let scalars_repr = super::elements_into_representations::<Bn256>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Multiexp taken {:?}", subtime.elapsed());
+
+                println!("Total time taken for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_future_based_multiexp_performance_on_large_data() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            for cpus in vec![16, 32, 48, 64] {
+            // for cpus in vec![16, 24, 32] {
+                let s = &scalars[..size];
+                let g = points[..size].to_vec();
+                let g = Arc::from(g);
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let now = Instant::now();
+
+                // copy-paste, but ok
+
+                let subtime = Instant::now();
+
+                let scalars_repr = super::elements_into_representations::<Bn256>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                let scalars_repr = Arc::from(scalars_repr);
+
+                println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                    &subworker,
+                    Arc::clone(&g),
+                    Arc::clone(&scalars_repr)
+                ).wait();
+
+                println!("Future based multiexp taken {:?}", subtime.elapsed());
+
+                println!("Total time taken for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_long_naive_division() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use std::time::Instant;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<Fr>(&worker, max_size);
+        let divide_at = Fr::from_str("1234567890").unwrap();
+        println!("Done");
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            let s = &scalars[..size];
+            let now = Instant::now();
+
+            let _ = divide_single::<Bn256>(s, divide_at);
+
+            println!("Total time taken for {} points division = {:?}", size, now.elapsed());
+        }
+    }
+
+    fn serialize_affine_points_for_fpga<E: Engine, W: std::io::Write>(
+        points: &[E::G1Affine],
+        mut dst: W
+    ) -> Result<(), std::io::Error> {
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        println!("First point = {}", points[0]);
+        for p in points.iter() {
+            let (x, y) = p.into_xy_unchecked();
+            let repr = x.into_raw_repr();
+            repr.write_le(&mut dst)?;
+
+            let repr = y.into_raw_repr();
+            repr.write_le(&mut dst)?;
+        }
+        
+        Ok(())
+    }
+
+    fn serialize_scalars_for_fpga<E: Engine, W: std::io::Write>(
+        scalars: &[E::Fr],
+        mut dst: W
+    ) -> Result<(), std::io::Error> {
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        println!("First scalar = {}", scalars[0]);
+        for s in scalars.iter() {
+            let repr = s.into_repr();
+            repr.write_le(&mut dst)?;
+        }
+        
+        Ok(())
+    }
+
+    fn serialize_projective_points_for_fpga<E: Engine, W: std::io::Write>(
+        points: &[E::G1],
+        mut dst: W
+    ) -> Result<(), std::io::Error> {
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        let (x, y, z) = points[1].into_xyz_unchecked();
+
+        println!("Second bucket (for scalar = 1): X = {}, Y = {}, Z = {}", x, y, z);
+        for p in points.iter() {
+            let (x, y, z) = p.into_xyz_unchecked();
+            let repr = x.into_raw_repr();
+            repr.write_le(&mut dst)?;
+
+            let repr = y.into_raw_repr();
+            repr.write_le(&mut dst)?;
+
+            let repr = z.into_raw_repr();
+            repr.write_le(&mut dst)?;
+        }
+        
+        Ok(())
+    }
+
+    fn simulate_first_buckets<E: Engine>(points: &[E::G1Affine], scalars: &[E::Fr], c: usize, random_point: E::G1Affine) -> Vec<E::G1> {
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::ff::PrimeFieldRepr;
+
+        let skip = 0;
+        let mask = (1u64 << c) - 1u64;
+        let p = random_point.into_projective();
+        let mut buckets = vec![p; 1 << c];
+
+        for (exp, point) in scalars.iter().zip(points.iter()) {
+            let this_exp = exp.into_repr();
+
+            let mut this_exp = this_exp;
+            this_exp.shr(skip);
+            let this_exp = this_exp.as_ref()[0] & mask;
+            buckets[this_exp as usize].add_assign_mixed(point);
+        }
+
+        buckets
+    }
+
+    fn test_multiexp_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
+        use crate::pairing::bn256::Bn256;
+        test_multiexps_inner::<Bn256>(max_size, sizes, num_cpus);
+    }
+
+    fn test_multiexp_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
+        use crate::pairing::compact_bn256::Bn256;
+        test_multiexps_inner::<Bn256>(max_size, sizes, num_cpus);
+    }
+
+    fn test_multiexps_inner<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let worker = Worker::new();
+
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in sizes {
+            for &cpus in &num_cpus {
+                let s = &scalars[..size];
+                let g = points[..size].to_vec();
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let scalars_repr = super::elements_into_representations::<E>(
+                    &subworker,
+                    s
+                ).unwrap();
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::dense_multiexp::<E::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Dense simple multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::dense_unrolled_multiexp_with_prefetch::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense unrolled multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::dense_multiexp_uniform::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::stack_allocated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                let subtime = Instant::now();
+
+                let _ = multiexp::map_reduce_multiexp::<E::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
+
+                println!("Map reduce multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::producer_consumer_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("ProdCons stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::stack_allocated_uncompensated_dense_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Uncompensated stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::dense_multiexp_with_manual_unrolling::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
+
+                // println!("Dense manually unrolled multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+
+                // let g = Arc::from(g);
+                // let scalars_repr = Arc::from(scalars_repr);
+
+                // let subtime = Instant::now();
+
+                // let _ = multiexp::future_based_multiexp::<<Bn256 as Engine>::G1Affine>(
+                //     &subworker,
+                //     Arc::clone(&g),
+                //     Arc::clone(&scalars_repr)
+                // ).wait();
+
+                // println!("Future based multiexp taken {:?} on {} cpus", subtime.elapsed(), cpus);
+            }
+        }
+    }
+
+    fn test_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use crate::pairing::bn256::Bn256;
+        test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    }
+
+    fn test_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let worker = Worker::new();
+
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in sizes {
+            for &cpus in &num_cpus {
+                let mut subresults = vec![];
+                for &window in &windows {
+                    let s = &scalars[..size];
+                    let g = points[..size].to_vec();
+
+                    let subworker = Worker::new_with_cpus(cpus);
+
+                    let scalars_repr = super::elements_into_representations::<E>(
+                        &subworker,
+                        s
+                    ).unwrap();
+
+                    let subtime = Instant::now();
+
+                    let window = window as u32;
+
+                    let _ = multiexp::map_reduce_multiexp_over_fixed_window::<E::G1Affine>(
+                        &subworker,
+                        &g,
+                        &scalars_repr,
+                        window
+                    ).unwrap();
+
+                    subresults.push((window, subtime.elapsed().as_millis()));
+
+                    // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+                }
+
+                subresults.sort_by(|a, b| {
+                    a.1.cmp(&b.1)
+                });
+
+                println!("Map reduce multiexp of size {} on {} CPUs:", size, cpus);
+                for (window, time_ms) in &subresults[0..3] {
+                    println!("Window = {}, time = {} ms", window, time_ms);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_different_multiexps() {
+        test_multiexp_bn254(1<<20, vec![1 << 20], vec![3, 4, 6]);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_large_data_different_multiexps() {
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        
+        let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        test_multiexp_bn254(max_size, sizes, cpus);
+        // test_multiexp_bn254_compact(max_size, sizes, cpus);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_large_data_different_windows() {
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        
+        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    }
+
+    fn make_random_points_with_unknown_discrete_log<E: Engine>(
+        dst: &[u8],
+        seed: &[u8],
+        num_points: usize
+    ) -> Vec<E::G1Affine> {
+        let mut result = vec![];
+
+        use rand::{Rng, SeedableRng};
+        use rand::chacha::ChaChaRng;
+        // Create an RNG based on the outcome of the random beacon
+        let mut rng = {
+            // if we use Blake hasher
+            let input: Vec<u8> = dst.iter().chain(seed.iter()).cloned().collect();
+            let h = blake2s_simd::blake2s(&input);
+            assert!(h.as_bytes().len() == 32);
+            let mut seed = [0u32; 8];
+            for (i, chunk) in h.as_bytes().chunks_exact(8).enumerate() {
+                seed[i] = (&chunk[..]).read_u32::<BigEndian>().expect("digest is large enough for this to work");
+            }
+
+            ChaChaRng::from_seed(&seed)
+        };
+
+        for _ in 0..num_points {
+            let point: E::G1 = rng.gen();
+
+            result.push(point.into_affine());
+        }
+
+        result
+    }
+
+    #[test]
+    fn produce_fpga_test_vectors() {
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::bls12_381::Bls12;
+
+        let worker =crate::worker::Worker::new();
+
+        let random_point = make_random_points_with_unknown_discrete_log::<Bls12>(
+            &b"fpga_dst"[..], 
+            &hex::decode(crate::constants::ETH_BLOCK_10_000_000_HASH).unwrap(), 
+            1
+        )[0];
+
+        let (x, y) = random_point.into_xy_unchecked();
+        println!("Random point in Montgomery form: X = {}, Y = {}", x.into_raw_repr(), y.into_raw_repr());
+
+        let base_path = std::path::Path::new("./");
+    
+        for n in vec![6, 7, 20] {
+            let points_path = base_path.join(&format!("input_points_2^{}.key", n));
+            let scalars_path = base_path.join(&format!("input_scalars_2^{}.key", n));
+            let buckets_path = base_path.join(&format!("output_buckets_2^{}.key", n));
+
+            println!("Opening {}", points_path.to_string_lossy());
+
+            let file = std::fs::File::create(points_path).unwrap();
+            let mut points_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(scalars_path).unwrap();
+            let mut scalars_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(buckets_path).unwrap();
+            let mut buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let size = 1 << n;
+
+            let scalars = make_random_field_elements::<<Bls12 as ScalarEngine>::Fr>(&worker, size);
+            let points = make_random_g1_points::<<Bls12 as Engine>::G1Affine>(&worker, size);
+            let buckets = simulate_first_buckets::<Bls12>(&points, &scalars, 13, random_point);
+
+            serialize_affine_points_for_fpga::<Bls12, _>(&points, &mut points_file).unwrap();
+            serialize_scalars_for_fpga::<Bls12, _>(&scalars, &mut scalars_file).unwrap();
+            serialize_projective_points_for_fpga::<Bls12, _>(&buckets, &mut buckets_file).unwrap();
+        }
+    }
+
+    #[test]
+    fn produce_fpga_window_12_test_vectors() {
+        let width = 12;
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::bls12_381::Bls12;
+
+        let worker = crate::worker::Worker::new();
+
+        let random_point = make_random_points_with_unknown_discrete_log::<Bls12>(
+            &b"fpga_dst"[..], 
+            &hex::decode(crate::constants::ETH_BLOCK_10_000_000_HASH).unwrap(), 
+            1
+        )[0];
+
+        let (x, y) = random_point.into_xy_unchecked();
+        println!("Random point in Montgomery form: X = {}, Y = {}", x.into_raw_repr(), y.into_raw_repr());
+
+        let base_path = std::path::Path::new("./");
+    
+        for n in vec![6, 7, 20] {
+            let points_path = base_path.join(&format!("input_points_2^{}.key", n));
+            let scalars_path = base_path.join(&format!("input_scalars_2^{}.key", n));
+            let buckets_path = base_path.join(&format!("width_{}_output_buckets_2^{}.key", width, n));
+
+            println!("Opening {}", points_path.to_string_lossy());
+
+            let file = std::fs::File::create(points_path).unwrap();
+            let mut points_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(scalars_path).unwrap();
+            let mut scalars_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(buckets_path).unwrap();
+            let mut buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let size = 1 << n;
+
+            let scalars = make_random_field_elements::<<Bls12 as ScalarEngine>::Fr>(&worker, size);
+            let points = make_random_g1_points::<<Bls12 as Engine>::G1Affine>(&worker, size);
+            let buckets = simulate_first_buckets::<Bls12>(&points, &scalars, width, random_point);
+
+            serialize_affine_points_for_fpga::<Bls12, _>(&points, &mut points_file).unwrap();
+            serialize_scalars_for_fpga::<Bls12, _>(&scalars, &mut scalars_file).unwrap();
+            serialize_projective_points_for_fpga::<Bls12, _>(&buckets, &mut buckets_file).unwrap();
+        }
     }
 }
 

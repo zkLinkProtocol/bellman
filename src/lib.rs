@@ -41,6 +41,7 @@ pub mod marlin;
 #[cfg(any(feature = "marlin", feature = "plonk"))]
 pub mod kate_commitment;
 
+pub mod constants;
 mod group;
 mod source;
 mod multiexp;

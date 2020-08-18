@@ -141,14 +141,19 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
     use crate::plonk::better_cs::utils::{commit_point_as_xy};
     use crate::plonk::better_cs::prover::prove_steps::{FirstVerifierMessage, SecondVerifierMessage, ThirdVerifierMessage, FourthVerifierMessage};
 
+    use std::time::Instant;
+
     let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
+
+    let subtime = Instant::now();
 
     circuit.synthesize(&mut assembly)?;
     assembly.finalize();
 
+    println!("Synthesis taken {:?}", subtime.elapsed());
+
     let worker = Worker::new();
 
-    use std::time::Instant;
     let now = Instant::now();
 
     let mut transcript = if let Some(p) = transcript_init_params {
@@ -162,11 +167,15 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
 
     let mut proof = Proof::<E, PlonkCsWidth4WithNextStepParams>::empty();
 
+    let subtime = Instant::now();
+
     let (first_state, first_message) = assembly.first_step_with_monomial_form_key(
         &worker,
         csr_mon_basis,
         &mut precomputed_omegas_inv
     )?;
+
+    println!("First step (witness commitment) taken {:?}", subtime.elapsed());
 
     proof.n = first_message.n;
     proof.num_inputs = first_message.num_inputs;
@@ -191,6 +200,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         _marker: std::marker::PhantomData
     };
 
+    let subtime = Instant::now();
+
     let (second_state, second_message) = self::better_cs::prover::ProverAssembly::second_step_from_first_step(
         first_state,
         first_verifier_message,
@@ -200,6 +211,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         &mut precomputed_omegas_inv,
         &worker
     )?;
+
+    println!("Second step (grand product commitment) taken {:?}", subtime.elapsed());
 
     proof.grand_product_commitment = second_message.z_commitment;
     commit_point_as_xy::<E, _>(&mut transcript, &proof.grand_product_commitment);
@@ -214,6 +227,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         _marker: std::marker::PhantomData
     };
 
+    let subtime = Instant::now();
+
     let (third_state, third_message) = self::better_cs::prover::ProverAssembly::third_step_from_second_step(
         second_state,
         second_verifier_message,
@@ -224,6 +239,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         &mut precomputed_omegas_inv,
         &worker
     )?;
+
+    println!("Third step (quotient calculation and commitment) taken {:?}", subtime.elapsed());
 
     proof.quotient_poly_commitments = third_message.quotient_poly_commitments;
 
@@ -242,12 +259,16 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         _marker: std::marker::PhantomData
     };
 
+    let subtime = Instant::now();
+
     let (fourth_state, fourth_message) = self::better_cs::prover::ProverAssembly::fourth_step_from_third_step(
         third_state,
         third_verifier_message,
         &setup,
         &worker
     )?;
+
+    println!("Fourth step (openings at z) taken {:?}", subtime.elapsed());
 
     proof.wire_values_at_z = fourth_message.wire_values_at_z;
     proof.wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
@@ -284,6 +305,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         _marker: std::marker::PhantomData
     };
 
+    let subtime = Instant::now();
+
     let fifth_message = self::better_cs::prover::ProverAssembly::fifth_step_from_fourth_step(
         fourth_state,
         fourth_verifier_message,
@@ -291,6 +314,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         csr_mon_basis,
         &worker
     )?;
+
+    println!("Fifth step (proving opening at z) taken {:?}", subtime.elapsed());
 
     proof.opening_at_z_proof = fifth_message.opening_proof_at_z;
     proof.opening_at_z_omega_proof = fifth_message.opening_proof_at_z_omega;
