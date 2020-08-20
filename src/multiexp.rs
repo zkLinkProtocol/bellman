@@ -718,8 +718,6 @@ pub fn dense_multiexp_uniform<G: CurveAffine>(
         // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
 
-    let c = 12;
-
     let num_threads = pool.cpus;
 
     let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_threads];
@@ -1312,9 +1310,9 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     c: u32
 ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
 {
-    if <G::Engine as ScalarEngine>::Fr::NUM_BITS == 254 {
-        return map_reduce_multiexp_over_fixed_window_254(pool, bases, exponents, c);
-    }
+    // if <G::Engine as ScalarEngine>::Fr::NUM_BITS == 254 {
+    //     return map_reduce_multiexp_over_fixed_window_254(pool, bases, exponents, c);
+    // }
     if exponents.len() != bases.len() {
         return Err(SynthesisError::AssignmentMissing);
     }
@@ -1326,7 +1324,8 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     pool.scope(0, |scope, _| {
         for ((b, e), s) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)).zip(subresults.iter_mut()) {
             scope.spawn(move |_| {
-                *s = serial_multiexp_inner(b, e, c).unwrap();
+                *s = test_memory_serial(b, e, c).unwrap();
+                // *s = serial_multiexp_inner(b, e, c).unwrap();
             });
         }
     });
@@ -1436,6 +1435,53 @@ fn serial_multiexp_inner<G: CurveAffine>(
     }
 
     Ok(result)
+}
+
+
+// dummy function with minimal branching
+fn test_memory_serial<G: CurveAffine>(
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    let num_buckets = (1 << c) - 1;
+    let mask: u64 = (1u64 << c) - 1u64;
+
+    // let bases = bases.to_vec();
+    // let exponents = exponents.to_vec();
+
+    let mut result = <G as CurveAffine>::Projective::zero();
+
+    let mut num_runs = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
+    if <G::Engine as ScalarEngine>::Fr::NUM_BITS % c != 0 {
+        num_runs += 1;
+    }
+
+    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); num_runs as usize];;
+    for (&base, &exp) in bases.into_iter().zip(exponents.into_iter()) {
+        for window_index in 0..num_runs {
+            let mut exp = exp;
+            exp.shr(c);
+            let index = (exp.as_ref()[0] & mask) as usize;
+            if index != 0 {
+                buckets[window_index].add_assign_mixed(&base);
+            }
+        }
+    }
+
+    let mut acc = G::Projective::zero();
+    let mut running_sum = G::Projective::zero();
+    for exp in buckets.into_iter().rev() {
+        running_sum.add_assign(&exp);
+        acc.add_assign(&running_sum);
+    }
+
+    for _ in 0..100 {
+        acc.double();
+    }
+
+    Ok(acc)
 }
 
 macro_rules! construct_stack_multiexp {
