@@ -1324,8 +1324,8 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     pool.scope(0, |scope, _| {
         for ((b, e), s) in bases.chunks(chunk_len).zip(exponents.chunks(chunk_len)).zip(subresults.iter_mut()) {
             scope.spawn(move |_| {
-                *s = test_memory_serial(b, e, c).unwrap();
-                // *s = serial_multiexp_inner(b, e, c).unwrap();
+                // *s = test_memory_serial(b, e, c).unwrap();
+                *s = serial_multiexp_inner(b, e, c).unwrap();
             });
         }
     });
@@ -1410,7 +1410,10 @@ fn serial_multiexp_inner<G: CurveAffine>(
             exp.shr(c);
             let index = (exp.as_ref()[0] & mask) as usize;
             if index != 0 {
-                buckets[window_index][index - 1].add_assign_mixed(&base);
+                let mut tmp = buckets[window_index][index - 1];
+                tmp.add_assign_mixed(&base);
+                buckets[window_index][index - 1] = tmp;
+                // buckets[window_index][index - 1].add_assign_mixed(&base);
             }
         }
     }
