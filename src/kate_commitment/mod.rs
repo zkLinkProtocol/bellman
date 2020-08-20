@@ -1491,15 +1491,15 @@ pub(crate) mod test {
 
                 // println!("Dense unrolled multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
-                // let subtime = Instant::now();
+                let subtime = Instant::now();
 
-                // let _ = multiexp::dense_multiexp_uniform::<<Bn256 as Engine>::G1Affine>(
-                //     &subworker,
-                //     &g,
-                //     &scalars_repr
-                // ).unwrap();
+                let _ = multiexp::dense_multiexp_uniform::<E::G1Affine>(
+                    &subworker,
+                    &g,
+                    &scalars_repr
+                ).unwrap();
 
-                // println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 // let subtime = Instant::now();
 
@@ -1723,8 +1723,8 @@ pub(crate) mod test {
     #[ignore]
     #[test]
     fn test_l3_shared_multiexp_bn254() {
-        // use crate::pairing::bn256::Bn256;
-        use crate::pairing::compact_bn256::Bn256;
+        use crate::pairing::bn256::Bn256;
+        // use crate::pairing::compact_bn256::Bn256;
         test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
         test_optimal_multiexp::<Bn256>(2, 1 << 24, 22, 12, true);
@@ -1850,8 +1850,8 @@ pub(crate) mod test {
         
         let sizes = vec![1 << 23, 1 << 24, 1 << 25, 1 << 26];
         let cpus = vec![8, 12, 16, 24, 32, 48];
-        test_multiexp_bn254(max_size, sizes, cpus);
-        // test_multiexp_bn254_compact(max_size, sizes, cpus);
+        // test_multiexp_bn254(max_size, sizes, cpus);
+        test_multiexp_bn254_compact(max_size, sizes, cpus);
     }
 
     #[test]
