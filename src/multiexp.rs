@@ -1458,7 +1458,7 @@ fn test_memory_serial<G: CurveAffine>(
         num_runs += 1;
     }
 
-    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); num_runs as usize];;
+    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); num_runs as usize];
     for (&base, &exp) in bases.into_iter().zip(exponents.into_iter()) {
         for window_index in 0..num_runs {
             let mut exp = exp;
@@ -1470,18 +1470,23 @@ fn test_memory_serial<G: CurveAffine>(
         }
     }
 
-    let mut acc = G::Projective::zero();
-    let mut running_sum = G::Projective::zero();
-    for exp in buckets.into_iter().rev() {
-        running_sum.add_assign(&exp);
-        acc.add_assign(&running_sum);
+    for _ in 0..num_runs {
+        let mut acc = G::Projective::zero();
+        let mut running_sum = G::Projective::zero();
+        for exp in buckets.iter().rev() {
+            running_sum.add_assign(&exp);
+            acc.add_assign(&running_sum);
+        }
+
+        for _ in 0..100 {
+            acc.double();
+        }
+
+        result.add_assign(&acc);
     }
 
-    for _ in 0..100 {
-        acc.double();
-    }
 
-    Ok(acc)
+    Ok(result)
 }
 
 macro_rules! construct_stack_multiexp {
