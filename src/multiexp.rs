@@ -269,8 +269,6 @@ pub fn future_based_multiexp<G: CurveAffine>(
     pool: &Worker,
     bases: Arc<Vec<G>>,
     exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
-    // bases: &[G],
-    // exponents: Arc<Vec<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>>
 ) -> ChunksJoiner< <G as CurveAffine>::Projective >
 {
     assert!(exponents.len() <= bases.len());
@@ -316,6 +314,41 @@ pub fn future_based_multiexp<G: CurveAffine>(
 }
 
 
+/// Perform multi-exponentiation. The caller is responsible for ensuring the
+/// query size is the same as the number of exponents.
+pub fn future_based_dense_multiexp_over_fixed_width_windows<G: CurveAffine>(
+    pool: &Worker,
+    bases: Arc<Vec<G>>,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+    c: u32
+) -> ChunksJoiner< <G as CurveAffine>::Projective >
+{
+    assert!(exponents.len() <= bases.len());
+
+    let mut skip = 0;
+    let mut futures = Vec::with_capacity((<G::Engine as ScalarEngine>::Fr::NUM_BITS / c + 1) as usize);
+
+    while skip < <G::Engine as ScalarEngine>::Fr::NUM_BITS {
+        let chunk_future = if skip == 0 {
+            future_based_buffered_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), 0, c, true)
+            // future_based_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), 0, c, true)
+        } else {
+            future_based_buffered_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), skip, c, false)
+            // future_based_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), skip, c, false)
+        };
+
+        futures.push(chunk_future);
+        skip += c;
+    }
+
+    let join = join_all(futures);
+
+    ChunksJoiner {
+        join,
+        c
+    } 
+}
+
 fn future_based_dense_multiexp_impl<G: CurveAffine>(
     pool: &Worker,
     bases: Arc<Vec<G>>,
@@ -359,7 +392,7 @@ fn future_based_dense_multiexp_impl<G: CurveAffine>(
                     let next_exp = next_exp.as_ref()[0] % mask;
                     if next_exp != 0 {
                         let p: *const <G as CurveAffine>::Projective = &buckets[(next_exp - 1) as usize];
-                        crate::prefetch::prefetch_l3_pointer(p);
+                        crate::prefetch::prefetch_l1_pointer(p);
                     }
                     
                 }
@@ -388,6 +421,106 @@ fn future_based_dense_multiexp_impl<G: CurveAffine>(
                         continue;
                     }
                 }
+            }
+
+            // Summation by parts
+            // e.g. 3a + 2b + 1c = a +
+            //                    (a) + b +
+            //                    ((a) + b) + c
+            let mut running_sum = G::Projective::zero();
+            for exp in buckets.into_iter().rev() {
+                running_sum.add_assign(&exp);
+                acc.add_assign(&running_sum);
+            }
+
+            Ok(acc)
+        })
+    };
+
+    this
+}
+
+fn future_based_buffered_dense_multiexp_impl<G: CurveAffine>(
+    pool: &Worker,
+    bases: Arc<Vec<G>>,
+    exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>,
+    skip: u32,
+    c: u32,
+    handle_trivial: bool
+) -> WorkerFuture< <G as CurveAffine>::Projective, SynthesisError>
+{
+    // Perform this region of the multiexp
+    let this = {
+        let bases = bases.clone();
+        let exponents = exponents.clone();
+        let bases = bases.clone();
+
+        // This is a Pippenger’s algorithm
+        pool.compute(move || {
+            // Accumulate the result
+            let mut acc = G::Projective::zero();
+
+            // Create buckets to place remainders s mod 2^c,
+            // it will be 2^c - 1 buckets (no bucket for zeroes)
+
+            // Create space for the buckets
+            let mut buckets = vec![<G as CurveAffine>::Projective::zero(); (1 << c) - 1];
+
+            let zero = <G::Engine as ScalarEngine>::Fr::zero().into_repr();
+            let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
+
+            let mask = 1 << c;
+
+            const BUFFER_SIZE: usize = 64;
+            let mut buffers: Vec<Vec<G>> = vec![Vec::with_capacity(BUFFER_SIZE); (1 << c) - 1];
+
+            // Sort the bases into buckets
+            for (&exp, &base) in exponents.iter()
+                        .zip(bases.iter()) {
+                // Go over density and exponents
+                if exp == zero {
+                    continue
+                } else if exp == one {
+                    if handle_trivial {
+                        acc.add_assign_mixed(&base);
+                    } else {
+                        continue
+                    }
+                } else {
+                    // Place multiplication into the bucket: Separate s * P as 
+                    // (s/2^c) * P + (s mod 2^c) P
+                    // First multiplication is c bits less, so one can do it,
+                    // sum results from different buckets and double it c times,
+                    // then add with (s mod 2^c) P parts
+                    let mut exp = exp;
+                    exp.shr(skip);
+                    let exp = exp.as_ref()[0] % mask;
+
+                    if exp != 0 {
+                        let idx = (exp - 1) as usize;
+                        if buffers[idx].len() == BUFFER_SIZE {
+                            let mut el = buckets[idx];
+                            for b in buffers[idx].iter(){
+                                el.add_assign_mixed(&b);
+                            }
+                            buffers[idx].truncate(0);
+                            buckets[idx] = el;
+                        }
+
+                        buffers[idx].push(base);
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            // we have some unprocessed left, so add them to the buckets
+            for (idx, buffer) in buffers.into_iter().enumerate() {
+                let mut el = buckets[idx];
+                for b in buffer.into_iter() {
+                    el.add_assign_mixed(&b);
+                }
+                buckets[idx] = el;
             }
 
             // Summation by parts

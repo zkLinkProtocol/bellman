@@ -1762,13 +1762,20 @@ pub(crate) mod test {
                 let p = Arc::clone(&bases[id]);
                 let s = Arc::clone(&scalars[idx]);
 
-                let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+                let job = multiexp::future_based_dense_multiexp_over_fixed_width_windows::<_, _, _, _>(
                     &subworker,
-                    (p, 0),
-                    FullDensity,
+                    p,
                     s,
                     window
                 );
+
+                // let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+                //     &subworker,
+                //     (p, 0),
+                //     FullDensity,
+                //     s,
+                //     window
+                // );
 
                 jobs.push(job);
             }
