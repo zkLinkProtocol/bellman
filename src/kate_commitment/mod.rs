@@ -1727,6 +1727,8 @@ pub(crate) mod test {
         use crate::pairing::compact_bn256::Bn256;
         test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
+        test_optimal_multiexp::<Bn256>(2, 1 << 24, 22, 12, true);
+        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
     }
 
     fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
