@@ -157,7 +157,8 @@ fn multiexp_inner_impl<Q, D, G, S>(
         G: CurveAffine,
         S: SourceBuilder<G>
 {
-    multiexp_inner_with_prefetch_stable(pool, bases, density_map, exponents, skip, c, handle_trivial)
+    multiexp_inner(pool, bases, density_map, exponents, skip, c, handle_trivial)
+    // multiexp_inner_with_prefetch_stable(pool, bases, density_map, exponents, skip, c, handle_trivial)
 }
 
 fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
@@ -198,7 +199,7 @@ fn multiexp_inner_with_prefetch_stable<Q, D, G, S>(
             let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
             let padding = Arc::new(vec![zero]);
 
-            let mask = (1 << c) - 1;
+            let mask = (1u64 << c) - 1;
 
             // Sort the bases into buckets
             for ((&exp, &next_exp), density) in exponents.iter()
@@ -1568,6 +1569,7 @@ fn buffered_multiexp_inner<G: CurveAffine>(
         for b in buffer.into_iter() {
             el.add_assign_mixed(&b);
         }
+        buckets[idx] = el;
     }
 
     let mut acc = G::Projective::zero();
@@ -2951,24 +2953,24 @@ fn dense_multiexp_inner_consume<G: CurveAffine>(
 mod test {
     use super::*;
 
-    #[test]
-    fn test_new_multiexp_with_bls12() {
-        fn naive_multiexp<G: CurveAffine>(
-            bases: Arc<Vec<G>>,
-            exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
-        ) -> G::Projective
-        {
-            assert_eq!(bases.len(), exponents.len());
+    fn naive_multiexp<G: CurveAffine>(
+        bases: Arc<Vec<G>>,
+        exponents: Arc<Vec<<G::Scalar as PrimeField>::Repr>>
+    ) -> G::Projective
+    {
+        assert_eq!(bases.len(), exponents.len());
 
-            let mut acc = G::Projective::zero();
+        let mut acc = G::Projective::zero();
 
-            for (base, exp) in bases.iter().zip(exponents.iter()) {
-                acc.add_assign(&base.mul(*exp));
-            }
-
-            acc
+        for (base, exp) in bases.iter().zip(exponents.iter()) {
+            acc.add_assign(&base.mul(*exp));
         }
 
+        acc
+    }
+
+    #[test]
+    fn test_new_multiexp_with_bls12() {
         use rand::{self, Rand};
         use crate::pairing::bls12_381::Bls12;
 
@@ -2996,9 +2998,58 @@ mod test {
         assert_eq!(naive, fast);
     }
 
+
+    #[test]
+    fn test_valid_bn254_multiexp() {
+        use rand::{self, Rand};
+        use crate::pairing::bn256::Bn256;
+
+        const SAMPLES: usize = 1 << 14;
+
+        let pool = Worker::new();
+
+        let rng = &mut rand::thread_rng();
+        let v = (0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>();
+        let g = (0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
+        let dense = dense_multiexp(
+            &pool,
+            &g,
+            &v,
+        ).unwrap();
+
+        let v = Arc::new(v);
+        let g = Arc::new(g);
+
+        let naive = naive_multiexp(g.clone(), v.clone());
+
+        assert_eq!(dense, naive);
+
+        use self::futures::executor::block_on;
+
+        let fast_dense = future_based_multiexp(
+            &pool,
+            g.clone(),
+            v.clone()
+        ).wait().unwrap();
+
+        assert_eq!(naive, fast_dense);
+
+        let fast = block_on(
+            multiexp(
+                &pool,
+                (g, 0),
+                FullDensity,
+                v
+            )
+        ).unwrap();
+
+        assert_eq!(naive, fast);
+    }
+
     #[test]
     #[ignore]
     fn test_new_multexp_speed_with_bn256() {
+        
         use rand::{self, Rand};
         use crate::pairing::bn256::Bn256;
         use num_cpus;
@@ -3024,7 +3075,6 @@ mod test {
                 v
             )
         ).unwrap();
-
 
         let duration_ns = start.elapsed().as_nanos() as f64;
         println!("Elapsed {} ns for {} samples", duration_ns, SAMPLES);
@@ -3059,7 +3109,7 @@ mod test {
 
         let start = std::time::Instant::now();
 
-        let map_reduce = map_reduce_multiexp_over_fixed_window(
+        let _map_reduce = map_reduce_multiexp_over_fixed_window(
             &pool,
             &g,
             &v,
@@ -3070,6 +3120,21 @@ mod test {
         println!("{} ns for map reduce for {} samples", duration_ns, SAMPLES);
 
         // assert_eq!(dense, map_reduce);
+
+        let start = std::time::Instant::now();
+
+        let buffered = buffered_multiexp_over_fixed_window_and_buffer_size(
+            &pool,
+            &g,
+            &v,
+            11,
+            64,
+        ).unwrap();
+
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("{} ns for buffered multiexp for {} samples", duration_ns, SAMPLES);
+
+        assert_eq!(dense, buffered);
 
         use self::futures::executor::block_on;
 
