@@ -1788,8 +1788,8 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                     let tmp = exponents[0];
                     let mut this_index = get_bits(tmp, start) as usize;
                     for i in 0..limit {
-                        unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
-                        unsafe { crate::prefetch::prefetch_l3(common_bases.get_unchecked(i+1)) };
+                        // unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
+                        // unsafe { crate::prefetch::prefetch_l3(common_bases.get_unchecked(i+1)) };
                         unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
                         unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
 
@@ -1831,7 +1831,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                     let tmp = exponents[0];
                     let mut this_index = get_bits(tmp, start) as usize;
                     for i in 0..limit {
-                        unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
+                        // unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
                         unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
                         unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
 
