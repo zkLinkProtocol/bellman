@@ -1548,6 +1548,7 @@ fn buffered_multiexp_inner<G: CurveAffine>(
         if index != 0 {
             let idx = index - 1;
             if buffers[idx].len() == buffer_size {
+                // buffer is full, so let's collapse
                 let mut el = buckets[idx];
                 for b in buffers[idx].iter() {
                     el.add_assign_mixed(&b);
@@ -1556,10 +1557,12 @@ fn buffered_multiexp_inner<G: CurveAffine>(
                 buffers[idx].truncate(0);
             }
 
+            // we always add the point
             buffers[idx].push(base);
         }
     }
 
+    // we have some unprocessed left, so add them to the buckets
     for (idx, buffer) in buffers.into_iter().enumerate() {
         let mut el = buckets[idx];
         for b in buffer.into_iter() {
@@ -1567,7 +1570,6 @@ fn buffered_multiexp_inner<G: CurveAffine>(
         }
     }
 
-    let mut skip_bits = 0;
     let mut acc = G::Projective::zero();
     let mut running_sum = G::Projective::zero();
     for exp in buckets.into_iter().rev() {
@@ -1575,7 +1577,7 @@ fn buffered_multiexp_inner<G: CurveAffine>(
         acc.add_assign(&running_sum);
     }
 
-    for _ in 0..skip_bits {
+    for _ in 0..skip {
         acc.double();
     }
 

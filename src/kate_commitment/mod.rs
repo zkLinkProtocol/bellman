@@ -1650,8 +1650,8 @@ pub(crate) mod test {
 
         for size in sizes {
             for &cpus in &num_cpus {
-                let mut subresults = vec![];
                 for &buffer_size in &buffer_sizes {
+                    let mut subresults = vec![];
                     for &window in &windows {
                         let s = &scalars[..size];
                         let g = points[..size].to_vec();
