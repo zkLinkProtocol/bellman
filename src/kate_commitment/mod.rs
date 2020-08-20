@@ -1631,6 +1631,68 @@ pub(crate) mod test {
         }
     }
 
+    fn test_buffered_multiexps__bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
+        use crate::pairing::compact_bn256::Bn256;
+        test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    }
+
+    fn test_buffered_multiexp<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
+        use std::time::Instant;
+        use std::sync::Arc;
+
+        let worker = Worker::new();
+
+        println!("Generating scalars");
+        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+        println!("Generating points");
+        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+        println!("Done");
+
+        for size in sizes {
+            for &cpus in &num_cpus {
+                let mut subresults = vec![];
+                for &buffer_size in &buffer_sizes {
+                    for &window in &windows {
+                        let s = &scalars[..size];
+                        let g = points[..size].to_vec();
+
+                        let subworker = Worker::new_with_cpus(cpus);
+
+                        let scalars_repr = super::elements_into_representations::<E>(
+                            &subworker,
+                            s
+                        ).unwrap();
+
+                        let subtime = Instant::now();
+
+                        let window = window as u32;
+
+                        let _ = multiexp::buffered_multiexp_over_fixed_window_and_buffer_size::<E::G1Affine>(
+                            &subworker,
+                            &g,
+                            &scalars_repr,
+                            window,
+                            buffer_size
+                        ).unwrap();
+
+                        subresults.push((window, subtime.elapsed().as_millis()));
+
+                        // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+                    }
+
+                    subresults.sort_by(|a, b| {
+                        a.1.cmp(&b.1)
+                    });
+
+                    println!("Map reduce multiexp of size {} on {} CPUs with buffer size {}:", size, cpus, buffer_size);
+                    for (window, time_ms) in &subresults[0..3] {
+                        println!("Window = {}, time = {} ms", window, time_ms);
+                    }
+                }
+            }
+        }
+    }
+
     fn test_future_based_multiexps_over_window_sizes_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
         use crate::pairing::compact_bn256::Bn256;
         test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
@@ -1779,8 +1841,6 @@ pub(crate) mod test {
         println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", max_parallel_jobs, max_size, cpus_per_job, window, elapsed);
     }
 
-    
-
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
         use std::time::Instant;
         use std::sync::Arc;
@@ -1883,6 +1943,22 @@ pub(crate) mod test {
         let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
         test_multiexps_over_window_sizes_bn254_compact(max_size, sizes, cpus, windows);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_large_data_buffered_multiexp() {
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+        
+        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        let windows = vec![10, 11, 12, 13, 14, 15, 16];
+        let buffer_sizes = vec![32, 64, 128, 256, 512];
+        // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+        test_buffered_multiexps__bn254_compact(max_size, sizes, cpus, windows, buffer_sizes);
     }
 
     #[test]

@@ -1338,6 +1338,43 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     Ok(result)
 }
 
+pub fn buffered_multiexp_over_fixed_window_and_buffer_size<G: CurveAffine>(
+    pool: &Worker,
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32,
+    buffer_size: usize
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    if exponents.len() != bases.len() {
+        return Err(SynthesisError::AssignmentMissing);
+    }
+
+    let mut num_runs = (<G::Engine as ScalarEngine>::Fr::NUM_BITS / c) as usize;
+    if <G::Engine as ScalarEngine>::Fr::NUM_BITS % c != 0 {
+        num_runs += 1;
+    }
+
+    let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_runs];
+
+    pool.scope(0, |scope, _| {
+        let mut skip = 0u32;
+        for s in subresults.iter_mut() {
+            scope.spawn(move |_| {
+                *s = buffered_multiexp_inner(bases, exponents, c, skip, buffer_size).unwrap();
+            });
+            skip += c;
+        }
+    });
+
+    let mut result = <G as CurveAffine>::Projective::zero();
+    for s in subresults.into_iter() {
+        result.add_assign(&s);
+    }
+
+    Ok(result)
+}
+
 fn map_reduce_multiexp_over_fixed_window_254<G: CurveAffine>(
     pool: &Worker,
     bases: & [G],
@@ -1440,7 +1477,6 @@ fn serial_multiexp_inner<G: CurveAffine>(
     Ok(result)
 }
 
-
 // dummy function with minimal branching
 fn test_memory_serial<G: CurveAffine>(
     bases: & [G],
@@ -1490,6 +1526,60 @@ fn test_memory_serial<G: CurveAffine>(
 
 
     Ok(result)
+}
+
+fn buffered_multiexp_inner<G: CurveAffine>(
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    c: u32,
+    skip: u32,
+    buffer_size: usize
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    let num_buckets = (1 << c) - 1;
+    let mask: u64 = (1u64 << c) - 1u64;
+
+    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); num_buckets];
+    let mut buffers: Vec<Vec<G>> = vec![Vec::with_capacity(buffer_size); num_buckets];
+    for (&base, &exp) in bases.into_iter().zip(exponents.into_iter()) {
+        let mut exp = exp;
+        exp.shr(skip);
+        let index = (exp.as_ref()[0] & mask) as usize;
+        if index != 0 {
+            let idx = index - 1;
+            if buffers[idx].len() == buffer_size {
+                let mut el = buckets[idx];
+                for b in buffers[idx].iter() {
+                    el.add_assign_mixed(&b);
+                }
+                buckets[idx] = el;
+                buffers[idx].truncate(0);
+            }
+
+            buffers[idx].push(base);
+        }
+    }
+
+    for (idx, buffer) in buffers.into_iter().enumerate() {
+        let mut el = buckets[idx];
+        for b in buffer.into_iter() {
+            el.add_assign_mixed(&b);
+        }
+    }
+
+    let mut skip_bits = 0;
+    let mut acc = G::Projective::zero();
+    let mut running_sum = G::Projective::zero();
+    for exp in buckets.into_iter().rev() {
+        running_sum.add_assign(&exp);
+        acc.add_assign(&running_sum);
+    }
+
+    for _ in 0..skip_bits {
+        acc.double();
+    }
+
+    Ok(acc)
 }
 
 macro_rules! construct_stack_multiexp {
