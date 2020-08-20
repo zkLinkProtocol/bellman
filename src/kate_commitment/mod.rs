@@ -1864,6 +1864,7 @@ pub(crate) mod test {
         for size in sizes {
             for &cpus in &num_cpus {
                 let mut subresults = vec![];
+                let mut alt_subresults = vec![];
 
                 let s = &scalars[..size];
                 let g = points[..size].to_vec();
@@ -1883,12 +1884,16 @@ pub(crate) mod test {
 
                     let window = window as u32;
 
-                    // let _ = multiexp::future_based_dense_multiexp_over_fixed_width_windows(
-                    //     &subworker,
-                    //     Arc::clone(&g),
-                    //     Arc::clone(&s),
-                    //     window
-                    // ).wait();
+                    let _ = multiexp::future_based_dense_multiexp_over_fixed_width_windows(
+                        &subworker,
+                        Arc::clone(&g),
+                        Arc::clone(&s),
+                        window
+                    ).wait();
+
+                    alt_subresults.push((window, subtime.elapsed().as_millis()));
+
+                    let subtime = Instant::now();
 
                     let _ = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
                         &subworker,
@@ -1905,8 +1910,17 @@ pub(crate) mod test {
                     a.1.cmp(&b.1)
                 });
 
-                println!("Future based multiexp of size {} on {} CPUs:", size, cpus);
+                alt_subresults.sort_by(|a, b| {
+                    a.1.cmp(&b.1)
+                });
+
+                println!("Standard future based multiexp of size {} on {} CPUs:", size, cpus);
                 for (window, time_ms) in &subresults[0..3] {
+                    println!("Window = {}, time = {} ms", window, time_ms);
+                }
+
+                println!("Tuned future based multiexp of size {} on {} CPUs:", size, cpus);
+                for (window, time_ms) in &alt_subresults[0..3] {
                     println!("Window = {}, time = {} ms", window, time_ms);
                 }
             }
