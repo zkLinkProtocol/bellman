@@ -1639,7 +1639,8 @@ pub(crate) mod test {
     #[ignore]
     #[test]
     fn test_optimal_bn254_multiexp() {
-        use crate::pairing::bn256::Bn256;
+        // use crate::pairing::bn256::Bn256;
+        use crate::pairing::compact_bn256::Bn256;
         test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
         test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, false);
         test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
