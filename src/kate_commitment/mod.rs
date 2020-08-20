@@ -1872,7 +1872,7 @@ pub(crate) mod test {
 
     #[test]
     #[ignore]
-    fn test_large_data_different_windows() {
+    fn test_large_data_different_windows_multiexp() {
         let max_size = 1 << 26;
         let worker = Worker::new();
 
