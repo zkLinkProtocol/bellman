@@ -1310,9 +1310,9 @@ pub fn map_reduce_multiexp_over_fixed_window<G: CurveAffine>(
     c: u32
 ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
 {
-    // if <G::Engine as ScalarEngine>::Fr::NUM_BITS == 254 {
-    //     return map_reduce_multiexp_over_fixed_window_254(pool, bases, exponents, c);
-    // }
+    if <G::Engine as ScalarEngine>::Fr::NUM_BITS == 254 {
+        return map_reduce_multiexp_over_fixed_window_254(pool, bases, exponents, c);
+    }
     if exponents.len() != bases.len() {
         return Err(SynthesisError::AssignmentMissing);
     }
@@ -1740,7 +1740,10 @@ macro_rules! construct_map_reduce_multiexp_inner {
 
                 for (window_index, &index) in bucket_indexes.iter().enumerate() {
                     if index != 0 {
-                        buckets[window_index][index - 1].add_assign_mixed(&base);
+                        let mut tmp = buckets[window_index][index - 1];
+                        tmp.add_assign_mixed(&base);
+                        buckets[window_index][index - 1] = tmp;
+                        // buckets[window_index][index - 1].add_assign_mixed(&base);
                     }
                 }
             }
