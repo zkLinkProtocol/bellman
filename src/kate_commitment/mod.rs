@@ -1887,7 +1887,7 @@ pub(crate) mod test {
 
     #[test]
     #[ignore]
-    fn test_large_data_different_windows_future_based_multiexps() {
+    fn future_based_test_large_data_different_windows() {
         let max_size = 1 << 26;
         let worker = Worker::new();
 
