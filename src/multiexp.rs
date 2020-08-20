@@ -1808,6 +1808,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
 
                         unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
                         unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
+                        this_index = next_index;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
