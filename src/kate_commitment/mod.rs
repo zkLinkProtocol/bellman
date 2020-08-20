@@ -1631,9 +1631,9 @@ pub(crate) mod test {
         }
     }
 
-    fn test_buffered_multiexps__bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
+    fn test_buffered_multiexps_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
         use crate::pairing::compact_bn256::Bn256;
-        test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+        test_buffered_multiexp::<Bn256>(max_size, sizes, num_cpus, windows, buffer_sizes);
     }
 
     fn test_buffered_multiexp<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
@@ -1958,7 +1958,7 @@ pub(crate) mod test {
         let windows = vec![10, 11, 12, 13, 14, 15, 16];
         let buffer_sizes = vec![32, 64, 128, 256, 512];
         // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
-        test_buffered_multiexps__bn254_compact(max_size, sizes, cpus, windows, buffer_sizes);
+        test_buffered_multiexps_bn254_compact(max_size, sizes, cpus, windows, buffer_sizes);
     }
 
     #[test]
