@@ -1410,10 +1410,10 @@ fn serial_multiexp_inner<G: CurveAffine>(
             exp.shr(c);
             let index = (exp.as_ref()[0] & mask) as usize;
             if index != 0 {
-                let mut tmp = buckets[window_index][index - 1];
-                tmp.add_assign_mixed(&base);
-                buckets[window_index][index - 1] = tmp;
-                // buckets[window_index][index - 1].add_assign_mixed(&base);
+                // let mut tmp = buckets[window_index][index - 1];
+                // tmp.add_assign_mixed(&base);
+                // buckets[window_index][index - 1] = tmp;
+                buckets[window_index][index - 1].add_assign_mixed(&base);
             }
         }
     }
@@ -1740,10 +1740,10 @@ macro_rules! construct_map_reduce_multiexp_inner {
 
                 for (window_index, &index) in bucket_indexes.iter().enumerate() {
                     if index != 0 {
-                        let mut tmp = buckets[window_index][index - 1];
-                        tmp.add_assign_mixed(&base);
-                        buckets[window_index][index - 1] = tmp;
-                        // buckets[window_index][index - 1].add_assign_mixed(&base);
+                        // let mut tmp = buckets[window_index][index - 1];
+                        // tmp.add_assign_mixed(&base);
+                        // buckets[window_index][index - 1] = tmp;
+                        buckets[window_index][index - 1].add_assign_mixed(&base);
                     }
                 }
             }
