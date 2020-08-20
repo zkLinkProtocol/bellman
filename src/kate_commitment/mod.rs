@@ -1956,7 +1956,7 @@ pub(crate) mod test {
         let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
         let cpus = vec![8, 12, 16, 24, 32, 48];
         let windows = vec![10, 11, 12, 13, 14, 15, 16];
-        let buffer_sizes = vec![32, 64, 128, 256, 512];
+        let buffer_sizes = vec![4, 8, 16, 32, 64, 128];
         // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
         test_buffered_multiexps_bn254_compact(max_size, sizes, cpus, windows, buffer_sizes);
     }
