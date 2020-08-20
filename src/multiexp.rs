@@ -1746,7 +1746,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
     const NUM_WINDOWS: usize = 22;
     const WINDOW_SIZE: u32 = 12;
     const MASK: u64 = (1u64 << WINDOW_SIZE) - 1;
-    const NUM_BUCKETS: usize = (1 << WINDOW_SIZE) - 1;
+    const NUM_BUCKETS: usize = 1 << WINDOW_SIZE;
 
     assert!((WINDOW_SIZE as usize) * NUM_WINDOWS >= 254);
 
@@ -1797,14 +1797,17 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         let base = unsafe { *common_bases.get_unchecked(i) };
                         let next_index = get_bits(tmp, start) as usize;
 
-                        if this_index != 0 {
-                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
-                        }
+                        // if this_index != 0 {
+                        //     unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        // }
 
-                        if next_index != 0 {
-                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
-                            this_index = next_index;
-                        }
+                        // if next_index != 0 {
+                        //     unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                        //     this_index = next_index;
+                        // }
+
+                        unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
+                        unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
@@ -1835,14 +1838,9 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         let base = unsafe { *common_bases.get_unchecked(i) };
                         let next_index = get_bits(tmp, start) as usize;
 
-                        if this_index != 0 {
-                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
-                        }
-
-                        if next_index != 0 {
-                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
-                            this_index = next_index;
-                        }
+                        unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
+                        unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
+                        this_index = next_index;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
@@ -1880,14 +1878,9 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         let base = unsafe { *common_bases.get_unchecked(i) };
                         let next_index = get_bits(tmp, start) as usize;
 
-                        if this_index != 0 {
-                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
-                        }
-
-                        if next_index != 0 {
-                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
-                            this_index = next_index;
-                        }
+                        unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
+                        unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
+                        this_index = next_index;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
