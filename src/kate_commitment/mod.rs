@@ -1883,13 +1883,20 @@ pub(crate) mod test {
 
                     let window = window as u32;
 
-                    let _ = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+                    let _ = multiexp::future_based_dense_multiexp_over_fixed_width_windows(
                         &subworker,
-                        (Arc::clone(&g), 0),
-                        FullDensity,
+                        Arc::clone(&g),
                         Arc::clone(&s),
                         window
                     ).wait();
+
+                    // let _ = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+                    //     &subworker,
+                    //     (Arc::clone(&g), 0),
+                    //     FullDensity,
+                    //     Arc::clone(&s),
+                    //     window
+                    // ).wait();
 
                     subresults.push((window, subtime.elapsed().as_millis()));
                 }

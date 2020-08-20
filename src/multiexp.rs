@@ -330,11 +330,11 @@ pub fn future_based_dense_multiexp_over_fixed_width_windows<G: CurveAffine>(
 
     while skip < <G::Engine as ScalarEngine>::Fr::NUM_BITS {
         let chunk_future = if skip == 0 {
-            future_based_buffered_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), 0, c, true)
-            // future_based_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), 0, c, true)
+            // future_based_buffered_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), 0, c, true)
+            future_based_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), 0, c, true)
         } else {
-            future_based_buffered_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), skip, c, false)
-            // future_based_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), skip, c, false)
+            // future_based_buffered_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), skip, c, false)
+            future_based_dense_multiexp_impl(pool, bases.clone(), exponents.clone(), skip, c, false)
         };
 
         futures.push(chunk_future);
