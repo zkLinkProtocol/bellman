@@ -1720,6 +1720,60 @@ pub(crate) mod test {
         }
     }
 
+    #[ignore]
+    #[test]
+    fn test_l3_shared_multiexp_bn254() {
+        // use crate::pairing::bn256::Bn256;
+        use crate::pairing::compact_bn256::Bn256;
+        test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
+    }
+
+    fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
+        use std::time::Instant;
+        
+        let mut bases = vec![];
+        let mut scalars = vec![];
+        let worker = Worker::new();
+
+        assert_eq!(max_parallel_jobs, 2);
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    
+        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        
+        for _ in 0..max_parallel_jobs {
+            let seed: [u32; 4] = rng.gen();
+            let mut subrng = ChaChaRng::from_seed(&seed);
+
+            let sc = make_random_field_elements_for_rng::<E::Fr, _>(&worker, max_size, &mut subrng);
+            let p = make_random_g1_points_for_rng::<E::G1Affine, _>(&worker, max_size, &mut subrng);
+            let s = super::elements_into_representations::<E>(
+                &worker,
+                &sc
+            ).unwrap();
+
+            bases.push(p);
+            scalars.push(s);
+        }
+
+        let subworker = Worker::new_with_cpus(cpus_per_job * max_parallel_jobs);
+        let subtime = Instant::now();
+
+        let exps = vec![&scalars[0][..], &scalars[1][..]];
+        let _ = multiexp::l3_shared_multexp(
+            &subworker,
+            &bases[0][..],
+            &exps[..],
+        ).unwrap();
+
+        let elapsed = subtime.elapsed();
+
+        println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", max_parallel_jobs, max_size, cpus_per_job, window, elapsed);
+    }
+
+    
+
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
         use std::time::Instant;
         use std::sync::Arc;

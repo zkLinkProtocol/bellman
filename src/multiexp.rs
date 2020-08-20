@@ -1726,6 +1726,187 @@ construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_16(16,
 construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_17(17, 254););
 construct_map_reduce_multiexp_inner!(pub fn map_reduce_multiexp_254_inner_18(18, 254););
 
+pub fn l3_shared_multexp<G: CurveAffine>(
+    pool: &Worker,
+    common_bases: & [G],
+    exponents_set: &[&[<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr]],
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    assert_eq!(exponents_set.len(), 2, "only support unroll by 2 for now");
+    for exponents in exponents_set.iter() {
+        if exponents.len() != common_bases.len() {
+            return Err(SynthesisError::AssignmentMissing);
+        }
+    }
+
+    const NUM_WINDOWS: usize = 22;
+    const WINDOW_SIZE: u32 = 12;
+    const MASK: u64 = (1u64 << WINDOW_SIZE) - 1;
+    const NUM_BUCKETS: usize = (1 << WINDOW_SIZE) - 1;
+
+    assert!((WINDOW_SIZE as usize) * NUM_WINDOWS >= 254);
+
+    fn get_bits<Repr: PrimeFieldRepr>(el: Repr, start: usize) -> u64 {
+        const WINDOW_SIZE: u32 = 12;
+        const MASK: u64 = (1u64 << WINDOW_SIZE) - 1;
+
+        let end = (start + (WINDOW_SIZE as usize)) % 256;
+
+        let word_begin = start / 64;
+        let word_end = end / 64;
+
+        let result: u64;
+
+        if word_begin == word_end {
+            let shift = start % 64;
+            result = (el.as_ref()[word_begin] >> shift) & MASK;
+        } else {
+            let shift_low = start % 64;
+            let shift_high = 64 - shift_low;
+            result = ((el.as_ref()[word_begin] >> shift_low) | (el.as_ref()[word_end] << shift_high)) & MASK;
+        }
+
+        result
+    }
+
+    // let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_threads];
+
+    let limit = common_bases.len() - 2;
+
+    pool.scope(0, |scope, _| {
+        for (exponents_idx, exponents) in exponents_set.iter().enumerate() {
+            // first one is unrolled manually
+            let mut start = 0;
+            if exponents_idx == 0 {
+                scope.spawn(move |_| {
+                    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
+
+                    let tmp = exponents[0];
+                    let mut this_index = get_bits(tmp, start) as usize;
+                    for i in 0..limit {
+                        unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l3(common_bases.get_unchecked(i+1)) };
+                        unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
+
+                        let tmp = unsafe { *exponents.get_unchecked(i+1) };
+                        let base = unsafe { *common_bases.get_unchecked(i) };
+                        let next_index = get_bits(tmp, start) as usize;
+
+                        if this_index != 0 {
+                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        }
+
+                        if next_index != 0 {
+                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                            this_index = next_index;
+                        }
+                    }
+
+                    // buckets are filled with the corresponding accumulated value, now sum
+                    let mut acc = G::Projective::zero();
+                    let mut running_sum = G::Projective::zero();
+                    for exp in buckets.into_iter().rev() {
+                        running_sum.add_assign(&exp);
+                        acc.add_assign(&running_sum);
+                    }
+
+                    for _ in 0..start {
+                        acc.double();
+                    }
+                });
+            } else {
+                // we do not to prefetch bases, only exponents
+                scope.spawn(move |_| {
+                    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
+
+                    let tmp = exponents[0];
+                    let mut this_index = get_bits(tmp, start) as usize;
+                    for i in 0..limit {
+                        unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
+
+                        let tmp = unsafe { *exponents.get_unchecked(i+1) };
+                        let base = unsafe { *common_bases.get_unchecked(i) };
+                        let next_index = get_bits(tmp, start) as usize;
+
+                        if this_index != 0 {
+                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        }
+
+                        if next_index != 0 {
+                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                            this_index = next_index;
+                        }
+                    }
+
+                    // buckets are filled with the corresponding accumulated value, now sum
+                    let mut acc = G::Projective::zero();
+                    let mut running_sum = G::Projective::zero();
+                    for exp in buckets.into_iter().rev() {
+                        running_sum.add_assign(&exp);
+                        acc.add_assign(&running_sum);
+                    }
+
+                    for _ in 0..start {
+                        acc.double();
+                    }
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_nanos(100));
+
+            for _ in 1..NUM_WINDOWS {
+                // no L3 prefetches here
+                start += WINDOW_SIZE as usize;
+                scope.spawn(move |_| {
+                    let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
+
+                    let tmp = exponents[0];
+                    let mut this_index = get_bits(tmp, start) as usize;
+                    for i in 0..limit {
+                        unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
+
+                        let tmp = unsafe { *exponents.get_unchecked(i+1) };
+                        let base = unsafe { *common_bases.get_unchecked(i) };
+                        let next_index = get_bits(tmp, start) as usize;
+
+                        if this_index != 0 {
+                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        }
+
+                        if next_index != 0 {
+                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                            this_index = next_index;
+                        }
+                    }
+
+                    // buckets are filled with the corresponding accumulated value, now sum
+                    let mut acc = G::Projective::zero();
+                    let mut running_sum = G::Projective::zero();
+                    for exp in buckets.into_iter().rev() {
+                        running_sum.add_assign(&exp);
+                        acc.add_assign(&running_sum);
+                    }
+
+                    for _ in 0..start {
+                        acc.double();
+                    }
+                });
+            }
+        }
+    });
+
+    // let mut result = <G as CurveAffine>::Projective::zero();
+    // for s in subresults.into_iter() {
+    //     result.add_assign(&s);
+    // }
+
+    Ok(<G as CurveAffine>::Projective::zero())
+}
+
+
 #[allow(dead_code)]
 pub fn dense_unrolled_multiexp_with_prefetch<G: CurveAffine>(
     pool: &Worker,
