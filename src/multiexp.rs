@@ -2022,7 +2022,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
 
     static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    assert_eq!(exponents_set.len(), 2, "only support unroll by 2 for now");
+    assert!(exponents_set.len() <= 2, "only support unroll by 2 for now");
     for exponents in exponents_set.iter() {
         if exponents.len() != common_bases.len() {
             return Err(SynthesisError::AssignmentMissing);
@@ -2074,8 +2074,8 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                     let tmp = exponents[0];
                     let mut this_index = get_bits(tmp, start) as usize;
                     for i in 0..limit {
-                        // unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
-                        // unsafe { crate::prefetch::prefetch_l3(common_bases.get_unchecked(i+1)) };
+                        unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l3(common_bases.get_unchecked(i+1)) };
                         unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
                         unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
 
@@ -2083,18 +2083,18 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         let base = unsafe { *common_bases.get_unchecked(i) };
                         let next_index = get_bits(tmp, start) as usize;
 
-                        // if this_index != 0 {
-                        //     unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
-                        // }
+                        if this_index != 0 {
+                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        }
 
-                        // if next_index != 0 {
-                        //     unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
-                        //     this_index = next_index;
-                        // }
+                        if next_index != 0 {
+                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                            this_index = next_index;
+                        }
 
-                        unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
-                        unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
-                        this_index = next_index;
+                        // unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
+                        // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
+                        // this_index = next_index;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
@@ -2117,7 +2117,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                     let tmp = exponents[0];
                     let mut this_index = get_bits(tmp, start) as usize;
                     for i in 0..limit {
-                        // unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
+                        unsafe { crate::prefetch::prefetch_l3(exponents.get_unchecked(i+2)) };
                         unsafe { crate::prefetch::prefetch_l1(exponents.get_unchecked(i+2)) };
                         unsafe { crate::prefetch::prefetch_l1(common_bases.get_unchecked(i+1)) };
 
@@ -2125,9 +2125,18 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         let base = unsafe { *common_bases.get_unchecked(i) };
                         let next_index = get_bits(tmp, start) as usize;
 
-                        unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
-                        unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
-                        this_index = next_index;
+                        if this_index != 0 {
+                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        }
+
+                        if next_index != 0 {
+                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                            this_index = next_index;
+                        }
+
+                        // unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
+                        // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
+                        // this_index = next_index;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
@@ -2165,9 +2174,18 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         let base = unsafe { *common_bases.get_unchecked(i) };
                         let next_index = get_bits(tmp, start) as usize;
 
-                        unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
-                        unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
-                        this_index = next_index;
+                        if this_index != 0 {
+                            unsafe { buckets.get_unchecked_mut(this_index-1).add_assign_mixed(&base) };
+                        }
+
+                        if next_index != 0 {
+                            unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index-1)) };
+                            this_index = next_index;
+                        }
+
+                        // unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
+                        // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
+                        // this_index = next_index;
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum

@@ -1834,6 +1834,20 @@ pub(crate) mod test {
         }
 
         let subworker = Worker::new_with_cpus(cpus_per_job * max_parallel_jobs);
+
+        let subtime = Instant::now();
+
+        let exps = vec![&scalars[0][..]];
+        let _ = multiexp::l3_shared_multexp(
+            &subworker,
+            &bases[0][..],
+            &exps[..],
+        ).unwrap();
+
+        let elapsed = subtime.elapsed();
+
+        println!("L3 shared multiexp for 1 job of size {} with {} CPUs per job and {} bits window taken {:?}", max_size, cpus_per_job, window, elapsed);
+
         let subtime = Instant::now();
 
         let exps = vec![&scalars[0][..], &scalars[1][..]];
@@ -1998,9 +2012,10 @@ pub(crate) mod test {
         assert!(worker.cpus >= 16, "should be tested only on large machines");
         
         let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
-        let cpus = vec![8, 12, 16, 24, 32, 48, 64, 96];
-        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
-        test_future_based_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+        let cpus = vec![8, 12, 16, 24, 32, 48];
+        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        // test_future_based_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+        test_future_based_multiexps_over_window_sizes_bn254_compact(max_size, sizes, cpus, windows);
     }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(
