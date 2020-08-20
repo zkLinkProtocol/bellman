@@ -1355,6 +1355,7 @@ pub fn buffered_multiexp_over_fixed_window_and_buffer_size<G: CurveAffine>(
         num_runs += 1;
     }
 
+    println!("Will spawn {} threads", num_runs);
     let mut subresults = vec![<G as CurveAffine>::Projective::zero(); num_runs];
 
     pool.scope(0, |scope, _| {
