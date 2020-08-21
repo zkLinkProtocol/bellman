@@ -2545,7 +2545,7 @@ mod test {
             use crate::plonk::fft::cooley_tukey_ntt::*;
 
             let omegas_bitreversed = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
-            for cpus in vec![16, 32, 48, 64] {
+            for cpus in vec![4, 8, 16, 32] {
             // for cpus in vec![16, 24, 32] {
 
                 use std::time::Instant;

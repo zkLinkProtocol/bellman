@@ -2018,10 +2018,6 @@ pub fn l3_shared_multexp<G: CurveAffine>(
     exponents_set: &[&[<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr]],
 ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
 {
-    // use std::sync::atomic::{AtomicUsize, Ordering};
-
-    // static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
-
     for exponents in exponents_set.iter() {
         if exponents.len() != common_bases.len() {
             return Err(SynthesisError::AssignmentMissing);
@@ -2032,6 +2028,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
     const WINDOW_SIZE: u32 = 12;
     const MASK: u64 = (1u64 << WINDOW_SIZE) - 1;
     const NUM_BUCKETS: usize = 1 << WINDOW_SIZE;
+    const SYNCHRONIZATION_STEP: usize = 1 << 14; // if element size is 64 = 2^7 bytes then we take around 2^21 = 2MB of cache
 
     assert!((WINDOW_SIZE as usize) * NUM_WINDOWS >= 254);
 
@@ -2062,12 +2059,30 @@ pub fn l3_shared_multexp<G: CurveAffine>(
 
     let limit = common_bases.len() - 2;
 
+    use std::sync::Barrier;
+    let num_threads = NUM_WINDOWS * exponents_set.len();
+    let num_sync_rounds = limit / SYNCHRONIZATION_STEP;
+    let mut barriers = Vec::with_capacity(num_threads);
+    for _ in 0..num_threads {
+        let mut tt = Vec::with_capacity(num_sync_rounds);
+        for _ in 0..num_sync_rounds {
+            let t = Barrier::new(num_threads);
+            tt.push(t);
+        }
+        barriers.push(tt);
+    }
+
+    let barrs = &barriers;
+
     pool.scope(0, |scope, _| {
+        let mut barrier_idx = 0;
         for (exponents_idx, exponents) in exponents_set.iter().enumerate() {
             // first one is unrolled manually
+            let per_thread_barriers = &barrs[barrier_idx];
             let mut start = 0;
             if exponents_idx == 0 {
                 scope.spawn(move |_| {
+                    let mut barriers_it = per_thread_barriers.iter();
                     let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
 
                     let tmp = exponents[0];
@@ -2094,6 +2109,10 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         // unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
                         // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                         // this_index = next_index;
+
+                        if i & (SYNCHRONIZATION_STEP - 1) == 1 {
+                            barriers_it.next().unwrap().wait();
+                        }
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
@@ -2111,6 +2130,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
             } else {
                 // we do not to prefetch bases, only exponents
                 scope.spawn(move |_| {
+                    let mut barriers_it = per_thread_barriers.iter();
                     let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
 
                     let tmp = exponents[0];
@@ -2136,6 +2156,10 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         // unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
                         // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                         // this_index = next_index;
+
+                        if i & (SYNCHRONIZATION_STEP - 1) == 1 {
+                            barriers_it.next().unwrap().wait();
+                        }
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
@@ -2152,15 +2176,15 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                 });
             }
 
-            // for _ in 0..128 {
-            //     let _ = GLOBAL_THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
-            // }
-            // std::thread::sleep(std::time::Duration::from_nanos(100));
+            barrier_idx += 1;
 
             for _ in 1..NUM_WINDOWS {
+                let per_thread_barriers = &barrs[barrier_idx];
+                barrier_idx += 1;
                 // no L3 prefetches here
                 start += WINDOW_SIZE as usize;
                 scope.spawn(move |_| {
+                    let mut barriers_it = per_thread_barriers.iter();
                     let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
 
                     let tmp = exponents[0];
@@ -2185,6 +2209,10 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         // unsafe { buckets.get_unchecked_mut(this_index).add_assign_mixed(&base) };
                         // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                         // this_index = next_index;
+
+                        if i & (SYNCHRONIZATION_STEP - 1) == 1 {
+                            barriers_it.next().unwrap().wait();
+                        }
                     }
 
                     // buckets are filled with the corresponding accumulated value, now sum
