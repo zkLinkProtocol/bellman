@@ -1805,8 +1805,10 @@ pub(crate) mod test {
         test_l3_shared_multiexp::<Bn256>(1, 1 << 25, 24, 16);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(3, 1 << 24, 16, 16);
-        test_l3_shared_multiexp::<Bn256>(3, 1 << 25, 16, 16);
+        test_l3_shared_multiexp::<Bn256>(3, 1 << 24, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(3, 1 << 25, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(4, 1 << 24, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(4, 1 << 25, 24, 12);
         test_optimal_multiexp::<Bn256>(1, 1 << 24, 24, 12, true);
         test_optimal_multiexp::<Bn256>(1, 1 << 25, 24, 12, true);
         test_optimal_multiexp::<Bn256>(1, 1 << 24, 16, 16, true);
