@@ -2110,7 +2110,8 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                         // this_index = next_index;
 
-                        if i & (SYNCHRONIZATION_STEP - 1) == 1 {
+                        // i != 0 and i % SYNCHRONIZATION_STEP == 0
+                        if i !=0 && (i & (SYNCHRONIZATION_STEP - 1)) == 0 {
                             barriers_it.next().unwrap().wait();
                         }
                     }
@@ -2157,7 +2158,8 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                         // this_index = next_index;
 
-                        if i & (SYNCHRONIZATION_STEP - 1) == 1 {
+                        // i != 0 and i % SYNCHRONIZATION_STEP == 0
+                        if i !=0 && (i & (SYNCHRONIZATION_STEP - 1)) == 0 {
                             barriers_it.next().unwrap().wait();
                         }
                     }
@@ -2176,11 +2178,9 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                 });
             }
 
-            barrier_idx += 1;
-
             for _ in 1..NUM_WINDOWS {
-                let per_thread_barriers = &barrs[barrier_idx];
                 barrier_idx += 1;
+                let per_thread_barriers = &barrs[barrier_idx];
                 // no L3 prefetches here
                 start += WINDOW_SIZE as usize;
                 scope.spawn(move |_| {
@@ -2210,7 +2210,8 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                         // unsafe { crate::prefetch::prefetch_l1(buckets.get_unchecked(next_index)) };
                         // this_index = next_index;
 
-                        if i & (SYNCHRONIZATION_STEP - 1) == 1 {
+                        // i != 0 and i % SYNCHRONIZATION_STEP == 0
+                        if i !=0 && (i & (SYNCHRONIZATION_STEP - 1)) == 0 {
                             barriers_it.next().unwrap().wait();
                         }
                     }
