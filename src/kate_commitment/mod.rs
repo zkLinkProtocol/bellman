@@ -1799,14 +1799,6 @@ pub(crate) mod test {
     fn test_l3_shared_multiexp_bn254() {
         // use crate::pairing::bn256::Bn256;
         use crate::pairing::compact_bn256::Bn256;
-        test_l3_shared_multiexp::<Bn256>(1, 1 << 24, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(1, 1 << 25, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(1, 1 << 24, 24, 16);
-        test_l3_shared_multiexp::<Bn256>(1, 1 << 25, 24, 16);
-        test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(3, 1 << 24, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(3, 1 << 25, 24, 12);
         test_l3_shared_multiexp::<Bn256>(4, 1 << 24, 24, 12);
         test_l3_shared_multiexp::<Bn256>(4, 1 << 25, 24, 12);
         test_optimal_multiexp::<Bn256>(1, 1 << 24, 24, 12, true);
@@ -1854,6 +1846,8 @@ pub(crate) mod test {
             for i in 0..j {
                 exps.push(&scalars[i][..]);
             }
+
+            println!("Running for {} parallel job", j);
             let _ = multiexp::l3_shared_multexp(
                 &subworker,
                 &bases[0][..],
