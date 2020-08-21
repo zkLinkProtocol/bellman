@@ -1799,12 +1799,20 @@ pub(crate) mod test {
     fn test_l3_shared_multiexp_bn254() {
         // use crate::pairing::bn256::Bn256;
         use crate::pairing::compact_bn256::Bn256;
+        test_l3_shared_multiexp::<Bn256>(1, 1 << 24, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(1, 1 << 25, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(1, 1 << 24, 24, 16);
+        test_l3_shared_multiexp::<Bn256>(1, 1 << 25, 24, 16);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
         test_l3_shared_multiexp::<Bn256>(3, 1 << 24, 16, 16);
         test_l3_shared_multiexp::<Bn256>(3, 1 << 25, 16, 16);
-        test_optimal_multiexp::<Bn256>(2, 1 << 24, 22, 12, true);
-        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
+        test_optimal_multiexp::<Bn256>(1, 1 << 24, 24, 12, true);
+        test_optimal_multiexp::<Bn256>(1, 1 << 25, 24, 12, true);
+        test_optimal_multiexp::<Bn256>(1, 1 << 24, 16, 16, true);
+        test_optimal_multiexp::<Bn256>(1, 1 << 25, 16, 16, true);
+        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
+        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 12, true);
         test_optimal_multiexp::<Bn256>(3, 1 << 24, 16, 16, true);
         test_optimal_multiexp::<Bn256>(3, 1 << 25, 16, 16, true);
     }
