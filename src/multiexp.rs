@@ -2062,27 +2062,21 @@ pub fn l3_shared_multexp<G: CurveAffine>(
     use std::sync::Barrier;
     let num_threads = NUM_WINDOWS * exponents_set.len();
     let num_sync_rounds = limit / SYNCHRONIZATION_STEP;
-    let mut barriers = Vec::with_capacity(num_threads);
-    for _ in 0..num_threads {
-        let mut tt = Vec::with_capacity(num_sync_rounds);
-        for _ in 0..num_sync_rounds {
-            let t = Barrier::new(num_threads);
-            tt.push(t);
-        }
-        barriers.push(tt);
+    let mut barriers = Vec::with_capacity(num_sync_rounds);
+    for _ in 0..num_sync_rounds {
+        let t = Barrier::new(num_threads);
+        barriers.push(t);
     }
 
     let barrs = &barriers;
 
     pool.scope(0, |scope, _| {
-        let mut barrier_idx = 0;
         for (exponents_idx, exponents) in exponents_set.iter().enumerate() {
             // first one is unrolled manually
-            let per_thread_barriers = &barrs[barrier_idx];
             let mut start = 0;
             if exponents_idx == 0 {
                 scope.spawn(move |_| {
-                    let mut barriers_it = per_thread_barriers.iter();
+                    let mut barriers_it = barrs.iter();
                     let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
 
                     let tmp = exponents[0];
@@ -2131,7 +2125,7 @@ pub fn l3_shared_multexp<G: CurveAffine>(
             } else {
                 // we do not to prefetch bases, only exponents
                 scope.spawn(move |_| {
-                    let mut barriers_it = per_thread_barriers.iter();
+                    let mut barriers_it = barrs.iter();
                     let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
 
                     let tmp = exponents[0];
@@ -2179,12 +2173,10 @@ pub fn l3_shared_multexp<G: CurveAffine>(
             }
 
             for _ in 1..NUM_WINDOWS {
-                barrier_idx += 1;
-                let per_thread_barriers = &barrs[barrier_idx];
                 // no L3 prefetches here
                 start += WINDOW_SIZE as usize;
                 scope.spawn(move |_| {
-                    let mut barriers_it = per_thread_barriers.iter();
+                    let mut barriers_it = barrs.iter();
                     let mut buckets = vec![<G as CurveAffine>::Projective::zero(); NUM_BUCKETS];
 
                     let tmp = exponents[0];
