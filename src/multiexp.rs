@@ -2018,11 +2018,10 @@ pub fn l3_shared_multexp<G: CurveAffine>(
     exponents_set: &[&[<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr]],
 ) -> Result<<G as CurveAffine>::Projective, SynthesisError>
 {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    // use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+    // static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    assert!(exponents_set.len() <= 2, "only support unroll by 2 for now");
     for exponents in exponents_set.iter() {
         if exponents.len() != common_bases.len() {
             return Err(SynthesisError::AssignmentMissing);
@@ -2153,9 +2152,9 @@ pub fn l3_shared_multexp<G: CurveAffine>(
                 });
             }
 
-            for _ in 0..128 {
-                let _ = GLOBAL_THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
-            }
+            // for _ in 0..128 {
+            //     let _ = GLOBAL_THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
+            // }
             // std::thread::sleep(std::time::Duration::from_nanos(100));
 
             for _ in 1..NUM_WINDOWS {

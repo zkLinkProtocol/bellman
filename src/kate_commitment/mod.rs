@@ -1797,12 +1797,16 @@ pub(crate) mod test {
     #[ignore]
     #[test]
     fn test_l3_shared_multiexp_bn254() {
-        use crate::pairing::bn256::Bn256;
-        // use crate::pairing::compact_bn256::Bn256;
+        // use crate::pairing::bn256::Bn256;
+        use crate::pairing::compact_bn256::Bn256;
         test_l3_shared_multiexp::<Bn256>(2, 1 << 24, 24, 12);
         test_l3_shared_multiexp::<Bn256>(2, 1 << 25, 24, 12);
+        test_l3_shared_multiexp::<Bn256>(3, 1 << 24, 16, 16);
+        test_l3_shared_multiexp::<Bn256>(3, 1 << 25, 16, 16);
         test_optimal_multiexp::<Bn256>(2, 1 << 24, 22, 12, true);
         test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
+        test_optimal_multiexp::<Bn256>(3, 1 << 24, 16, 16, true);
+        test_optimal_multiexp::<Bn256>(3, 1 << 25, 16, 16, true);
     }
 
     fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
@@ -1833,33 +1837,25 @@ pub(crate) mod test {
             scalars.push(s);
         }
 
-        let subworker = Worker::new_with_cpus(cpus_per_job * max_parallel_jobs);
+        for j in 1..=max_parallel_jobs {
+            let subworker = Worker::new_with_cpus(cpus_per_job * j);
 
-        let subtime = Instant::now();
+            let subtime = Instant::now();
 
-        let exps = vec![&scalars[0][..]];
-        let _ = multiexp::l3_shared_multexp(
-            &subworker,
-            &bases[0][..],
-            &exps[..],
-        ).unwrap();
-
-        let elapsed = subtime.elapsed();
-
-        println!("L3 shared multiexp for 1 job of size {} with {} CPUs per job and {} bits window taken {:?}", max_size, cpus_per_job, window, elapsed);
-
-        let subtime = Instant::now();
-
-        let exps = vec![&scalars[0][..], &scalars[1][..]];
-        let _ = multiexp::l3_shared_multexp(
-            &subworker,
-            &bases[0][..],
-            &exps[..],
-        ).unwrap();
-
-        let elapsed = subtime.elapsed();
-
-        println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", max_parallel_jobs, max_size, cpus_per_job, window, elapsed);
+            let mut exps = vec![];
+            for i in 0..j {
+                exps.push(&scalars[i][..]);
+            }
+            let _ = multiexp::l3_shared_multexp(
+                &subworker,
+                &bases[0][..],
+                &exps[..],
+            ).unwrap();
+    
+            let elapsed = subtime.elapsed();
+    
+            println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", max_parallel_jobs, max_size, cpus_per_job, window, elapsed);
+        }
     }
 
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
