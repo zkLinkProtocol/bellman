@@ -1860,7 +1860,7 @@ pub(crate) mod test {
     
             let elapsed = subtime.elapsed();
     
-            println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", max_parallel_jobs, max_size, cpus_per_job, window, elapsed);
+            println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", j, max_size, cpus_per_job, window, elapsed);
         }
     }
 
