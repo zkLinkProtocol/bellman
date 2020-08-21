@@ -1809,6 +1809,8 @@ pub(crate) mod test {
         test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 12, true);
         test_optimal_multiexp::<Bn256>(3, 1 << 24, 16, 16, true);
         test_optimal_multiexp::<Bn256>(3, 1 << 25, 16, 16, true);
+        test_optimal_multiexp::<Bn256>(4, 1 << 24, 16, 16, true);
+        test_optimal_multiexp::<Bn256>(4, 1 << 25, 16, 16, true);
     }
 
     fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
