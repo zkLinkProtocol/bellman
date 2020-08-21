@@ -2428,6 +2428,31 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         Ok(this)
     }
+
+    /// taken in natural enumeration
+    /// outputs in natural enumeration
+    pub fn fft_using_bitreversed_ntt_output_bitreversed<P: CTPrecomputations<F>>(
+        self, 
+        worker: &Worker, 
+        precomputed_omegas: &P,
+        coset_generator: &F
+    ) -> Result<Polynomial<F, Values>, SynthesisError> {
+        if self.coeffs.len() <= worker.cpus * 4 {
+            return Ok(self.coset_fft_for_generator(&worker, *coset_generator));
+        }
+
+        let mut this = self;
+        if coset_generator != &F::one() {
+            this.distribute_powers(&worker, *coset_generator);
+        }
+
+        let mut coeffs: Vec<_> = this.coeffs;
+        let exp = this.exp;
+        cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        let this = Polynomial::from_values(coeffs)?;
+    
+        Ok(this)
+    }
 }
 
 #[cfg(test)]
@@ -2539,6 +2564,51 @@ mod test {
                 ).unwrap();
 
                 println!("Total LDE time for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_fft_scaling() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        assert!(worker.cpus >= 16, "should be tested only on large machines");
+    
+        let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
+
+        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
+            let poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
+            use crate::plonk::fft::cooley_tukey_ntt::*;
+
+            let omegas_bitreversed = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
+            for cpus in vec![4, 8, 16, 32] {
+            // for cpus in vec![16, 24, 32] {
+
+                use std::time::Instant;
+
+                let subworker = Worker::new_with_cpus(cpus);
+
+                let poly = poly.clone();
+
+                let now = Instant::now();
+
+                let _ = poly.fft_using_bitreversed_ntt_output_bitreversed(
+                    &subworker,
+                    &omegas_bitreversed,
+                    &Fr::one()
+                    // &Fr::multiplicative_generator()
+                ).unwrap();
+
+                println!("Total FFT time time for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
             }
         }
     }
