@@ -1824,8 +1824,6 @@ pub(crate) mod test {
         let mut scalars = vec![];
         let worker = Worker::new();
 
-        assert_eq!(max_parallel_jobs, 2);
-
         use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
         let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
