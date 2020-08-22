@@ -8,5 +8,9 @@ pub mod proof;
 pub mod verifier;
 pub mod trees;
 
+pub mod gadgets;
+pub mod hashes;
+
+
 #[cfg(feature = "redshift")]
 pub mod redshift;

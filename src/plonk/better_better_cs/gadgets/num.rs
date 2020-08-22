@@ -73,6 +73,20 @@ impl<E: Engine> AllocatedNum<E> {
         })
     }
 
+    pub fn alloc_zero<CS>(
+        cs: &mut CS,
+    ) -> Result<Self, SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        let mut new_value = Some(E::Fr::zero());
+        let var = CS::get_dummy_variable();
+
+        Ok(AllocatedNum {
+            value: new_value,
+            variable: var
+        })
+    }
+
     pub fn add<CS>(
         &self,
         cs: &mut CS,
@@ -181,4 +195,10 @@ impl<E: Engine> AllocatedNum<E> {
     {
         self.mul(cs, &self)
     }
+}
+
+
+pub enum Num<E: Engine> {
+    Alocated(AllocatedNum<E>),
+    Constant(E::Fr),
 }

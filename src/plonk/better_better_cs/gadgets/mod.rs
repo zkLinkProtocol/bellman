@@ -1,3 +1,3 @@
-mod num;
-mod rescue;
-mod assignment;
+pub mod num;
+//mod rescue;
+pub mod assignment;
