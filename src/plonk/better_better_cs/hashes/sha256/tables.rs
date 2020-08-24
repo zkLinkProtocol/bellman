@@ -278,7 +278,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256NormalizationTable<E> {
 // However, having a table of such a small size is not that usefulm hence we go into operating on several bits (or chunks) at once:
 // assuming that x = \sum_{i = 0}^{num_chunks - 1} x_i 7^i, out table entry is (x, y), 
 // where y = \sum_{i = 0}^{num_chunks - 1} f(x_i) 2^i.
-const SHA256_CHOOSE_BASE: usize = 7;
+pub const SHA256_CHOOSE_BASE: usize = 7;
 #[derive(Clone)]
 pub struct Sha256ChooseTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 3],
@@ -426,7 +426,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256ChooseTable<E> {
 // | 1 | 0 | 1 | 1 |           2 |
 // | 1 | 1 | 0 | 1 |           2 |
 // | 1 | 1 | 1 | 0 |           3 |
-const SHA256_MAJORITY_BASE: usize = 4;
+pub const SHA256_MAJORITY_BASE: usize = 4;
 #[derive(Clone)]
 pub struct Sha256MajorityTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 3],

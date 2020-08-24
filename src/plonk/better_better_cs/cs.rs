@@ -1335,7 +1335,7 @@ pub trait ConstraintSystem<E: Engine> {
     fn get_explicit_zero(&mut self) -> Result<Variable, SynthesisError>;
     fn get_explicit_one(&mut self) -> Result<Variable, SynthesisError>;
 
-    fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<(), SynthesisError>;
+    fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<Arc<LookupTableApplication<E>>, SynthesisError>;
     fn get_table(&self, functional_name: &str) -> Result<Arc<LookupTableApplication<E>>, SynthesisError>; 
 
     fn add_multitable(&mut self, table: MultiTableApplication<E>) -> Result<(), SynthesisError>;
@@ -1713,7 +1713,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(one)
     }
 
-    fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<(), SynthesisError> {
+    fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<Arc<LookupTableApplication<E>>, SynthesisError> {
         assert!(table.applies_over().len() == 3, "only support tables of width 3");
         assert!(table.can_be_combined(), "can only add tables that are combinable");
         assert!(!self.known_table_ids.contains(&table.table_id()));
@@ -1721,14 +1721,17 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let table_id = table.table_id();
         let number_of_entries = table.size();
 
-        self.tables.push(Arc::from(table));
+        let shared = Arc::from(table);
+        let res = shared.clone();
+
+        self.tables.push(shared);
         self.individual_table_entries.insert(table_name.clone(), vec![]);
         self.table_selectors.insert(table_name, BitVec::new());
         self.known_table_ids.push(table_id);
 
         self.total_length_of_all_tables += number_of_entries;
 
-        Ok(())
+        Ok(res)
     }
 
     fn get_table(&self, name: &str) -> Result<Arc<LookupTableApplication<E>>, SynthesisError> {

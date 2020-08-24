@@ -18,6 +18,7 @@ use crate::plonk::better_better_cs::gadgets::assignment::{
 use super::utils::*;
 use super::tables::*;
 use super::custom_gates::*;
+use std::sync::Arc;
 
 
 type Result<T> = std::result::Result<T, SynthesisError>;
@@ -43,12 +44,50 @@ pub struct SparseMajValue<E: Engine> {
 
 
 pub struct Sha256GadgetParams<E: Engine> {
-    num_of_blocks: usize,
+    //num_of_blocks: usize,
+    sha256_base7_rot6_table: Arc<LookupTableApplication<E>>,
+    sha256_base7_rot3_extr10_table: Arc<LookupTableApplication<E>>,
     _marker: std::marker::PhantomData<E>,
 }
 
+const CH_GADGET_CHUNK_SIZE : usize = 11; 
+
 
 impl<E: Engine> Sha256GadgetParams<E> {
+
+    pub fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
+
+        let columns = vec![
+            PolyIdentifier::VariablesPolynomial(0), 
+            PolyIdentifier::VariablesPolynomial(1), 
+            PolyIdentifier::VariablesPolynomial(2)
+        ];
+
+        let name1: &'static str = "sha256_base7_rot6_table";
+        let sha256_base7_rot6_table = LookupTableApplication::new(
+            name1,
+            Sha256SparseRotateTable::new(CH_GADGET_CHUNK_SIZE, 6, 0, SHA256_CHOOSE_BASE, name1),
+            columns.clone(),
+            true
+        );
+
+        let name2 : &'static str = "sha256_base7_rot3_extr10_table";
+        let sha256_base7_rot3_extr10_table = LookupTableApplication::new(
+            name2,
+            Sha256SparseRotateTable::new(CH_GADGET_CHUNK_SIZE, 3, CH_GADGET_CHUNK_SIZE-1, SHA256_CHOOSE_BASE, name2),
+            columns.clone(),
+            true
+        );
+
+        let sha256_base7_rot6_table = cs.add_table(sha256_base7_rot6_table)?;
+        let sha256_base7_rot3_extr10_table = cs.add_table(sha256_base7_rot3_extr10_table)?;
+    
+        Ok(Sha256GadgetParams {
+            sha256_base7_rot6_table,
+            sha256_base7_rot3_extr10_table,
+            _marker : std::marker::PhantomData,
+        })
+    }
 
     // here we assume that maximal overflow is not more than 2 bits
     // we return both the extracted 32bit value and the overflow
@@ -141,92 +180,170 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok(res)
     }
 
-    pub fn convert_into_sparse_chooser_form<CS>(cs: mut &CS, input: &Num<E>, overflow_check: bool) -> Result<SparseChValue<E>> 
+    fn converter_helper(n: u64, sparse_base: usize, rotation: usize, extraction: usize) -> E::Fr {
+        
+        let t = map_into_sparse_form(rotate_extract(n as usize, rotation, extraction), sparse_base);
+        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
+        repr.as_mut()[0] = t as u64;
+        E::Fr::from_repr(repr).expect("should parse")
+    }
+
+    fn allocated_converted_num<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        var: &AllocatedNum<E>, 
+        chunk_bitlen: usize, 
+        chunk_num: usize, 
+        sparse_base: usize,
+        rotation: usize, 
+        extraction: usize
+    ) -> Result<AllocatedNum<E>> 
+    {
+        let new_val = var.get_value().map( |fr| {
+            let mut repr = fr.into_repr();
+            let n = (repr.as_ref()[0] >> (chunk_bitlen * chunk_num)) & ((1 << chunk_bitlen) - 1);
+            Self::converter_helper(n, sparse_base, rotation, extraction)
+        });
+
+        AllocatedNum::alloc(cs, || new_val.grab())
+    }
+
+    pub fn query_table1<CS>(cs: &mut CS, table: Arc<LookupTableApplication<E>>, key: &AllocatedNum<E>) -> Result<AllocatedNum<E>> 
     where CS: ConstraintSystem<E>
+    {
+        let res = match key.get_value() {
+            None => AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
+            Some(val) => {
+                let new_val = table.query(&[val])?[0];
+                AllocatedNum::alloc(cs, || Ok(new_val))?
+            },     
+        };
+
+        cs.begin_gates_batch_for_step()?;
+
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+        let vars = [key.get_variable(), res.get_variable(), dummy, dummy];
+        cs.allocate_variables_without_gate(
+            &vars,
+            &[]
+        )?;
+        cs.apply_single_lookup_gate(&vars[..table.width()], table)?;
+
+        cs.end_gates_batch_for_step()?;
+
+        Ok(res)
+    }
+
+    pub fn query_table2<CS: ConstraintSystem<E>>(
+        cs: &mut CS, 
+        table: Arc<LookupTableApplication<E>>, 
+        key: &AllocatedNum<E>
+    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>)> 
+    {
+        let res = match key.get_value() {
+            None => (
+                AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?, 
+                AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?
+            ),
+            Some(val) => {
+                let new_vals = table.query(&[val])?;
+                (
+                    AllocatedNum::alloc(cs, || Ok(new_vals[0]))?,
+                    AllocatedNum::alloc(cs, || Ok(new_vals[1]))?
+                )
+            },     
+        };
+
+        cs.begin_gates_batch_for_step()?;
+
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+        let vars = [key.get_variable(), res.0.get_variable(), res.1.get_variable(), dummy];
+        cs.allocate_variables_without_gate(
+            &vars,
+            &[]
+        )?;
+        cs.apply_single_lookup_gate(&vars[..table.width()], table)?;
+
+        cs.end_gates_batch_for_step()?;
+        Ok(res)
+    }
+
+    fn u64_to_ff(n: u64) -> E::Fr {
+        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
+        repr.as_mut()[0] = n;
+        E::Fr::from_repr(repr).expect("should parse")
+    }
+
+    pub fn convert_into_sparse_chooser_form<CS : ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        input: &Num<E>, 
+        overflow_check: bool
+    ) -> Result<SparseChValue<E>> 
     { 
-        let var = if overflow_check { Self::extact_32_from_overflowed_num(cs, input) } else { *input };
+        let var = if overflow_check { Self::extact_32_from_overflowed_num(cs, input)? } else { *input };
         
         match var {
             Num::Constant(x) => {
                 let repr = x.into_repr();
-                let n = repr.as_ref()[0]; 
+                // NOTE : think, if it is safe for n to be overflowed
+                let n = repr.as_ref()[0] & ((1 << 32) - 1); 
                 
                 let res = SparseChValue {
                     normal: Num::Constant(x),
-                    sparse: Num::Constant(map_into_sparse_form(n, SHA256_CHOOSE_BASE)),
-                    rot6: Num::Constant(map_from_sparse_form(rotate_extract(n, 6, 0), SHA256_CHOOSE_BASE)),
-                    rot11: Num::Constant(map_from_sparse_form(rotate_extract(n, 11, 0), SHA256_CHOOSE_BASE)),
-                    rot25: Num::Constant(map_from_sparse_form(rotate_extract(n, 25, 0), SHA256_CHOOSE_BASE)),
+                    sparse: Num::Constant(Self::converter_helper(n, SHA256_CHOOSE_BASE, 0, 0)),
+                    rot6: Num::Constant(Self::converter_helper(n, SHA256_CHOOSE_BASE, 6, 0)),
+                    rot11: Num::Constant(Self::converter_helper(n, SHA256_CHOOSE_BASE, 11, 0)),
+                    rot25: Num::Constant(Self::converter_helper(n, SHA256_CHOOSE_BASE, 25, 0)),
                 };
 
                 return Ok(res)
             },
-            AllocatedNum(var) => {
+            Num::Allocated(var) => {
                 
-                // split our 32bit variable into 11-bit chunks
+                // split our 32bit variable into 11-bit chunks:
+                // there will be three chunks (low, mid, high) for 32bit number
+                // note that, we can deal here with possible 1-bit overflow: (as 3 * 11 = 33)
+                // in order to do this we allow extraction set to 10 for the table working with highest chunk
+                
+                let low = Self::allocated_converted_num(cs, var, CH_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
+                let mid = Self::allocated_converted_num(cs, var, CH_GADGET_CHUNK_SIZE, 1, 0, 0, 0)?;
+                let high = Self::allocated_converted_num(cs, var, CH_GADGET_CHUNK_SIZE, 2, 0, 0, CH_GADGET_CHUNK_SIZE - 1)?;
 
-                const CH_GADGET_CHUNK_SIZE : usize = 11; 
+                let (sparse_low, sparse_low_rot6) = Self::query_table2(cs, self.sha256_base7_rot6_table, &low)?;
+                let (sparse_mid, sparse_mid_rot6) = Self::query_table2(cs, self.sha256_base7_rot6_table, &mid)?;
+                let (sparse_high, sparse_high_rot3) = Self::query_table2(cs, self.sha256_base7_rot3_extr10_table, &high)?;
 
-                //     const uint64_t slice_maximum = (1 << 11) - 1;
-//     const uint64_t slice_values[3]{
-//         input & slice_maximum,
-//         (input >> 11) & slice_maximum,
-//         (input >> 22) & slice_maximum,
-//     };
+                // compose full normal = low + 2^11 * mid + 2^22 * high
+                AllocatedNum::ternary_lc_eq(
+                    cs, 
+                    &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
+                    &[low, mid, high],
+                    var,
+                )?;
 
-//     if (a.witness_index == UINT32_MAX) {
-//         result.normal = field_t<waffle::PLookupComposer>(ctx, input);
-//         result.sparse = field_t<waffle::PLookupComposer>(ctx, fr(numeric::map_into_sparse_form<4>(input)));
-//         result.rot2 = field_t<waffle::PLookupComposer>(
-//             ctx, fr(numeric::map_into_sparse_form<4>(numeric::rotate32((uint32_t)input, 2))));
-//         result.rot13 = field_t<waffle::PLookupComposer>(
-//             ctx, fr(numeric::map_into_sparse_form<4>(numeric::rotate32((uint32_t)input, 13))));
-//         result.rot22 = field_t<waffle::PLookupComposer>(
-//             ctx, fr(numeric::map_into_sparse_form<4>(numeric::rotate32((uint32_t)input, 22))));
-//         return result;
-//     }
+                // compose sparse = low_sparse + 7^11 * mid + 7^22 * high
+                constexpr fr limb_1_shift = uint256_t(7).pow(11);
+    constexpr fr limb_2_shift = uint256_t(7).pow(22);
+                fn allocated_converted_num<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        var: &AllocatedNum<E>, 
+        chunk_bitlen: usize, 
+        chunk_num: usize, 
+        sparse_base: usize,
+        rotation: usize, 
+        extraction: usize
 
-//     std::array<field_t<waffle::PLookupComposer>, 3> input_slices;
-//     for (size_t i = 0; i < 3; ++i) {
-//         input_slices[i] = field_t<waffle::PLookupComposer>(ctx);
-//         input_slices[i].witness_index = ctx->add_variable(barretenberg::fr(slice_values[i]));
-//     }
+                constexpr fr limb_1_shift = uint256_t(4).pow(11);
+                constexpr fr limb_2_shift = uint256_t(4).pow(22);
 
-//     std::array<field_t<waffle::PLookupComposer>, 3> s{
-//         witness_t<waffle::PLookupComposer>(ctx, numeric::map_into_sparse_form<4>(slice_values[0])),
-//         witness_t<waffle::PLookupComposer>(ctx, numeric::map_into_sparse_form<4>(slice_values[1])),
-//         witness_t<waffle::PLookupComposer>(ctx, numeric::map_into_sparse_form<4>(slice_values[2])),
-//     };
-//     std::array<field_t<waffle::PLookupComposer>, 3> s_rot{
-//         field_t<waffle::PLookupComposer>(ctx),
-//         field_t<waffle::PLookupComposer>(ctx),
-//         field_t<waffle::PLookupComposer>(ctx),
-//     };
+                constexpr fr rot2_limb_1_shift = uint256_t(4).pow(11 - 2);
+                constexpr fr rot2_limb_2_shift = uint256_t(4).pow(22 - 2);
 
-//     const std::array<uint32_t, 3> slice_indices{
-//         ctx->read_from_table(
-//             waffle::PLookupTableId::SHA256_BASE4_ROTATE2, input_slices[0].witness_index, s[0].witness_index),
-//         ctx->read_from_table(
-//             waffle::PLookupTableId::SHA256_BASE4_ROTATE2, input_slices[1].witness_index, s[1].witness_index),
-//         ctx->read_from_table(
-//             waffle::PLookupTableId::SHA256_BASE4_ROTATE2, input_slices[2].witness_index, s[2].witness_index),
-//     };
+                constexpr fr rot13_limb_0_shift = uint256_t(4).pow(32 - 11 - 2);
+                constexpr fr rot13_limb_2_shift = uint256_t(4).pow(22 - 11 - 2);
 
-//     s_rot[0].witness_index = slice_indices[0];
-//     s_rot[1].witness_index = slice_indices[1];
-//     s_rot[2].witness_index = slice_indices[2];
-
-//     constexpr fr limb_1_shift = uint256_t(4).pow(11);
-//     constexpr fr limb_2_shift = uint256_t(4).pow(22);
-
-//     constexpr fr rot2_limb_1_shift = uint256_t(4).pow(11 - 2);
-//     constexpr fr rot2_limb_2_shift = uint256_t(4).pow(22 - 2);
-
-//     constexpr fr rot13_limb_0_shift = uint256_t(4).pow(32 - 11 - 2);
-//     constexpr fr rot13_limb_2_shift = uint256_t(4).pow(22 - 11 - 2);
-
-//     constexpr fr rot22_limb_0_shift = uint256_t(4).pow(32 - 22);
-//     constexpr fr rot22_limb_1_shift = uint256_t(4).pow(32 - 22 + 11);
+                constexpr fr rot22_limb_0_shift = uint256_t(4).pow(32 - 22);
+                constexpr fr rot22_limb_1_shift = uint256_t(4).pow(32 - 22 + 11);
 
 //     result.normal = input_slices[0].add_two(input_slices[1] * field_t<waffle::PLookupComposer>(ctx, fr(1 << 11)),
 //                                             input_slices[2] * field_t<waffle::PLookupComposer>(ctx, fr(1 << 22)));
@@ -252,20 +369,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
 }
    
 
-
-// {
-//     waffle::PLookupComposer* ctx = a.get_context();
-
-//     sparse_maj_value result;
-
-//     const uint64_t input_full = uint256_t(a.get_value()).data[0];
-
-//     // TODO: USE RANGE PROOF TO CONSTRAIN INPUT
-//     const uint64_t input = (input_full & 0xffffffffUL);
-
-
-
-// }
 
 
 

@@ -2,6 +2,11 @@
 // due to our choices of base and input bit_length the sum never exceeds usize MAX VALUE
 pub fn map_into_sparse_form(input: usize, base: usize) -> usize
 {
+    // if base is zero, than no convertion is actually needed
+    if base == 0 {
+        return input;
+    }
+    
     let mut out : usize = 0;
     let mut base_accumulator : usize = 1;
     let mut converted = input;

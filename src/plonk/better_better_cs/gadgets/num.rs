@@ -78,7 +78,7 @@ impl<E: Engine> AllocatedNum<E> {
     ) -> Result<Self, SynthesisError>
         where CS: ConstraintSystem<E>
     {
-        let mut new_value = Some(E::Fr::zero());
+        let new_value = Some(E::Fr::zero());
         let var = CS::get_dummy_variable();
 
         Ok(AllocatedNum {
@@ -194,6 +194,57 @@ impl<E: Engine> AllocatedNum<E> {
         where CS: ConstraintSystem<E>
     {
         self.mul(cs, &self)
+    }
+
+    // given vector of coefs: [c0, c1, c2],
+    // vector of vars: [var0, var1, var2],
+    // and supposed result var,
+    // ccheck if var = c0 * var0 + c1 * var1 + c2 * var2
+    pub fn ternary_lc_eq<CS>(
+        cs: &mut CS,
+        coefs: &[E::Fr; 3],
+        vars: &[Self; 3],
+        res_var: &Self,
+    ) -> Result<(), SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        // check if equality indeed holds
+        match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value(), res_var.get_value()) {
+            (Some(val0), Some(val1), Some(val2), Some(res_val)) => {
+
+                let mut running_sum = val0;
+                running_sum.mul_assign(&coefs[0]);
+
+                let mut tmp = val1;
+                tmp.mul_assign(&coefs[1]);
+                running_sum.add_assign(tmp);
+
+                let mut tmp = val2;
+                tmp.mul_assign(&coefs[2]);
+                running_sum.add_assign(tmp);
+
+                assert_eq!(running_sum, res_val)
+            }
+            (_, _ , _ , _) => {},
+        };
+
+        let first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
+        first_term.scale(&coefs[0]);
+        let second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
+        second_term.scale(&coefs[0]);
+        let third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
+        third_term.scale(&coefs[0]);
+        let result_term = ArithmeticTerm::from_variable(res_var.get_variable());
+        
+        let mut term = MainGateTerm::new();
+        term.add_assign(first_term);
+        term.add_assign(second_term);
+        term.add_assign(third_term);
+        term.sub_assign(result_term);
+        cs.allocate_main_gate(term)?;
+
+        Ok(())
+
     }
 }
 
