@@ -19,6 +19,7 @@ use super::utils::*;
 use super::tables::*;
 use super::custom_gates::*;
 use std::sync::Arc;
+use crate::num_bigint::BigUint;
 
 
 type Result<T> = std::result::Result<T, SynthesisError>;
@@ -428,6 +429,12 @@ impl<E: Engine> Sha256GadgetParams<E> {
         res
     }
 
+    // returns closets upper integer to a / b
+    fn round_up(a: usize, b : usize) -> usize {
+        let additional_chunks : usize = if a % b > 0 {1} else {0};
+        a/b + additional_chunks
+    }
+
     fn convert_into_sparse_chooser_form<CS : ConstraintSystem<E>>(
         &self, 
         cs: &mut CS, 
@@ -772,19 +779,34 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // in any case we do not want to be two strict here, and allow NUM_OF_CHUNKS for bases 7 and 4
     // to be specified as constructor parameters for Sha256Gadget gadget
 
-    fn normalize<CS>(cs: &mut CS, input: &Num<E>, table: &Arc<LookupTableApplication<E>>, base: usize, num_chunks: usize) -> Num<E>
-    where CS: ConstraintSystem<E>
+    fn normalize<CS: ConstraintSystem<E>>(
+        cs: &mut CS, 
+        input: &Num<E>, 
+        table: &Arc<LookupTableApplication<E>>, 
+        base: usize, 
+        num_chunks: usize
+    ) -> Result<Num<E>>
     {
         match input {
             Num::Constant(x) => {
-                let output = table.query(&[val])?[0];
-                return Num::Constant(output);
+                let output = table.query(&[x.clone()])?[0];
+                return Ok(Num::Constant(output));
             }
             Num::Allocated(x) => {
                 // split and slice!
+                let num_slices = Self::round_up(SHA256_GADGET_CHUNK_SIZE, num_chunks);
+                let mut slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
+                let slice_modulus = pow(base, num_chunks);
+
+                // cretae bigUint from the variable!
+                
+                for i in 0..num_slices {
+
+                }
             }
         }
 
+        
        
 
         uint64_t base_product = 1;

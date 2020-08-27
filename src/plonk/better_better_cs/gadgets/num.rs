@@ -199,15 +199,18 @@ impl<E: Engine> AllocatedNum<E> {
     // given vector of coefs: [c0, c1, c2],
     // vector of vars: [var0, var1, var2],
     // and supposed result var,
-    // ccheck if var = c0 * var0 + c1 * var1 + c2 * var2
+    // check if var = c0 * var0 + c1 * var1 + c2 * var2
     pub fn ternary_lc_eq<CS>(
         cs: &mut CS,
-        coefs: &[E::Fr; 3],
-        vars: &[Self; 3],
+        coefs: &[E::Fr],
+        vars: &[Self],
         res_var: &Self,
     ) -> Result<(), SynthesisError>
         where CS: ConstraintSystem<E>
     {
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), 3);
+        
         // check if equality indeed holds
         match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value(), res_var.get_value()) {
             (Some(val0), Some(val1), Some(val2), Some(res_val)) => {
@@ -245,6 +248,62 @@ impl<E: Engine> AllocatedNum<E> {
 
         Ok(())
     }
+
+    // given vector of coefs: [c0, c1, c2],
+    // vector of vars: [var0, var1, var2],
+    // and constant_elem : c
+    // constrcuts if var = c0 * var0 + c1 * var1 + c2 * var2 + c
+    pub fn ternary_lc_with_const<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+        c: &E::Fr,
+    ) -> Result<Self, SynthesisError>
+    {
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), 3);
+        
+        let new_val = match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value()) {
+            (Some(val0), Some(val1), Some(val2)) => {
+
+                let mut running_sum = val0;
+                running_sum.mul_assign(&coefs[0]);
+
+                let mut tmp = val1;
+                tmp.mul_assign(&coefs[1]);
+                running_sum.add_assign(&tmp);
+
+                let mut tmp = val2;
+                tmp.mul_assign(&coefs[2]);
+                running_sum.add_assign(&tmp);
+
+                running_sum.add_assign(&c);
+                Some(running_sum)
+            },
+            (_, _ , _ ) => None,
+        };
+
+        let res_var = AllocatedNum::alloc(cs, || new_val.grab())?;
+
+        let mut first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
+        first_term.scale(&coefs[0]);
+        let mut second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
+        second_term.scale(&coefs[0]);
+        let mut third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
+        third_term.scale(&coefs[0]);
+        let result_term = ArithmeticTerm::from_variable(res_var.get_variable());
+        let const_term = ArithmeticTerm::constant(c.clone());
+        
+        let mut term = MainGateTerm::new();
+        term.add_assign(first_term);
+        term.add_assign(second_term);
+        term.add_assign(third_term);
+        term.sub_assign(result_term);
+        term.add_assign(const_term);
+        cs.allocate_main_gate(term)?;
+
+        Ok(res_var)
+    }
 }
 
 
@@ -273,7 +332,7 @@ impl<E: Engine> Num<E> {
     }
 
 
-    pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, coeffs: &[E::Fr], nums: &[Num<E>]) -> Num<E>
+    pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, coeffs: &[E::Fr], nums: &[Num<E>]) -> Result<Self, SynthesisError>
     {
         assert_eq!(coeffs.len(), nums.len());
 
@@ -286,20 +345,55 @@ impl<E: Engine> Num<E> {
                 temp
             });
 
-            return Num::Constant(value);
+            return Ok(Num::Constant(value));
         }
 
         // okay, from now one we may be sure that we have at least one allocated term
         let mut constant_term = E::Fr::zero();
-        let mut num_vars = 0;
-        let mut res = AllocatedNum::zero(cs);
+        let mut vars = Vec::with_capacity(3);
+        let mut coeffs = Vec::with_capacity(3);
         let mut first_lc = true;
+        let mut res_var = AllocatedNum::alloc_zero(cs)?;
 
         for (x, coef) in nums.iter().zip(coeffs.iter()) {
-            match num {
-                Num::Constant(x) => self.con
+            match x {
+                Num::Constant(x) => {
+                    let mut temp = x.clone();
+                    temp.mul_assign(&coef);
+                    constant_term.add_assign(&temp);
+                },
+                Num::Allocated(x) => {
+                    if vars.is_empty() && !first_lc {
+                        vars.push(res_var.clone());
+                        coeffs.push(E::Fr::one());
+                    }
+                    else if vars.len() < 3 
+                    {
+                        vars.push(x.clone());
+                        coeffs.push(coef.clone());
+                    }
+                    else {
+                        // we already have three elements in our vector
+                        first_lc = false;
+                        res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
+
+                        constant_term = E::Fr::zero();
+                        vars = Vec::with_capacity(3);
+                        coeffs = Vec::with_capacity(3);
+                    }
+                }
             }
         }
 
+        if !vars.is_empty() {
+            // pad with dummy variables
+            for i in vars.len()..4 {
+                vars.push(AllocatedNum::alloc_zero(cs)?);
+                coeffs.push(E::Fr::zero());
+            }
+            res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
+        }
+
+        Ok(Num::Allocated(res_var))
     }
 }
