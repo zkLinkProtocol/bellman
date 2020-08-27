@@ -74,7 +74,7 @@ impl<E: Engine> AllocatedNum<E> {
     }
 
     pub fn alloc_zero<CS>(
-        cs: &mut CS,
+        _cs: &mut CS,
     ) -> Result<Self, SynthesisError>
         where CS: ConstraintSystem<E>
     {
@@ -217,22 +217,22 @@ impl<E: Engine> AllocatedNum<E> {
 
                 let mut tmp = val1;
                 tmp.mul_assign(&coefs[1]);
-                running_sum.add_assign(tmp);
+                running_sum.add_assign(&tmp);
 
                 let mut tmp = val2;
                 tmp.mul_assign(&coefs[2]);
-                running_sum.add_assign(tmp);
+                running_sum.add_assign(&tmp);
 
                 assert_eq!(running_sum, res_val)
             }
             (_, _ , _ , _) => {},
         };
 
-        let first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
+        let mut first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
         first_term.scale(&coefs[0]);
-        let second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
+        let mut second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
         second_term.scale(&coefs[0]);
-        let third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
+        let mut third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
         third_term.scale(&coefs[0]);
         let result_term = ArithmeticTerm::from_variable(res_var.get_variable());
         
@@ -244,12 +244,62 @@ impl<E: Engine> AllocatedNum<E> {
         cs.allocate_main_gate(term)?;
 
         Ok(())
-
     }
 }
 
 
+#[derive(Clone)]
 pub enum Num<E: Engine> {
-    Alocated(AllocatedNum<E>),
+    Allocated(AllocatedNum<E>),
     Constant(E::Fr),
+}
+
+
+impl<E: Engine> Num<E> {
+    pub fn is_constant(&self) -> bool 
+    {
+        match self {
+            Num::Allocated(_) => false,
+            Num::Constant(_) => true,
+        }
+    }
+
+    pub fn get_value(&self) -> Option<E::Fr>
+    {
+        match self {
+            Num::Constant(x) => Some(x.clone()),
+            Num::Allocated(x) => x.get_value(),
+        }
+    }
+
+
+    pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, coeffs: &[E::Fr], nums: &[Num<E>]) -> Num<E>
+    {
+        assert_eq!(coeffs.len(), nums.len());
+
+        // corner case: all our values are actually constants
+        if nums.iter().all(|&x| x.is_constant()) {
+            let value = nums.iter().zip(coeffs.iter()).fold(E::Fr::zero(), |acc, (x, coef)| {
+                let mut temp = x.get_value().unwrap();
+                temp.mul_assign(&coef);
+                temp.add_assign(&acc);
+                temp
+            });
+
+            return Num::Constant(value);
+        }
+
+        // okay, from now one we may be sure that we have at least one allocated term
+        let mut constant_term = E::Fr::zero();
+        let mut num_vars = 0;
+        let mut res = AllocatedNum::zero(cs);
+        let mut first_lc = true;
+
+        for (x, coef) in nums.iter().zip(coeffs.iter()) {
+            match num {
+                Num::Constant(x) => self.con
+            }
+        }
+
+    }
 }

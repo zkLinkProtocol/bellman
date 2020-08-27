@@ -34,24 +34,27 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 // more precisely for given x of bitlength at maximal 34, we take y = x[0:32] - construct the previous table for x
 // where the last row will be of the form:
 //
-// +-----+-----+-----+-----+
-// |  A  |  B  |  C  |  D  |
-// +-----+-----+-----+-----+
-// |  x  | of  | 0   |  y  |
-// +-----+-----+-----+-----+
+// +-----+------+------+-----+
+// |  A  |  B   |  C   |  D  |
+// +-----+------+------+-----+
+// |  x  | of_l | of_h |  y  | 
+// +-----+------+----- +-----+
 //
 // with the following set of custom constraints (applied for the last row only):
-// x = y + of * 2^32
-// of * (of - 1) * (of - 2) * (of - 3) = 0 - to assure that overflow_bit is in range [0; 3]
-// the last two equations are checked by a combination of MainGate and a Custom In04Range gate over table B
+// x = y + of_l * 2^32 + of_h * 2^34
+// of_l * (of_l - 1) * (of_l - 2) * (of_l - 3) = 0 - to assure that lower overflow_bit is in range [0; 3]
+// of_h * (of_h - 1) * (of_h - 2) * (of_h - 3) = 0 - to assure that higher overflow_bit is in range [0; 3]
+// the last two equations are checked by a combination of MainGate and a Custom In04Range gate over columns B and C
 
 // for the composition of two successive rows 
 // +-----+-----+-----+-----+
 // |  A  |  B  |  C  |  D  |
 // +-----+-----+-----+-----+
 // | a3  | a2  | a1  | a0  |
+// |-----+-----|-----+-----+
 // | b3  | b2  | b1  | b0  |
 // +-----+-----+-----+-----+
+//
 // we require the following set of equations to hold:
 // a1 - 4 * a0 \in [0, 3]
 // a2 - 4 * a1 \in [0, 3]
@@ -390,13 +393,21 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
 impl<E: Engine> Gate<E> for RangeCheck32ConstraintGate {}
 
 
-// In04Range gate for B - checks that element in a row B (second row) is in range [0; 3]
+// In04Range gate: checks that element in a particular column is in range [0; 3]
 #[derive(Clone, Debug, Hash, Default)]
-pub struct In04BRangeGate;
+pub struct In04RangeGate {
+    column_idx : usize,
+}
 
-impl<E: Engine> GateInternal<E> for In04BRangeGate {
+impl In04RangeGate {
+    pub fn new(column_idx: usize) -> Self {
+        In04RangeGate { column_idx }
+    }
+}
+
+impl<E: Engine> GateInternal<E> for In04RangeGate {
     fn name(&self) -> &'static str {
-        "In range [0;3] gate for B"
+        "In range [0;3] gate"
     }
 
     fn degree(&self) -> usize {
@@ -409,7 +420,7 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
 
     fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
         vec![
-            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(self.column_idx)),
         ]
     }
 
@@ -419,7 +430,7 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
 
     fn variable_polynomials(&self) -> Vec<PolyIdentifier> {
         vec![
-            PolyIdentifier::VariablesPolynomial(1),
+            PolyIdentifier::VariablesPolynomial(self.column_idx),
         ]
     }
 
@@ -440,13 +451,13 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
     }
 
     fn verify_on_row<'a>(&self, row: usize, poly_storage: &AssembledPolynomialStorage<'a, E>, _last_row: bool) -> E::Fr {
-        let q_b = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(1), row);
+        let q = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(self.column_idx), row);
         
         // B * (B - 1) * (B - 2) * (B - 3)
-        let mut res = q_b;
+        let mut res = q;
         let one = E::Fr::one();
 
-        let mut tmp = q_b.clone();
+        let mut tmp = q.clone();
         tmp.sub_assign(&one);
         res.mul_assign(&tmp);
 
@@ -493,13 +504,13 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
 
         let ldes_storage = &*poly_storage;
 
-        let b_ref = get_from_map_unchecked(
-            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
+        let column_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(self.column_idx)),
             ldes_storage
         );
 
-        let mut tmp = b_ref.clone();
-        drop(b_ref);
+        let mut tmp = column_ref.clone();
+        drop(column_ref);
 
         let one = E::Fr::one();
 
@@ -517,6 +528,7 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
             }, 
         );
 
+        // TODO: think more carefully, if index here is indeed 0
         tmp.scale(&worker, challenges[0]);
 
         Ok(tmp)
@@ -541,9 +553,9 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
         challenges: &[E::Fr],
     ) -> Result<E::Fr, SynthesisError> {
         assert_eq!(challenges.len(), 1);
-        let b_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)))
+        let value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(self.column_idx)))
             .ok_or(SynthesisError::AssignmentMissing)?;
-        let mut result = b_value;
+        let mut result = value;
         let mut temp = result.clone();
 
         temp.sub_assign(&E::Fr::one());
@@ -578,7 +590,7 @@ impl<E: Engine> GateInternal<E> for In04BRangeGate {
     }
 }
 
-impl<E: Engine> Gate<E> for In04BRangeGate {}
+impl<E: Engine> Gate<E> for In04RangeGate {}
 
 
 
