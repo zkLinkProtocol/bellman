@@ -11,6 +11,7 @@ use crate::plonk::better_better_cs::gadgets::num::{
 };
 
 use super::tables::*;
+use super::converters::*;
 use crate::plonk::better_better_cs::gadgets::assignment::{
     Assignment
 };
@@ -88,8 +89,10 @@ impl<E: Engine> From<Num<E>> for NumWithTracker<E>
 }
 
 impl<E: Engine> NumWithTracker<E> {
-    pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self> {
+    pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Num<E>) -> Result<Self> {
+        match (self.num, other) => {
 
+        }
     }
 
     pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self> {
@@ -122,6 +125,18 @@ pub struct SparseMajValue<E: Engine> {
     rot2: Num<E>,
     rot13: Num<E>,
     rot22: Num<E>,
+}
+
+
+pub struct Sha256Registers<E: Engine> {
+    a : NumWithTracker<E>,
+    b : NumWithTracker<E>,
+    c : NumWithTracker<E>,
+    d : NumWithTracker<E>,
+    e : NumWithTracker<E>,
+    f : NumWithTracker<E>,
+    g : NumWithTracker<E>,
+    h : NumWithTracker<E>,
 }
 
 
@@ -835,7 +850,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // in any case we do not want to be two strict here, and allow NUM_OF_CHUNKS for bases 7 and 4
     // to be specified as constructor parameters for Sha256Gadget gadget
 
-    fn normalize<CS: ConstraintSystem<E>, F: Fn(&E::Fr) -> E::Fr>(
+    fn normalize<CS: ConstraintSystem<E>, F: Fn(E::Fr) -> E::Fr>(
         cs: &mut CS, 
         input: &Num<E>, 
         table: &Arc<LookupTableApplication<E>>, 
@@ -846,7 +861,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     {
         match input {
             Num::Constant(x) => {
-                let output = converter_func(x);
+                let output = converter_func(x.clone());
                 return Ok(Num::Constant(output));
             }
             Num::Allocated(x) => {
@@ -887,7 +902,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     output_slices.push(tmp);
                 }
 
-                let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(&fr)).grab())?;
+                let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
                 let input_base = Self::u64_exp_to_ff(input_slice_modulus as u64, 0);
                 let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
 
@@ -910,34 +925,56 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let t0 = Num::lc(cs, &[E::Fr::one(), two, three], &[e.sparse, f.sparse, g.sparse])?; 
         let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[e.rot6, e.rot11, e.rot25])?;
 
-        let r0 = Self::normalize(cs, &t0, &self.sha256_ch_normalization_table, SHA256_CHOOSE_BASE, self.ch_base_num_of_chunks)?;
-        let r1 = Self::normalize(cs, &t1, &self.sha256_ch_xor_table, SHA256_CHOOSE_BASE, self.ch_base_num_of_chunks)?;
+        let r0 = Self::normalize(
+            cs, &t0, 
+            &self.sha256_ch_normalization_table,
+            ch_map_normalizer,  
+            SHA256_CHOOSE_BASE, 
+            self.ch_base_num_of_chunks
+        )?;
+        let r1 = Self::normalize(
+            cs, &t1, 
+            &self.sha256_ch_xor_table, 
+            ch_xor_normalizer,
+            SHA256_CHOOSE_BASE, 
+            self.ch_base_num_of_chunks
+        )?;
 
         let r0 : NumWithTracker<E> = r0.into();
-        let r1 : NumWithTracker<E> = r1.into();
        
-        r0.add(cs, r1)
+        r0.add(cs, &r1)
     }
 
-    fn majority<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>) -> Result<NumWithTracker<E>>
+    fn majority<CS>(&self, cs: &mut CS, a: SparseMajValue<E>, b: SparseMajValue<E>, c: SparseMajValue<E>) -> Result<NumWithTracker<E>>
     where CS: ConstraintSystem<E>
-    {
-        let mut two = E::Fr::one();
-        two.double();
-        let mut three = two.clone();
-        three.add_assign(&E::Fr::one());
-        
-        let t0 = Num::lc(cs, &[E::Fr::one(), two, three], &[e.sparse, f.sparse, g.sparse])?; 
-        let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[e.rot6, e.rot11, e.rot25])?;
+    {   
+        let t0 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[a.sparse, b.sparse, c.sparse])?; 
+        let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[a.rot2, a.rot13, a.rot22])?;
 
-        let r0 = Self::normalize(cs, &t0, &self.sha256_ch_normalization_table, SHA256_CHOOSE_BASE, self.ch_base_num_of_chunks)?;
-        let r1 = Self::normalize(cs, &t1, &self.sha256_ch_xor_table, SHA256_CHOOSE_BASE, self.ch_base_num_of_chunks)?;
+        let r0 = Self::normalize(
+            cs, &t0, 
+            &self.sha256_maj_normalization_table,
+            maj_map_normalizer, 
+            SHA256_MAJORITY_BASE, 
+            self.maj_base_num_of_chunks
+        )?;
+        let r1 = Self::normalize(
+            cs, &t1, 
+            &self.sha256_maj_xor_table, 
+            maj_xor_normalizer,
+            SHA256_MAJORITY_BASE, 
+            self.maj_base_num_of_chunks
+        )?;
 
         let r0 : NumWithTracker<E> = r0.into();
         let r1 : NumWithTracker<E> = r1.into();
        
-        r0.add(cs, r1)
+        r0.add(cs, &r1)
     }
+
+    // one round of inner SHA256 cycle 
+    // the hash for single block of 512 chunks requires 64 such cycles
+    fn sha256_inner_block<CS: ConstraintSystem<E>>(cs: &mut CS, regs: Sha256Registers<E>, input: rounf_constant: )
 
 
 //     std::array<field_t<waffle::PLookupComposer>, 8> sha256_inner_block(

@@ -556,3 +556,4 @@ impl<E: Engine> LookupTableInternal<E> for Sha256MajorityTable<E> {
         Err(SynthesisError::Unsatisfiable)
     }
 }
+

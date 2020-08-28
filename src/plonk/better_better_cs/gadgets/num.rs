@@ -364,6 +364,13 @@ impl<E: Engine> Num<E> {
         }
     }
 
+    // pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
+    // {
+    //     mat
+    // }
+
+    // pub fn add_two
+
 
     pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, coeffs: &[E::Fr], nums: &[Num<E>]) -> Result<Self, SynthesisError>
     {
