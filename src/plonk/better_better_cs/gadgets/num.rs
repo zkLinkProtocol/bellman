@@ -304,6 +304,39 @@ impl<E: Engine> AllocatedNum<E> {
 
         Ok(res_var)
     }
+
+    // for given array of slices : [x0, x1, x2, ..., xn] of arbitrary length, base n and total accumulated x
+    // validates that x = x0 + x1 * base + x2 * base^2 + ... + xn * base^n
+    pub fn long_weighted_sum_eq<CS>(cs: &mut CS, vars: &[Self], base: &E::Fr, total: &Self) -> Result<(), SynthesisError>
+    where CS: ConstraintSystem<E>
+    {
+        let mut acc_fr = E::Fr::one();
+        let mut coeffs = Vec::with_capacity(4);
+        let mut current_vars = Vec::with_capacity(4);
+
+        for var in vars.iter() {
+            if vars.len() < 3 {
+                coeffs.push(acc_fr.clone());
+                acc_fr.mul_assign(&base);
+                current_vars.push(var.clone());
+            }
+            else {
+                // we have filled in the whole vector!
+                let temp = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
+                coeffs = vec![E::Fr::one()];
+                current_vars = vec![temp];
+            }
+        }
+
+        // pad with dummy variables
+        for _i in vars.len()..3 {
+            current_vars.push(AllocatedNum::alloc_zero(cs)?);
+            coeffs.push(E::Fr::zero());
+        }
+
+        AllocatedNum::ternary_lc_eq(cs, &coeffs[..], &vars[..], total)?;
+        Ok(())
+    }
 }
 
 
@@ -337,7 +370,7 @@ impl<E: Engine> Num<E> {
         assert_eq!(coeffs.len(), nums.len());
 
         // corner case: all our values are actually constants
-        if nums.iter().all(|&x| x.is_constant()) {
+        if nums.iter().all(| x | x.is_constant()) {
             let value = nums.iter().zip(coeffs.iter()).fold(E::Fr::zero(), |acc, (x, coef)| {
                 let mut temp = x.get_value().unwrap();
                 temp.mul_assign(&coef);
@@ -351,9 +384,12 @@ impl<E: Engine> Num<E> {
         // okay, from now one we may be sure that we have at least one allocated term
         let mut constant_term = E::Fr::zero();
         let mut vars = Vec::with_capacity(3);
-        let mut coeffs = Vec::with_capacity(3);
+        let mut local_coeffs = Vec::with_capacity(3);
         let mut first_lc = true;
         let mut res_var = AllocatedNum::alloc_zero(cs)?;
+
+        // Note: the whole thing may be a little more efficient with the use of custom gates
+        // exploiting (d_next)
 
         for (x, coef) in nums.iter().zip(coeffs.iter()) {
             match x {
@@ -365,21 +401,21 @@ impl<E: Engine> Num<E> {
                 Num::Allocated(x) => {
                     if vars.is_empty() && !first_lc {
                         vars.push(res_var.clone());
-                        coeffs.push(E::Fr::one());
+                        local_coeffs.push(E::Fr::one());
                     }
                     else if vars.len() < 3 
                     {
                         vars.push(x.clone());
-                        coeffs.push(coef.clone());
+                        local_coeffs.push(coef.clone());
                     }
                     else {
                         // we already have three elements in our vector
                         first_lc = false;
-                        res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
+                        res_var = AllocatedNum::ternary_lc_with_const(cs, &local_coeffs[..], &vars[..], &constant_term)?;
 
                         constant_term = E::Fr::zero();
                         vars = Vec::with_capacity(3);
-                        coeffs = Vec::with_capacity(3);
+                        local_coeffs = Vec::with_capacity(3);
                     }
                 }
             }
@@ -387,9 +423,9 @@ impl<E: Engine> Num<E> {
 
         if !vars.is_empty() {
             // pad with dummy variables
-            for i in vars.len()..4 {
+            for _i in vars.len()..3 {
                 vars.push(AllocatedNum::alloc_zero(cs)?);
-                coeffs.push(E::Fr::zero());
+                local_coeffs.push(E::Fr::zero());
             }
             res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
         }

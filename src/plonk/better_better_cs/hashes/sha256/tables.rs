@@ -273,7 +273,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256NormalizationTable<E> {
 // | 1 | 1 | 1 | 1 |           6 |
 // --------------------------------
 //
-// so there is a well defined function t = f(x) from x = e + 2f + 3g \in [0, 6] to t \in [0, 1].
+// so there is a well defined function "choose" t = f(x) from x = e + 2f + 3g \in [0, 6] to t \in [0, 1].
 // We construct a Sha256ChooserTable for accomplish this transformation.
 // However, having a table of such a small size is not that usefulm hence we go into operating on several bits (or chunks) at once:
 // assuming that x = \sum_{i = 0}^{num_chunks - 1} x_i 7^i, out table entry is (x, y), 
@@ -426,6 +426,8 @@ impl<E: Engine> LookupTableInternal<E> for Sha256ChooseTable<E> {
 // | 1 | 0 | 1 | 1 |           2 |
 // | 1 | 1 | 0 | 1 |           2 |
 // | 1 | 1 | 1 | 0 |           3 |
+//
+// this well-formed function f(x): [0; 3] -> [0;1] is called majority
 pub const SHA256_MAJORITY_BASE: usize = 4;
 #[derive(Clone)]
 pub struct Sha256MajorityTable<E: Engine> {

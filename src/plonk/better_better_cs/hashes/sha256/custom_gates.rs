@@ -405,6 +405,7 @@ impl In04RangeGate {
     }
 }
 
+
 impl<E: Engine> GateInternal<E> for In04RangeGate {
     fn name(&self) -> &'static str {
         "In range [0;3] gate"

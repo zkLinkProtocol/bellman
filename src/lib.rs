@@ -10,6 +10,8 @@ pub extern crate pairing;
 extern crate rand;
 extern crate bit_vec;
 extern crate byteorder;
+extern crate num_bigint;
+extern crate num_traits;
 
 pub use pairing::*;
 
