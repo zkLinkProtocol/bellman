@@ -439,4 +439,11 @@ impl<E: Engine> Num<E> {
 
         Ok(Num::Allocated(res_var))
     }
+
+    // same as lc but with all the coefficients set to be 1
+    pub fn sum<CS: ConstraintSystem<E>>(cs: &mut CS, nums: &[Num<E>]) -> Result<Self, SynthesisError>
+    {
+        let coeffs = vec![E::Fr::zero(); nums.len()];
+        Self::lc(cs, &coeffs[..], &nums[..])
+    }
 }

@@ -956,7 +956,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
             &self.sha256_maj_normalization_table,
             maj_map_normalizer, 
             SHA256_MAJORITY_BASE, 
-            self.maj_base_num_of_chunks
+            self.maj_base_num_of_chunks,
         )?;
         let r1 = Self::normalize(
             cs, &t1, 
@@ -974,72 +974,78 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
     // one round of inner SHA256 cycle 
     // the hash for single block of 512 chunks requires 64 such cycles
-    fn sha256_inner_block<CS: ConstraintSystem<E>>(cs: &mut CS, regs: Sha256Registers<E>, input: rounf_constant: )
+    fn sha256_inner_block<CS: ConstraintSystem<E>>(
+        &self,
+        cs: &mut CS, 
+        regs: Sha256Registers<E>, 
+        inputs: &[Num<E>], 
+        round_constants: &[E::Fr],
+        init_constants: &[E::Fr],
+    ) -> Result<Sha256Registers<E>>
+    {
+        let mut a = self.convert_into_sparse_majority_form(cs, regs.a)?;
+        let mut b = self.convert_into_sparse_majority_form(cs, regs.b)?;
+        let mut c = self.convert_into_sparse_majority_form(cs, regs.c)?;
+        let mut d = self.convert_into_sparse_majority_form(cs, regs.d)?;
+        let mut e = self.convert_into_sparse_chooser_form(cs, regs.e)?;
+        let mut f = self.convert_into_sparse_chooser_form(cs, regs.f)?;
+        let mut g = self.convert_into_sparse_chooser_form(cs, regs.g)?;
+        let mut h = self.convert_into_sparse_chooser_form(cs, regs.h)?;
 
+        for i in 0..64 {
+            let ch = self.choose(cs, e, f, g)?;
+            let maj = self.majority(a, b, c)?;
+            
+            // temp1 will be overflowed two much (4 bits in total), so we are going to reduce it in any case
+            // TODO: may be it is possible to optimize it somehow?
+            let rc = Num::Constant(round_constants[i]);
+            let temp1_unreduced = Num::sum(cs, &[h.normal, ch, w[i], rc])?;
+            let temp1 = Self::extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
 
-//     std::array<field_t<waffle::PLookupComposer>, 8> sha256_inner_block(
-//     const std::array<field_t<waffle::PLookupComposer>, 64>& w)
-// {
-//     typedef field_t<waffle::PLookupComposer> field_t;
+            h = g;
+            g = f;
+            f = e;
+            let mut temp2 : NumWithTracker<E> = d.normal.into();
+            temp2 = temp2.add(cs, temp1)?;
+            e = convert_into_sparse_ch_form(temp2);
+            d = c;
+            c = b;
+            b = a;
+            a = convert_into_sparse_maj_form(maj.add(cs, temp1)?);
+        }
 
-//     constexpr uint64_t init_constants[8]{ 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-//                                           0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+        let regs {
 
-//     constexpr uint64_t round_constants[64]{
-//         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-//         0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-//         0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-//         0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-//         0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-//         0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-//         0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-//         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-//     };
-//     /**
-//      * Initialize round variables with previous block output
-//      **/
-//     auto a = convert_into_sparse_maj_form(fr(init_constants[0]));
-//     auto b = convert_into_sparse_maj_form(fr(init_constants[1]));
-//     auto c = convert_into_sparse_maj_form(fr(init_constants[2]));
-//     auto d = convert_into_sparse_maj_form(fr(init_constants[3]));
-//     auto e = convert_into_sparse_ch_form(fr(init_constants[4]));
-//     auto f = convert_into_sparse_ch_form(fr(init_constants[5]));
-//     auto g = convert_into_sparse_ch_form(fr(init_constants[6]));
-//     auto h = convert_into_sparse_ch_form(fr(init_constants[7]));
+        }
+        output[0] = a.normal + fr(init_constants[0]);
+        output[1] = b.normal + fr(init_constants[1]);
+        output[2] = c.normal + fr(init_constants[2]);
+        output[3] = d.normal + fr(init_constants[3]);
+        output[4] = e.normal + fr(init_constants[4]);
+        output[5] = f.normal + fr(init_constants[5]);
+        output[6] = g.normal + fr(init_constants[6]);
+        output[7] = h.normal + fr(init_constants[7]);
+        
+        Ok(regs)
+    }
 
-//     /**
-//      * Apply SHA-256 compression function to the message schedule
-//      **/
-//     for (size_t i = 0; i < 64; ++i) {
-//         auto ch = choose(e, f, g);
-//         auto maj = majority(a, b, c);
-//         auto temp1 = h.normal.add_two(ch, w[i] + fr(round_constants[i]));
+    // Expanded message blocks W0, W1, ..., W63 are computed from [M0, ..., M15] as follows via the
+    // SHA-256 message schedule:
+    // Wj = Mj for j = [0; 15]
+    // For j = 16 to 63:
+    //      Wj = f_1(W_{j-2}) + W_{j-7} + f_0(W_{j-15}) + W_{j-16}
+    // where 
+    //      f_0(x) = S_7(x) ^ S_18(x) ^ R_3(x)
+    //      f_1(x) = S_17(x) ^ S_19(x) ^ R_10(x)
+    // here S_n - is right circular n-bit rotation
+    // and R_n - right n-nit shift
+    fn message_expansion<CS: ConstraintSystem<E>(&self, cs: mut CS, message: [Num<E>; 16]) -> Result<[Num<E>; 64]
+    {
+        unimplemented!();
+    }
 
-//         h = g;
-//         g = f;
-//         f = e;
-//         e = convert_into_sparse_ch_form(d.normal + temp1);
-//         d = c;
-//         c = b;
-//         b = a;
-//         a = convert_into_sparse_maj_form(temp1 + maj);
-//     }
-
-//     /**
-//      * Add into previous block output and return
-//      **/
-//     std::array<field_t, 8> output;
-//     output[0] = a.normal + fr(init_constants[0]);
-//     output[1] = b.normal + fr(init_constants[1]);
-//     output[2] = c.normal + fr(init_constants[2]);
-//     output[3] = d.normal + fr(init_constants[3]);
-//     output[4] = e.normal + fr(init_constants[4]);
-//     output[5] = f.normal + fr(init_constants[5]);
-//     output[6] = g.normal + fr(init_constants[6]);
-//     output[7] = h.normal + fr(init_constants[7]);
-//     return output;
-// }
-
+    // finally! the only one exported function
+    pub fn sha256_gadget<CS: C
 }
    
 
