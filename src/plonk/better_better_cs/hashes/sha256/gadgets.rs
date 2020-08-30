@@ -1118,7 +1118,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     }
 
     // finally! the only one exported function
-    pub fn sha256_gadget<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<[Num<E>; 8]>
+    pub fn sha256<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<[Num<E>; 8]>
     {    
         // we assume that input is already well-padded
         assert!(message.len() % 16 == 0);

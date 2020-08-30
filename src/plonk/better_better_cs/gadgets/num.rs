@@ -196,6 +196,19 @@ impl<E: Engine> AllocatedNum<E> {
         self.mul(cs, &self)
     }
 
+    pub fn eq<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: Self) -> Result<(), SynthesisError>
+    {
+        let self_term = ArithmeticTerm::from_variable(self.variable);
+        let other_term = ArithmeticTerm::from_variable(other.variable);
+        let mut term = MainGateTerm::new();
+        term.add_assign(self_term);
+        term.sub_assign(other_term);
+
+        cs.allocate_main_gate(term)?;
+
+        Ok(())
+    }
+
     // given vector of coefs: [c0, c1, c2],
     // vector of vars: [var0, var1, var2],
     // and supposed result var,
