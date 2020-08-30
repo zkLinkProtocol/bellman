@@ -23,6 +23,7 @@ use std::sync::Arc;
 use crate::num_bigint::BigUint;
 use crate::num_traits::cast::ToPrimitive;
 use std::ops::Add;
+use std::iter;
 
 
 type Result<T> = std::result::Result<T, SynthesisError>;
@@ -72,7 +73,7 @@ impl Add for OverflowTracker {
     }
 }
 
-
+#[derive(Clone)]
 pub struct NumWithTracker<E: Engine> {
     num: Num<E>,
     overflow_tracker: OverflowTracker,
@@ -90,13 +91,32 @@ impl<E: Engine> From<Num<E>> for NumWithTracker<E>
 
 impl<E: Engine> NumWithTracker<E> {
     pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Num<E>) -> Result<Self> {
-        match (self.num, other) => {
+        let new_num = self.num.add(cs, other)?;
+        let new_tracker = match self.num.is_constant() && other.is_constant() {
+            true => OverflowTracker::NoOverflow,
+            false => self.overflow_tracker + OverflowTracker::OneBitOverflow,
+        };
 
-        }
+        Ok(NumWithTracker{
+            num: new_num,
+            overflow_tracker: new_tracker,
+        })
     }
 
-    pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self> {
-        
+    pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, first: &Num<E>, second: &Num<E>) -> Result<Self> {
+        let new_num = self.num.add_two(cs, first, second)?;
+        let new_tracker = match (self.num.is_constant(), first.is_constant(), second.is_constant()) {
+            (true, true, true) => OverflowTracker::NoOverflow,
+            (false, true, true) => self.overflow_tracker + OverflowTracker::OneBitOverflow,
+            (true, false, true) | (true, true, false) => OverflowTracker::OneBitOverflow,
+            (true, false, false) => OverflowTracker::SmallOverflow(2),
+            (false, _, _) => self.overflow_tracker + OverflowTracker::SmallOverflow(2),
+        };
+
+         Ok(NumWithTracker{
+            num: new_num,
+            overflow_tracker: new_tracker,
+        })
     }
 }
 
@@ -107,7 +127,7 @@ pub enum MajorityStrategy {
     RawOverflowCheck,
 }
 
-
+#[derive(Clone)]
 pub struct SparseChValue<E: Engine> {
     normal: Num<E>,
     sparse: Num<E>,
@@ -117,7 +137,7 @@ pub struct SparseChValue<E: Engine> {
     rot25: Num<E>,
 }
 
-
+#[derive(Clone)]
 pub struct SparseMajValue<E: Engine> {
     normal: Num<E>,
     sparse: Num<E>,
@@ -160,6 +180,10 @@ pub struct Sha256GadgetParams<E: Engine> {
     sha256_base4_rot2_extr10_table: Option<Arc<LookupTableApplication<E>>>,
     sha256_maj_normalization_table: Arc<LookupTableApplication<E>>,
     sha256_maj_xor_table: Arc<LookupTableApplication<E>>,
+
+    // constants 
+    iv: [E::Fr; 8],
+    round_constants: [E::Fr; 64],
 
     _marker: std::marker::PhantomData<E>,
 }
@@ -268,6 +292,40 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_ch_xor_table  = cs.add_table(sha256_ch_xor_table)?;
         let sha256_maj_xor_table  = cs.add_table(sha256_maj_xor_table)?;
 
+        // Initialize IV values:
+        // (first 32 bits of the fractional parts of the square roots of the first 8 primes 2..19):
+        let iv = [ 
+            Self::u64_to_ff(0x6a09e667),
+            Self::u64_to_ff(0xbb67ae85),
+            Self::u64_to_ff(0x3c6ef372),
+            Self::u64_to_ff(0xa54ff53a),
+            Self::u64_to_ff(0x510e527f),
+            Self::u64_to_ff(0x9b05688c),
+            Self::u64_to_ff(0x1f83d9ab),
+            Self::u64_to_ff(0x5be0cd19),
+        ];
+
+        // Initialize array of round constants:
+        // (first 32 bits of the fractional parts of the cube roots of the first 64 primes 2..311):
+        let round_constants = [
+            Self::u64_to_ff(0x428a2f98), Self::u64_to_ff(0x71374491), Self::u64_to_ff(0xb5c0fbcf), Self::u64_to_ff(0xe9b5dba5), 
+            Self::u64_to_ff(0x3956c25b), Self::u64_to_ff(0x59f111f1), Self::u64_to_ff(0x923f82a4), Self::u64_to_ff(0xab1c5ed5),
+            Self::u64_to_ff(0xd807aa98), Self::u64_to_ff(0x12835b01), Self::u64_to_ff(0x243185be), Self::u64_to_ff(0x550c7dc3), 
+            Self::u64_to_ff(0x72be5d74), Self::u64_to_ff(0x80deb1fe), Self::u64_to_ff(0x9bdc06a7), Self::u64_to_ff(0xc19bf174),
+            Self::u64_to_ff(0xe49b69c1), Self::u64_to_ff(0xefbe4786), Self::u64_to_ff(0x0fc19dc6), Self::u64_to_ff(0x240ca1cc), 
+            Self::u64_to_ff(0x2de92c6f), Self::u64_to_ff(0x4a7484aa), Self::u64_to_ff(0x5cb0a9dc), Self::u64_to_ff(0x76f988da),
+            Self::u64_to_ff(0x983e5152), Self::u64_to_ff(0xa831c66d), Self::u64_to_ff(0xb00327c8), Self::u64_to_ff(0xbf597fc7), 
+            Self::u64_to_ff(0xc6e00bf3), Self::u64_to_ff(0xd5a79147), Self::u64_to_ff(0x06ca6351), Self::u64_to_ff(0x14292967),
+            Self::u64_to_ff(0x27b70a85), Self::u64_to_ff(0x2e1b2138), Self::u64_to_ff(0x4d2c6dfc), Self::u64_to_ff(0x53380d13), 
+            Self::u64_to_ff(0x650a7354), Self::u64_to_ff(0x766a0abb), Self::u64_to_ff(0x81c2c92e), Self::u64_to_ff(0x92722c85),
+            Self::u64_to_ff(0xa2bfe8a1), Self::u64_to_ff(0xa81a664b), Self::u64_to_ff(0xc24b8b70), Self::u64_to_ff(0xc76c51a3), 
+            Self::u64_to_ff(0xd192e819), Self::u64_to_ff(0xd6990624), Self::u64_to_ff(0xf40e3585), Self::u64_to_ff(0x106aa070),
+            Self::u64_to_ff(0x19a4c116), Self::u64_to_ff(0x1e376c08), Self::u64_to_ff(0x2748774c), Self::u64_to_ff(0x34b0bcb5), 
+            Self::u64_to_ff(0x391c0cb3), Self::u64_to_ff(0x4ed8aa4a), Self::u64_to_ff(0x5b9cca4f), Self::u64_to_ff(0x682e6ff3),
+            Self::u64_to_ff(0x748f82ee), Self::u64_to_ff(0x78a5636f), Self::u64_to_ff(0x84c87814), Self::u64_to_ff(0x8cc70208), 
+            Self::u64_to_ff(0x90befffa), Self::u64_to_ff(0xa4506ceb), Self::u64_to_ff(0xbef9a3f7), Self::u64_to_ff(0xc67178f2),
+        ];
+
         Ok(Sha256GadgetParams {
             majority_strategy,
             ch_base_num_of_chunks,
@@ -282,6 +340,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
             sha256_base4_rot2_extr10_table,
             sha256_maj_normalization_table,
             sha256_maj_xor_table,
+
+            iv,
+            round_constants,
 
             _marker : std::marker::PhantomData,
         })
@@ -400,6 +461,16 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok(res)
     }
 
+    fn extact_32_from_tracked_num<CS: ConstraintSystem<E>>(cs: &mut CS, var: NumWithTracker<E>) -> Result<Num<E>> {
+        let res = match var.overflow_tracker {
+            OverflowTracker::NoOverflow => var.num,
+            OverflowTracker::SignificantOverflow => unimplemented!(),
+            _ => Self::extact_32_from_overflowed_num(cs, &var.num)?,
+        };
+
+        Ok(res)
+    }
+
     fn converter_helper(n: u64, sparse_base: usize, rotation: usize, extraction: usize) -> E::Fr {
         
         let t = map_into_sparse_form(rotate_extract(n as usize, rotation, extraction), sparse_base);
@@ -498,6 +569,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
         }
 
         res
+    }
+
+    fn u64_to_ff(n: u64) -> E::Fr {
+        Self::u64_exp_to_ff(n, 0)
     }
 
     // returns closets upper integer to a / b
@@ -967,7 +1042,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
         )?;
 
         let r0 : NumWithTracker<E> = r0.into();
-        let r1 : NumWithTracker<E> = r1.into();
        
         r0.add(cs, &r1)
     }
@@ -980,51 +1054,50 @@ impl<E: Engine> Sha256GadgetParams<E> {
         regs: Sha256Registers<E>, 
         inputs: &[Num<E>], 
         round_constants: &[E::Fr],
-        init_constants: &[E::Fr],
     ) -> Result<Sha256Registers<E>>
     {
-        let mut a = self.convert_into_sparse_majority_form(cs, regs.a)?;
-        let mut b = self.convert_into_sparse_majority_form(cs, regs.b)?;
-        let mut c = self.convert_into_sparse_majority_form(cs, regs.c)?;
-        let mut d = self.convert_into_sparse_majority_form(cs, regs.d)?;
-        let mut e = self.convert_into_sparse_chooser_form(cs, regs.e)?;
-        let mut f = self.convert_into_sparse_chooser_form(cs, regs.f)?;
-        let mut g = self.convert_into_sparse_chooser_form(cs, regs.g)?;
-        let mut h = self.convert_into_sparse_chooser_form(cs, regs.h)?;
+        let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
+        let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
+        let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
+        let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
+        let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
+        let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
+        let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
+        let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
 
         for i in 0..64 {
-            let ch = self.choose(cs, e, f, g)?;
-            let maj = self.majority(a, b, c)?;
+            let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
+            let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
             
             // temp1 will be overflowed two much (4 bits in total), so we are going to reduce it in any case
             // TODO: may be it is possible to optimize it somehow?
             let rc = Num::Constant(round_constants[i]);
-            let temp1_unreduced = Num::sum(cs, &[h.normal, ch, w[i], rc])?;
+            let temp1_unreduced = Num::sum(cs, &[h.normal, ch.num, inputs[i].clone(), rc])?;
             let temp1 = Self::extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
 
             h = g;
             g = f;
             f = e;
             let mut temp2 : NumWithTracker<E> = d.normal.into();
-            temp2 = temp2.add(cs, temp1)?;
-            e = convert_into_sparse_ch_form(temp2);
+            temp2 = temp2.add(cs, &temp1)?;
+            e = self.convert_into_sparse_chooser_form(cs, temp2)?;
             d = c;
             c = b;
             b = a;
-            a = convert_into_sparse_maj_form(maj.add(cs, temp1)?);
+            let temp3 = maj.add(cs, &temp1)?;
+            a =self. convert_into_sparse_majority_form(cs, temp3)?;
         }
 
-        let regs {
-
-        }
-        output[0] = a.normal + fr(init_constants[0]);
-        output[1] = b.normal + fr(init_constants[1]);
-        output[2] = c.normal + fr(init_constants[2]);
-        output[3] = d.normal + fr(init_constants[3]);
-        output[4] = e.normal + fr(init_constants[4]);
-        output[5] = f.normal + fr(init_constants[5]);
-        output[6] = g.normal + fr(init_constants[6]);
-        output[7] = h.normal + fr(init_constants[7]);
+        let regs = Sha256Registers {
+            a: regs.a.add(cs, &a.normal)?,
+            b: regs.b.add(cs, &b.normal)?,
+            c: regs.c.add(cs, &c.normal)?,
+            d: regs.d.add(cs, &d.normal)?,
+            e: regs.e.add(cs, &e.normal)?,
+            f: regs.f.add(cs, &f.normal)?,
+            g: regs.g.add(cs, &g.normal)?,
+            h: regs.h.add(cs, &h.normal)?,
+        };
         
         Ok(regs)
     }
@@ -1039,13 +1112,45 @@ impl<E: Engine> Sha256GadgetParams<E> {
     //      f_1(x) = S_17(x) ^ S_19(x) ^ R_10(x)
     // here S_n - is right circular n-bit rotation
     // and R_n - right n-nit shift
-    fn message_expansion<CS: ConstraintSystem<E>(&self, cs: mut CS, message: [Num<E>; 16]) -> Result<[Num<E>; 64]
+    fn message_expansion<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<[Num<E>; 64]>
     {
         unimplemented!();
     }
 
     // finally! the only one exported function
-    pub fn sha256_gadget<CS: C
+    pub fn sha256_gadget<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<[Num<E>; 8]>
+    {    
+        // we assume that input is already well-padded
+        assert!(message.len() % 16 == 0);
+        
+        let mut regs = Sha256Registers {
+            a: Num::Constant(self.iv[0].clone()).into(),
+            b: Num::Constant(self.iv[1].clone()).into(),
+            c: Num::Constant(self.iv[2].clone()).into(),
+            d: Num::Constant(self.iv[3].clone()).into(),
+            e: Num::Constant(self.iv[4].clone()).into(),
+            f: Num::Constant(self.iv[5].clone()).into(),
+            g: Num::Constant(self.iv[6].clone()).into(),
+            h: Num::Constant(self.iv[7].clone()).into(),
+        };
+
+        for block in message.chunks(16) {
+            let expanded_block = self.message_expansion(cs, block)?;
+            regs = self.sha256_inner_block(cs, regs, &expanded_block, &self.round_constants)?;
+        }
+
+        let res = [
+            Self::extact_32_from_tracked_num(cs, regs.a)?,
+            Self::extact_32_from_tracked_num(cs, regs.b)?,
+            Self::extact_32_from_tracked_num(cs, regs.c)?,
+            Self::extact_32_from_tracked_num(cs, regs.d)?,
+            Self::extact_32_from_tracked_num(cs, regs.e)?,
+            Self::extact_32_from_tracked_num(cs, regs.f)?,
+            Self::extact_32_from_tracked_num(cs, regs.g)?,
+            Self::extact_32_from_tracked_num(cs, regs.h)?,
+        ];
+        Ok(res)
+    }
 }
    
 

@@ -364,13 +364,174 @@ impl<E: Engine> Num<E> {
         }
     }
 
-    // pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
-    // {
-    //     mat
-    // }
+    pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
+    {
+        let res = match (self, other) {
+            (Num::Constant(x), Num::Constant(y)) => {
+                let mut temp = *x;
+                temp.add_assign(y);
+                Num::Constant(temp)
+            },
+            (Num::Allocated(var), Num::Constant(constant)) | (Num::Constant(constant), Num::Allocated(var)) => {
+                let mut value = None;
 
-    // pub fn add_two
+                let addition_result = cs.alloc(|| {
+                    let mut tmp = *var.value.get()?;
+                    tmp.add_assign(&constant);
+                    value = Some(tmp);
+                    Ok(tmp)
+                })?;
 
+                let self_term = ArithmeticTerm::from_variable(var.variable);
+                let other_term = ArithmeticTerm::constant(*constant);
+                let result_term = ArithmeticTerm::from_variable(addition_result);
+                let mut term = MainGateTerm::new();
+                term.add_assign(self_term);
+                term.add_assign(other_term);
+                term.sub_assign(result_term);
+
+                cs.allocate_main_gate(term)?;
+
+                Num::Allocated(AllocatedNum {
+                    value: value,
+                    variable: addition_result
+                })
+            },
+            (Num::Allocated(var1), Num::Allocated(var2)) => {
+                let mut value = None;
+
+                let addition_result = cs.alloc(|| {
+                    let mut tmp = *var1.value.get()?;
+                    let tmp2 = *var2.value.get()?;
+                    tmp.add_assign(&tmp2);
+                    value = Some(tmp);
+                    Ok(tmp)
+                })?;
+
+                let self_term = ArithmeticTerm::from_variable(var1.variable);
+                let other_term = ArithmeticTerm::from_variable(var2.variable);
+                let result_term = ArithmeticTerm::from_variable(addition_result);
+                let mut term = MainGateTerm::new();
+                term.add_assign(self_term);
+                term.add_assign(other_term);
+                term.sub_assign(result_term);
+
+                cs.allocate_main_gate(term)?;
+
+                Num::Allocated(AllocatedNum {
+                    value: value,
+                    variable: addition_result
+                })
+            },
+        };
+
+        Ok(res)
+    }
+
+    pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, first: &Self, second: &Self) -> Result<Self, SynthesisError>
+    {
+        let res = match (self, first, second) {
+            (Num::Constant(x), Num::Constant(y), Num::Constant(z)) => {
+                let mut temp = *x;
+                temp.add_assign(y);
+                temp.add_assign(z);
+                Num::Constant(temp)
+            },
+            (Num::Allocated(var), Num::Constant(cnst1), Num::Constant(cnst2)) | 
+            (Num::Constant(cnst1), Num::Allocated(var), Num::Constant(cnst2)) |
+            (Num::Constant(cnst1), Num::Constant(cnst2), Num::Allocated(var)) => {
+                let mut value = None;
+
+                let addition_result = cs.alloc(|| {
+                    let mut tmp = *var.value.get()?;
+                    tmp.add_assign(&cnst1);
+                    tmp.add_assign(&cnst2);
+                    value = Some(tmp);
+                    Ok(tmp)
+                })?;
+
+                let self_term = ArithmeticTerm::from_variable(var.variable);
+                let mut constant = *cnst1;
+                constant.add_assign(cnst2);
+                let other_term = ArithmeticTerm::constant(constant);
+                let result_term = ArithmeticTerm::from_variable(addition_result);
+                let mut term = MainGateTerm::new();
+                term.add_assign(self_term);
+                term.add_assign(other_term);
+                term.sub_assign(result_term);
+
+                cs.allocate_main_gate(term)?;
+
+                Num::Allocated(AllocatedNum {
+                    value: value,
+                    variable: addition_result
+                })
+            },
+            (Num::Allocated(var1), Num::Allocated(var2), Num::Constant(constant)) |
+            (Num::Allocated(var1), Num::Constant(constant), Num::Allocated(var2)) |
+            (Num::Constant(constant), Num::Allocated(var1), Num::Allocated(var2)) => {
+                let mut value = None;
+
+                let addition_result = cs.alloc(|| {
+                    let mut tmp = *var1.value.get()?;
+                    let tmp2 = *var2.value.get()?;
+                    tmp.add_assign(&tmp2);
+                    tmp.add_assign(constant);
+                    value = Some(tmp);
+                    Ok(tmp)
+                })?;
+
+                let self_term = ArithmeticTerm::from_variable(var1.variable);
+                let other_term = ArithmeticTerm::from_variable(var2.variable);
+                let constant_term = ArithmeticTerm::constant(*constant);
+                let result_term = ArithmeticTerm::from_variable(addition_result);
+                let mut term = MainGateTerm::new();
+                term.add_assign(self_term);
+                term.add_assign(other_term);
+                term.add_assign(constant_term);
+                term.sub_assign(result_term);
+
+                cs.allocate_main_gate(term)?;
+
+                Num::Allocated(AllocatedNum {
+                    value: value,
+                    variable: addition_result
+                })
+            },
+            (Num::Allocated(var1), Num::Allocated(var2), Num::Allocated(var3)) => {
+                let mut value = None;
+
+                let addition_result = cs.alloc(|| {
+                    let mut tmp = *var1.value.get()?;
+                    let tmp2 = *var2.value.get()?;
+                    let tmp3 = *var3.value.get()?;
+                    tmp.add_assign(&tmp2);
+                    tmp.add_assign(&tmp3);
+                    value = Some(tmp);
+                    Ok(tmp)
+                })?;
+
+                let self_term = ArithmeticTerm::from_variable(var1.variable);
+                let other_term = ArithmeticTerm::from_variable(var2.variable);
+                let third_term = ArithmeticTerm::from_variable(var3.variable);
+                let result_term = ArithmeticTerm::from_variable(addition_result);
+                let mut term = MainGateTerm::new();
+                term.add_assign(self_term);
+                term.add_assign(other_term);
+                term.add_assign(third_term);
+                term.sub_assign(result_term);
+
+                cs.allocate_main_gate(term)?;
+
+                Num::Allocated(AllocatedNum {
+                    value: value,
+                    variable: addition_result
+                })
+            },
+        };
+
+        Ok(res)
+    }
 
     pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, coeffs: &[E::Fr], nums: &[Num<E>]) -> Result<Self, SynthesisError>
     {

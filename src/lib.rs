@@ -12,6 +12,7 @@ extern crate bit_vec;
 extern crate byteorder;
 extern crate num_bigint;
 extern crate num_traits;
+extern crate sha2;
 
 pub use pairing::*;
 
