@@ -9,6 +9,7 @@ mod test {
         AllocatedNum,
         Num,
     };
+    use crate::pairing::bn256::{Bn256, Fr};
 
     use super::super::gadgets::*;
     use super::super::custom_gates::*;
@@ -19,8 +20,8 @@ mod test {
         input: [E::Fr; 16],
         output: [E::Fr; 8],
         majority_strategy: MajorityStrategy,
-        ch_base_num_of_chunks: usize,
-        maj_base_num_of_chunks: usize,
+        ch_base_num_of_chunks: Option<usize>,
+        maj_base_num_of_chunks: Option<usize>,
     }
 
     impl<E: Engine> Circuit<E> for TestSha256Circuit<E> {
@@ -57,24 +58,27 @@ mod test {
 
             let supposed_output_vars = sha256_gadget.sha256(cs, &input_vars[..])?;
 
-            for (a, b) supposed_output_vars.into_iter().zip(actual_output_vars.into_iter()) {
+            for (a, b) in supposed_output_vars.into_iter().zip(actual_output_vars.into_iter()) {
                 let a = match a {
                     Num::Allocated(x) => x,
                     Num::Constant(_) => unreachable!(),
                 };
 
-                a.eq(b)?;
+                a.eq(cs, b)?;
             }
+
+            Ok(())
         }
     }
 
-    fn u32_to_ff<Fr: PrimeField>(n: u32) -> Fr {
+    fn slice_to_ff<Fr: PrimeField>(slice: &[u8]) -> Fr {
+        assert_eq!(slice.len(), 4);
         let mut repr : <Fr as PrimeField>::Repr = Fr::zero().into_repr();
-        repr.as_mut()[0] = n as u64;
+        repr.as_mut()[0] = slice[0] as u64 + ((slice[1] as u64) << 8) + ((slice[2] as u64) << 16) + ((slice[3] as u64) << 24);
         Fr::from_repr(repr).expect("should parse")
     }
 
-    fn sha256_gadget_test_impl<E: Engine>() 
+    fn sha256_gadget_test() 
     {
         // SHA256 Pre-processing (Padding):
         // begin with the original message of length L bits
@@ -85,40 +89,57 @@ mod test {
         // our current impementation of SHA256 does not support padding for now, 
         // and the gadget awaits 16 well formed chunks (of 32-bit numbers)
         // so we deal with padding here explicitely and craft the following message: 
-        // 13 - randomly generated blocks of 32-bit numbers 
-        // we take L = 13 * 32 = 416 = 0x1a0
-        // 13-th chunk holds the 1 << 31
-        // the last two chunks (14-th and 15-th) haol big-endian representation of 416
-        let mut input = [0u32; 16];
+        // 13 - randomly generated blocks of 32-bit numbers => 13 * 4 = 52 8-but number
+        // we take L = 13 * 32 = 416 
+        // 13-th chunk holds the 1 << 31 => bytes will be 01, 00, 00, 00
+        // the last two chunks (14-th and 15-th) haol big-endian representation of 416 = 0x1a0 
+        // => the bytes will be  00, 00, 00, 00, 00, 00, 01, a0 
+        let mut rng = rand::thread_rng();
+
+        let mut input = [0u8; 52];
         for i in 0..13 {
             input[i] = rng.gen();
         }
-        input[13] = 1 << 13;
-        input[14] = 0xa0010000;
+        input[52] = 01;
+        // 53, 54, 55 are zero
+        // as well as 56, 57, 58, 59, 60, 61, 
+        input[62] = 01;
+        input[63] = 0xa0;
 
         // create a Sha256 object
         let mut hasher = Sha256::new();
+        // write input message
+        hasher.update(&input[..]);
+        // read hash digest and consume hasher
+        let output = hasher.finalize();
 
-// write input message
-hasher.update(b"hello world");
+        let mut input_fr_arr = [Fr::zero(); 16];
+        let mut output_fr_arr = [Fr::zero(); 8];
 
-// read hash digest and consume hasher
-let result = hasher.finalize();
+        for (i, block) in input.chunks(4).enumerate() {
+            input_fr_arr[i] = slice_to_ff::<Fr>(block);
+        }
 
-assert_eq!(result[..], hex!("
-    b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
-")[..]);
+        for (i, block) in output.chunks(4).enumerate() {
+            output_fr_arr[i] = slice_to_ff::<Fr>(block);
+        }
+        
+        let circuit = TestSha256Circuit::<Bn256>{
+            input: input_fr_arr,
+            output: output_fr_arr,
+            majority_strategy: MajorityStrategy::UseTwoTables,
+            ch_base_num_of_chunks: None,
+            maj_base_num_of_chunks: None,
+        };
 
-// same for Sha512
-let mut hasher = Sha512::new();
-hasher.update(b"hello world");
-let result = hasher.finalize();
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
 
-assert_eq!(result[..], hex!("
-    309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f
-    989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f
-")[..]);
+        circuit.synthesize(&mut assembly).expect("must work");
+        println!("Assembly contains {} gates", assembly.n());
+        println!("Total length of all tables: {}", assembly.total_length_of_all_tables);
+        assert!(assembly.is_satisfied());
     }
+}
 
 
             

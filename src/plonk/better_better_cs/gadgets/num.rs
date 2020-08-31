@@ -73,6 +73,30 @@ impl<E: Engine> AllocatedNum<E> {
         })
     }
 
+    pub fn alloc_input<CS, F>(
+        cs: &mut CS,
+        value: F,
+    ) -> Result<Self, SynthesisError>
+        where CS: ConstraintSystem<E>,
+            F: FnOnce() -> Result<E::Fr, SynthesisError>
+    {
+        let mut new_value = None;
+        let var = cs.alloc_input(
+            || {
+                let tmp = value()?;
+
+                new_value = Some(tmp);
+
+                Ok(tmp)
+            }
+        )?;
+
+        Ok(AllocatedNum {
+            value: new_value,
+            variable: var
+        })
+    }
+
     pub fn alloc_zero<CS>(
         _cs: &mut CS,
     ) -> Result<Self, SynthesisError>
