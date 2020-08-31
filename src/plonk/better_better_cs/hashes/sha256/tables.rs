@@ -137,6 +137,116 @@ impl<E: Engine> LookupTableInternal<E> for Sha256SparseRotateTable<E> {
 }
 
 
+// for given bit_width, shift parameter and base construct the following table:
+// first column containts all values of x in the range [0, 2^bits - 1]
+// the corresponding value in the second column is sparse representation of x >> shift
+// the thirf column is unused
+#[derive(Clone)]
+pub struct Sha256SparseShiftTable<E: Engine> {
+    table_entries: [Vec<E::Fr>; 2],
+    table_lookup_map: std::collections::HashMap<E::Fr, E::Fr>,
+    bits: usize,
+    shift: usize,
+    base: usize,
+    name: &'static str,
+}
+
+
+impl<E: Engine> Sha256SparseShiftTable<E> {
+
+    pub fn new(bits: usize, shift: usize, base: usize, name: &'static str) -> Self {
+        let mut key = Vec::with_capacity(1 << bits);
+        let mut value = Vec::with_capacity(1 << bits);
+        let mut map = std::collections::HashMap::with_capacity(1 << bits);
+
+        for x in 0..(1 << bits) {
+            let y = map_into_sparse_form(shift_right(x, shift), base);
+            let x = E::Fr::from_str(&x.to_string()).unwrap();
+            let y = E::Fr::from_str(&y.to_string()).unwrap();
+            
+            key.push(x);
+            value.push(y);
+            map.insert(x, y);
+        }
+
+        Self {
+            table_entries: [key, value],
+            table_lookup_map: map,
+            bits,
+            shift,
+            base,
+            name,
+        }
+    }
+}
+
+
+impl<E: Engine> std::fmt::Debug for Sha256SparseShiftTable<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sha256SparseShiftTable")
+            .field("bits", &self.bits)
+            .field("shift", &self.shift)
+            .field("base", &self.base)
+            .finish()
+    }
+}
+
+
+impl<E: Engine> LookupTableInternal<E> for Sha256SparseShiftTable<E> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn table_size(&self) -> usize {
+        1 << self.bits
+    }
+    fn num_keys(&self) -> usize {
+        1
+    }
+    fn num_values(&self) -> usize {
+        1
+    }
+    fn allows_combining(&self) -> bool {
+        true
+    }
+    fn get_table_values_for_polys(&self) -> Vec<Vec<E::Fr>> {
+        vec![self.table_entries[0].clone(), self.table_entries[1].clone()]
+    }
+    fn table_id(&self) -> E::Fr {
+        table_id_from_string(self.name)
+    }
+    fn sort(&self, _values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
+        unimplemented!()
+    }
+    fn box_clone(&self) -> Box<dyn LookupTableInternal<E>> {
+        Box::from(self.clone())
+    }
+    fn column_is_trivial(&self, column_num: usize) -> bool {
+        assert!(column_num < 2);
+        false
+    }
+
+    fn is_valid_entry(&self, keys: &[E::Fr], values: &[E::Fr]) -> bool {
+        assert!(keys.len() == self.num_keys());
+        assert!(values.len() == self.num_values());
+
+        if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
+            return entry == &(values[0]);
+        }
+        false
+    }
+
+    fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
+        assert!(keys.len() == self.num_keys());
+
+        if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
+            return Ok(vec![*entry])
+        }
+
+        Err(SynthesisError::Unsatisfiable)
+    }
+}
+
+
 // Sha256 normalization table is parametrized by two parameters: sparse representation base (or simply base) and num of chunks
 // let x be any number in [0, base^num_chunks - 1], hence x can ne represented as base-ary number with num_of_chunks digits:
 // x = \sum_{i=0}^{num_chunks-1} x_i * base^i, where each x_i \in [0, base-1]

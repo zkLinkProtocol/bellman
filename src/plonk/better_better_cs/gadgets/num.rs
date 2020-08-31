@@ -383,6 +383,12 @@ pub enum Num<E: Engine> {
     Constant(E::Fr),
 }
 
+impl<E: Engine> Default for Num<E> {
+    fn default() -> Self {
+        Num::Constant(E::Fr::zero())
+    }
+}
+
 
 impl<E: Engine> Num<E> {
     pub fn is_constant(&self) -> bool 

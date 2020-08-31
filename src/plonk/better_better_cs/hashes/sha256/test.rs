@@ -19,9 +19,12 @@ mod test {
     struct TestSha256Circuit<E:Engine>{
         input: [E::Fr; 16],
         output: [E::Fr; 8],
-        majority_strategy: MajorityStrategy,
+        majority_strategy: Strategy,
+        r3_strategy: Strategy,
+        s19_strategy: Strategy,
         ch_base_num_of_chunks: Option<usize>,
         maj_base_num_of_chunks: Option<usize>,
+        sheduler_base_num_of_chunks: Option<usize>,
     }
 
     impl<E: Engine> Circuit<E> for TestSha256Circuit<E> {
@@ -53,7 +56,9 @@ mod test {
             }
 
             let sha256_gadget = Sha256GadgetParams::new(
-                cs, self.majority_strategy, self.ch_base_num_of_chunks, self.maj_base_num_of_chunks
+                cs, 
+                self.majority_strategy, self.r3_strategy, self.s19_strategy, 
+                self.ch_base_num_of_chunks, self.maj_base_num_of_chunks, self.sheduler_base_num_of_chunks,
             )?;
 
             let supposed_output_vars = sha256_gadget.sha256(cs, &input_vars[..])?;
@@ -127,9 +132,12 @@ mod test {
         let circuit = TestSha256Circuit::<Bn256>{
             input: input_fr_arr,
             output: output_fr_arr,
-            majority_strategy: MajorityStrategy::UseTwoTables,
+            majority_strategy: Strategy::UseTwoTables,
+            r3_strategy: Strategy::UseCustomGadgets,
+            s19_strategy: Strategy::UseCustomGadgets,
             ch_base_num_of_chunks: None,
             maj_base_num_of_chunks: None,
+            sheduler_base_num_of_chunks: None,
         };
 
         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
