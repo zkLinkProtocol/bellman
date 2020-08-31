@@ -163,7 +163,7 @@ impl<E: Engine> Sha256SparseShiftTable<E> {
             let y = map_into_sparse_form(shift_right(x, shift), base);
             let x = E::Fr::from_str(&x.to_string()).unwrap();
             let y = E::Fr::from_str(&y.to_string()).unwrap();
-            
+
             key.push(x);
             value.push(y);
             map.insert(x, y);
@@ -666,4 +666,6 @@ impl<E: Engine> LookupTableInternal<E> for Sha256MajorityTable<E> {
         Err(SynthesisError::Unsatisfiable)
     }
 }
+
+pub const SHA256_EXPANSION_BASE: usize = 4;
 

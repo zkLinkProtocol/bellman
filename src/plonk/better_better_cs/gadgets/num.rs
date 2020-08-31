@@ -374,6 +374,38 @@ impl<E: Engine> AllocatedNum<E> {
         AllocatedNum::ternary_lc_eq(cs, &coeffs[..], &vars[..], total)?;
         Ok(())
     }
+
+    pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, x: Self, y: Self) -> Result<Self, SynthesisError>
+    {     
+        let mut value = None;
+
+        let addition_result = cs.alloc(|| {
+            let mut tmp = *self.value.get()?;
+            let tmp2 = x.value.get()?;
+            let tmp3 = y.value.get()?;
+            tmp.add_assign(&tmp2);
+            tmp.add_assign(&tmp3);
+            value = Some(tmp);
+            Ok(tmp)
+        })?;
+
+        let self_term = ArithmeticTerm::from_variable(self.variable);
+        let other_term = ArithmeticTerm::from_variable(x.variable);
+        let third_term = ArithmeticTerm::from_variable(y.variable);
+        let result_term = ArithmeticTerm::from_variable(addition_result);
+        let mut term = MainGateTerm::new();
+        term.add_assign(self_term);
+        term.add_assign(other_term);
+        term.add_assign(third_term);
+        term.sub_assign(result_term);
+
+        cs.allocate_main_gate(term)?;
+
+        Ok(AllocatedNum {
+            value: value,
+            variable: addition_result
+        })
+    }
 }
 
 

@@ -27,7 +27,6 @@ use std::iter;
 
 
 type Result<T> = std::result::Result<T, SynthesisError>;
-pub const SHA256_EXPANSION_BASE: usize = 4;
 
 
 // helper struct for tracking how far current value from being in 32-bit range
@@ -198,6 +197,7 @@ pub struct Sha256GadgetParams<E: Engine> {
     sha256_base4_shift3_table : Option<Arc<LookupTableApplication<E>>>,
     s19_strategy: Strategy,
     sha256_base4_rot9_table : Option<Arc<LookupTableApplication<E>>>,
+    sha256_sheduler_xor_table : Arc<LookupTableApplication<E>>,
 
     // constants 
     iv: [E::Fr; 8],
@@ -366,6 +366,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
             }
         };
 
+        // TODO: handle the case when these are not equal
+        assert_eq!(maj_base_num_of_chunks, sheduler_base_num_of_chunks);
+        let sha256_sheduler_xor_table = sha256_maj_xor_table.clone();
+
         // Initialize IV values:
         // (first 32 bits of the fractional parts of the square roots of the first 8 primes 2..19):
         let iv = [ 
@@ -423,6 +427,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
             sha256_base4_widh10_table,
             sha256_base4_shift3_table,
             sha256_base4_rot9_table,
+            sha256_sheduler_xor_table,
 
             iv,
             round_constants,
@@ -559,7 +564,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // for given 11-bit number x, y|hb|lbb, where lbb - 2-bits, hb - 1bit and y 8-bit
     // (all are represented in sparse form)
     // returns the components of decomposition: y, hbb, lb
-    fn unpack_chunk<CS>(cs: &mut CS, x: AllocatedNum<E>) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)> 
+    fn unpack_chunk<CS>(cs: &mut CS, x: AllocatedNum<E>, base: usize) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)> 
     where CS: ConstraintSystem<E>
     {   
         unimplemented!();
@@ -1200,212 +1205,281 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // computes sigma_0(x) = S_7(x) ^ S_18(x) ^ R_3(x)
     // S_i and R_j are defined in the comments related to "message_expansion" function
     // we assume that there is no oveflow in input argument num
-    // fn sigma_0<CS: ConstraintSystem<E>>(&self, cs: &mut CS, num: Num<E>) -> Result<Num<E>>
-    // {
-    //     match num {
-    //         Num::Constant(x) => {
-    //             let repr = x.into_repr();
-    //             // NOTE : think, if it is safe for n to be overflowed
-    //             let n = repr.as_ref()[0];
-
-    //             let s7 = rotate_extract(n, 7, 0);
-    //             let s18 = rotate_extract(n, 18, 0);
-    //             let r3 = shift(n, 3);
-    //             let res =  Self::u64_to_ff(s7 ^ s18 ^ r3);
-
-    //             return Ok(Num::Constant(res));
-    //         }
-    //         Num::Allocated(var) => {
-    //             // split our 32bit variable into 11-bit chunks:
-    //             // there will be three chunks (low, mid, high) for 32bit number
-    //             let low = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
-    //             let mid = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 1, 0, 0, 0)?;
-    //             let high = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2, 0, 0, 0)?;
-
-    //             let (sparse_low, sparse_low_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
-    //             let (sparse_mid, sparse_mid_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
-    //             let (sparse_high, sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
-
-    //             let full_normal = {
-    //                 // compose full normal = low + 2^11 * mid + 2^22 * high
-    //                 let ful_normal = AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
-    //                     &[low, mid, high],
-    //                     &var,
-    //                 )?;
-    //                 full_normal
-    //             };
-
-    //             let full_sparse_rot7 = {
-    //                 // full_sparse_rot7 = low_sparse_rot7 + 4^(11-7) * sparse_mid + 4^(22-7) * sparse_high
-    //                 let full_sparse_rot7 = Self::allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 7, 0
-    //                 )?;
-
-    //                 let rot7_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 7);
-    //                 let rot7_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7);
-
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot7_limb_1_shift, rot7_limb_2_shift],
-    //                     &[sparse_low_rot7, sparse_mid.clone(), sparse_high.clone()],
-    //                     &full_sparse_rot7,
-    //                 )?;
-
-    //                 full_sparse_rot7
-    //             };
-
-    //             let full_sparse_rot18 = {
-    //                 // full_sparse_rot18 = sparse_mid_rot7 + 4^(22-11-7) * sparse_high + 4^(32-11-7) * sparse_low
-    //                 let full_sparse_rot18 = Self::allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 13, 0
-    //                 )?;
-
-    //                 let rot18_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 7 - 11);
-    //                 let rot18_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7 - 11);
-
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot18_limb_0_shift, rot18_limb_2_shift],
-    //                     &[sparse_mid_rot7, sparse_low.clone(), sparse_high.clone()],
-    //                     &full_sparse_rot18,
-    //                 )?;
-
-    //                 full_sparse_rot18
-    //             };
-
-    //             let full_sparse_shift_3 = {
-    //                 // we are going to implement R_3(x) (in sparse form) without use of tables
-    //                 // the algorithm is the following: assuming our sparse base is 4 
-    //                 // and we already have at our disposal the sparse representation of x = /sum x_i 4^i
-    //                 // R_3(x) in sparse form will be y = /sum x_{i+3} 4^i, hence
-    //                 // x = y * 4^3 + x_0 + x_1 * 4 + x_2 * 16;
-    //                 // we rearrange it as following: 
-    //                 // u = x_0 + x_1 * 4, x = y + u + x_2 * 16
-    //                 // where u may take only the following possible values: [0, 1, 4, 5]
-    //                 // and x_2 is boolean
-    //                 // Note: we should also check that y is at most eight bit long!
-
-    //                 let mut vars = Vec::with_capacity(16);
-    //             vars.push(AllocatedNum::alloc_zero(cs)?);
-
-    //             for i in 0..16 {
-    //                 let val = x.get_value().map(| elem | {
-    //                     let mut repr = elem.into_repr();
-    //                     repr.as_mut()[0] >>= 30 - 2 * i;
-    //                     let extracted = E::Fr::from_repr(repr).expect("should decode");
-
-    //                     extracted
-    //                 });
-
-    //                 vars.push(AllocatedNum::alloc(cs, || val.grab())?);
-    //             }
-
-    //             for i in 0..4 {
-    //                 let x = [vars[4*i].get_variable(), vars[4*i+1].get_variable(), vars[4*i+2].get_variable(), vars[4*i+3].get_variable()];
-    //                 cs.new_single_gate_for_trace_step(
-    //                     &RangeCheck32ConstraintGate::default(), 
-    //                     &[], 
-    //                     &x, 
-    //                     &[]
-    //                 )?;
-    //             }
-
-    //             let (of_l_value, of_h_value) = match x.get_value() {
-    //                 None => (None, None),
-    //                 Some(elem) => {
-    //                     let temp = Self::extract_32_from_constant(&elem);
-    //                     (Some(temp.1), Some(temp.2))
-    //                 },
-    //             };
-
-    //             let of_l_var = AllocatedNum::alloc(cs, || of_l_value.grab())?;
-    //             let of_h_var = AllocatedNum::alloc(cs, || of_h_value.grab())?;
-    //             let mut two = E::Fr::one();
-    //             two.double();
-
-    //             cs.begin_gates_batch_for_step()?;
-                
-    //             cs.new_gate_in_batch( 
-    //                 &SparseRangeGate::new(1),
-    //                 &[two.clone()],
-    //                 &[x.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
-    //                 &[],
-    //             )?;
-
-    //             cs.new_gate_in_batch( 
-    //                 &SparseRangeGate::new(2),
-    //                 &[two.clone()],
-    //                 &[x.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
-    //                 &[],
-    //             )?;
-
-    //             // the selectors in the main gate go in the following order:
-    //             // [q_a, q_b, q_c, q_d, q_m, q_const, q_d_next]
-    //             // we constraint the equation: q_a - 2^32 q_b - 2^34 q_c - q_d = 0;
-    //             // so in our case: q_a = -1, q_b = 2^32; q_c = 2^34; q_d = 1; q_m = q_const = q_d_next = 0;
-
-    //             let zero = E::Fr::zero();
-    //             let one = E::Fr::one();
-    //             let mut minus_one = E::Fr::one();
-    //             minus_one.negate();
-
-    //             let mut temp32_repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
-    //             temp32_repr.as_mut()[0] = 1 << 32;
-    //             let coef32 = E::Fr::from_repr(temp32_repr).expect("should parse");
-
-    //             let mut temp34_repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
-    //             temp34_repr.as_mut()[0] = 1 << 34;
-    //             let coef34 = E::Fr::from_repr(temp34_repr).expect("should parse");
-
-    //             cs.new_gate_in_batch(
-    //                 &CS::MainGate::default(),
-    //                 &[minus_one, coef32, coef34, one, zero.clone(), zero.clone(), zero],
-    //                 &[x.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
-    //                 &[],
-    //             )?;
-
-    //             cs.end_gates_batch_for_step()?;
-
-    //             Num::Allocated(vars.pop().expect("top element exists"))
-                    
-    //                 // full_sparse_shift3 = sparse_low_shift3 + 4^(11 - 3) * sparse_mid + 4^(22 - 3) * sparse_high
-    //                 let full_sparse_shift3 = Self::allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 22, SHA256_REG_WIDTH - 1
-    //                 )?;
-
-    //                 let rot22_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 22);
-    //                 let rot22_limb_1_shift = Self::u64_exp_to_ff(4, 32 - 22 + 11);
-
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot22_limb_0_shift, rot22_limb_1_shift],
-    //                     &[sparse_high, sparse_low, sparse_mid],
-    //                     &full_sparse_rot22,
-    //                 )?;
-
-    //                 full_sparse_rot22
-    //             };
-
-    //             let res = SparseMajValue{
-    //                 normal: Num::Allocated(full_normal),
-    //                 sparse: Num::Allocated(full_sparse),
-    //                 rot2: Num::Allocated(full_sparse_rot2),
-    //                 rot13: Num::Allocated(full_sparse_rot13),
-    //                 rot22: Num::Allocated(full_sparse_rot_22),
-    //             };
-    //             return Ok(res);
-    // }
-
     fn sigma_0<CS: ConstraintSystem<E>>(&self, cs: &mut CS, num: &Num<E>) -> Result<Num<E>>
     {
-        unimplemented!();
+        match num {
+            Num::Constant(x) => {
+                let repr = x.into_repr();
+                // NOTE : think, if it is safe for n to be overflowed
+                let n = repr.as_ref()[0] as usize;
+
+                let s7 = rotate_extract(n, 7, 0);
+                let s18 = rotate_extract(n, 18, 0);
+                let r3 = shift_right(n, 3);
+                let res =  Self::u64_to_ff((s7 ^ s18 ^ r3) as u64);
+
+                return Ok(Num::Constant(res));
+            }
+            Num::Allocated(var) => {
+                // split our 32bit variable into 11-bit chunks:
+                // there will be three chunks (low, mid, high) for 32bit number
+                let low = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
+                let mid = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 1, 0, 0, 0)?;
+                let high = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2, 0, 0, 0)?;
+
+                let (sparse_low, sparse_low_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
+                let (sparse_mid, sparse_mid_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
+                let (sparse_high, sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
+
+                let full_normal = {
+                    // compose full normal = low + 2^11 * mid + 2^22 * high
+                    let full_normal = AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
+                        &[low.clone(), mid, high],
+                        &var,
+                    )?;
+                    full_normal
+                };
+
+                let full_sparse_rot7 = {
+                    // full_sparse_rot7 = low_sparse_rot7 + 4^(11-7) * sparse_mid + 4^(22-7) * sparse_high
+                    let full_sparse_rot7 = Self::allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 7, 0
+                    )?;
+
+                    let rot7_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 7);
+                    let rot7_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot7_limb_1_shift, rot7_limb_2_shift],
+                        &[sparse_low_rot7, sparse_mid.clone(), sparse_high.clone()],
+                        &full_sparse_rot7,
+                    )?;
+
+                    full_sparse_rot7
+                };
+
+                let full_sparse_rot18 = {
+                    // full_sparse_rot18 = sparse_mid_rot7 + 4^(22-11-7) * sparse_high + 4^(32-11-7) * sparse_low
+                    let full_sparse_rot18 = Self::allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 13, 0
+                    )?;
+
+                    let rot18_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 7 - 11);
+                    let rot18_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7 - 11);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot18_limb_0_shift, rot18_limb_2_shift],
+                        &[sparse_mid_rot7, sparse_low.clone(), sparse_high.clone()],
+                        &full_sparse_rot18,
+                    )?;
+
+                    full_sparse_rot18
+                };
+
+                let full_sparse_shift_3 = {
+                    // we are going to implement R_3(x) (in sparse form) without use of tables
+                    // the algorithm is the following: assuming our sparse base is 4 
+                    // and we already have at our disposal the sparse representation of x = /sum x_i 4^i
+                    // R_3(x) in sparse form will be y = /sum x_{i+3} 4^i, hence
+                    // x = y * 4^3 + x_0 + x_1 * 4 + x_2 * 16;
+                    // we rearrange it as following: 
+                    // u = x_0 + x_1 * 4, x = y + u + x_2 * 16
+                    // where u may take only the following possible values: [0, 1, 4, 5]
+                    // and x_2 is boolean
+                    // Note: we should also check that y is at most eight bit long!
+                    let r3 = match self.r3_strategy {
+                        Strategy::UseTwoTables => {
+                            Self::query_table1(cs, self.sha256_base4_shift3_table.as_ref().unwrap(), &low)? 
+                        },
+                        Strategy::UseCustomGadgets => {
+                            let (y, _hb, _lbb) = Self::unpack_chunk(cs, low, SHA256_EXPANSION_BASE)?;
+                            y
+                        }
+                    };
+              
+                    let new_val = var.get_value().map( |fr| {
+                        let input_repr = fr.into_repr();
+                        let n = input_repr.as_ref()[0] & ((1 << SHA256_GADGET_CHUNK_SIZE) - 1);
+                        
+                        let m = map_into_sparse_form(shift_right(n as usize, 3), SHA256_EXPANSION_BASE);
+                        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
+                        repr.as_mut()[0] = m as u64;
+                        E::Fr::from_repr(repr).expect("should parse")
+                    });
+                    let full_sparse_shift3 = AllocatedNum::alloc(cs, || new_val.grab())?;
+
+                    // full_sparse_shift3 = sparse_low_shift3 + 4^(11 - 3) * sparse_mid + 4^(22 - 3) * sparse_high
+                    let shift3_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 3);
+                    let shift3_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 3);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), shift3_limb_1_shift, shift3_limb_2_shift],
+                        &[r3, sparse_mid, sparse_high],
+                        &full_sparse_shift3,
+                    )?;
+                    full_sparse_shift3
+                };
+
+                // now we have all the components: 
+                // S7 = full_sparse_rot7, S18 = full_sparse_rot18, R3 = full_sparse_shift3
+                let t = Num::Allocated(full_sparse_rot7.add_two(cs, full_sparse_rot18, full_sparse_shift_3)?);      
+                let r = Self::normalize(
+                    cs, &t, 
+                    &self.sha256_sheduler_xor_table,
+                    sheduler_xor_normalizer, 
+                    SHA256_EXPANSION_BASE, 
+                    self.sheduler_base_num_of_chunks,
+                )?;
+        
+                return Ok(r);
+            }
+        }
     }
 
+    // sigma_1(x) = S_17(x) ^ S_19(x) ^ R_10(x)
+    // this function is almost similar to sigma_0(x) except for the following optimization tricks:
+    // in all previous functions we have split x in chunks of equal size (11), now we restrict the lowest chunk to be
+    // 10 bits, so x = | 11 | 11 | 10 | is still 32 bits-length in total
+    // such an unusual split will simplify R_10 in an obvious way
     fn sigma_1<CS: ConstraintSystem<E>>(&self, cs: &mut CS, num: &Num<E>) -> Result<Num<E>>
     {
-        unimplemented!();
+        match num {
+            Num::Constant(x) => {
+                let repr = x.into_repr();
+                // NOTE : think, if it is safe for n to be overflowed
+                let n = repr.as_ref()[0] as usize;
+
+                let s17 = rotate_extract(n, 17, 0);
+                let s19 = rotate_extract(n, 19, 0);
+                let r10 = shift_right(n, 10);
+                let res =  Self::u64_to_ff((s17 ^ s19 ^ r10) as u64);
+
+                return Ok(Num::Constant(res));
+            }
+            Num::Allocated(var) => {
+                // split our 32bit variable into one 10-bit chunk (lowest one) and two 11-bit chunks:
+                // there will be three chunks (low, mid, high) for 32bit number
+                let low = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE - 1, 0, 0, 0, 0)?;
+                let mid = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 1, 0, 0, 0)?;
+                let high = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2, 0, 0, 0)?;
+
+                let (sparse_low, sparse_low_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
+                let (sparse_mid, sparse_mid_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
+                let (sparse_high, sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
+
+                let full_normal = {
+                    // compose full normal = low + 2^11 * mid + 2^22 * high
+                    let full_normal = AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
+                        &[low.clone(), mid, high],
+                        &var,
+                    )?;
+                    full_normal
+                };
+
+                let full_sparse_rot7 = {
+                    // full_sparse_rot7 = low_sparse_rot7 + 4^(11-7) * sparse_mid + 4^(22-7) * sparse_high
+                    let full_sparse_rot7 = Self::allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 7, 0
+                    )?;
+
+                    let rot7_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 7);
+                    let rot7_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot7_limb_1_shift, rot7_limb_2_shift],
+                        &[sparse_low_rot7, sparse_mid.clone(), sparse_high.clone()],
+                        &full_sparse_rot7,
+                    )?;
+
+                    full_sparse_rot7
+                };
+
+                let full_sparse_rot18 = {
+                    // full_sparse_rot18 = sparse_mid_rot7 + 4^(22-11-7) * sparse_high + 4^(32-11-7) * sparse_low
+                    let full_sparse_rot18 = Self::allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 13, 0
+                    )?;
+
+                    let rot18_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 7 - 11);
+                    let rot18_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7 - 11);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot18_limb_0_shift, rot18_limb_2_shift],
+                        &[sparse_mid_rot7, sparse_low.clone(), sparse_high.clone()],
+                        &full_sparse_rot18,
+                    )?;
+
+                    full_sparse_rot18
+                };
+
+                let full_sparse_shift_3 = {
+                    // we are going to implement R_3(x) (in sparse form) without use of tables
+                    // the algorithm is the following: assuming our sparse base is 4 
+                    // and we already have at our disposal the sparse representation of x = /sum x_i 4^i
+                    // R_3(x) in sparse form will be y = /sum x_{i+3} 4^i, hence
+                    // x = y * 4^3 + x_0 + x_1 * 4 + x_2 * 16;
+                    // we rearrange it as following: 
+                    // u = x_0 + x_1 * 4, x = y + u + x_2 * 16
+                    // where u may take only the following possible values: [0, 1, 4, 5]
+                    // and x_2 is boolean
+                    // Note: we should also check that y is at most eight bit long!
+                    let r3 = match self.r3_strategy {
+                        Strategy::UseTwoTables => {
+                            Self::query_table1(cs, self.sha256_base4_shift3_table.as_ref().unwrap(), &low)? 
+                        },
+                        Strategy::UseCustomGadgets => {
+                            let (y, _hb, _lbb) = Self::unpack_chunk(cs, low, SHA256_EXPANSION_BASE)?;
+                            y
+                        }
+                    };
+              
+                    let new_val = var.get_value().map( |fr| {
+                        let input_repr = fr.into_repr();
+                        let n = input_repr.as_ref()[0] & ((1 << SHA256_GADGET_CHUNK_SIZE) - 1);
+                        
+                        let m = map_into_sparse_form(shift_right(n as usize, 3), SHA256_EXPANSION_BASE);
+                        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
+                        repr.as_mut()[0] = m as u64;
+                        E::Fr::from_repr(repr).expect("should parse")
+                    });
+                    let full_sparse_shift3 = AllocatedNum::alloc(cs, || new_val.grab())?;
+
+                    // full_sparse_shift3 = sparse_low_shift3 + 4^(11 - 3) * sparse_mid + 4^(22 - 3) * sparse_high
+                    let shift3_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 3);
+                    let shift3_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 3);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), shift3_limb_1_shift, shift3_limb_2_shift],
+                        &[r3, sparse_mid, sparse_high],
+                        &full_sparse_shift3,
+                    )?;
+                    full_sparse_shift3
+                };
+
+                // now we have all the components: 
+                // S7 = full_sparse_rot7, S18 = full_sparse_rot18, R3 = full_sparse_shift3
+                let t = Num::Allocated(full_sparse_rot7.add_two(cs, full_sparse_rot18, full_sparse_shift_3)?);      
+                let r = Self::normalize(
+                    cs, &t, 
+                    &self.sha256_sheduler_xor_table,
+                    sheduler_xor_normalizer, 
+                    SHA256_EXPANSION_BASE, 
+                    self.sheduler_base_num_of_chunks,
+                )?;
+        
+                return Ok(r);
+            }
+        }
     }
 
     // Expanded message blocks W0, W1, ..., W63 are computed from [M0, ..., M15] as follows via the

@@ -6,6 +6,7 @@ use crate::num_traits::Zero;
 use super::tables::{
     SHA256_CHOOSE_BASE,
     SHA256_MAJORITY_BASE,
+    SHA256_EXPANSION_BASE,
 };
 
 // in general all bit-friendly transformations (such as xor or SHA256 majority and choose operations)
@@ -69,5 +70,12 @@ pub fn maj_xor_normalizer<Fr: PrimeField>(fr: Fr) -> Fr
 {
     let bit_table : [u64; SHA256_MAJORITY_BASE] =  [ 0, 1, 0, 1 ]; 
     let base = SHA256_MAJORITY_BASE;
+    general_normalizer(fr, &bit_table[..], base)
+}
+
+pub fn sheduler_xor_normalizer<Fr: PrimeField>(fr: Fr) -> Fr 
+{
+    let bit_table : [u64; SHA256_EXPANSION_BASE] =  [ 0, 1, 0, 1 ]; 
+    let base = SHA256_EXPANSION_BASE;
     general_normalizer(fr, &bit_table[..], base)
 }
