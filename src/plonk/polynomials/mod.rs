@@ -150,6 +150,21 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         });
     }
 
+    pub fn map1<M: Fn(&mut F, &F) -> () + Send + Copy>(&mut self, worker: &Worker, other: &Self, func: M)
+    {
+        assert_eq!(self.coeffs.len(), other.coeffs.len());
+
+        worker.scope(self.coeffs.len(), |scope, chunk| {
+            for (v, u) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+                scope.spawn(move |_| {
+                    for (v, u) in v.iter_mut().zip(u.iter()) {
+                        func(v, u);
+                    }
+                });
+            }
+        });
+    }
+
     pub fn map_indexed<M: Fn(usize, &mut F) -> () + Send + Copy>(&mut self, worker: &Worker, func: M)
     {
         worker.scope(self.coeffs.len(), |scope, chunk| {

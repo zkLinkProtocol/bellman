@@ -410,19 +410,21 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 let of_l_var = AllocatedNum::alloc(cs, || of_l_value.grab())?;
                 let of_h_var = AllocatedNum::alloc(cs, || of_h_value.grab())?;
+                let mut two = E::Fr::one();
+                two.double();
 
                 cs.begin_gates_batch_for_step()?;
                 
                 cs.new_gate_in_batch( 
-                    &In04RangeGate::new(1),
-                    &[],
+                    &SparseRangeGate::new(1),
+                    &[two.clone()],
                     &[x.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
                     &[],
                 )?;
 
                 cs.new_gate_in_batch( 
-                    &In04RangeGate::new(2),
-                    &[],
+                    &SparseRangeGate::new(2),
+                    &[two.clone()],
                     &[x.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
                     &[],
                 )?;
@@ -1114,6 +1116,15 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // and R_n - right n-nit shift
     fn message_expansion<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<[Num<E>; 64]>
     {
+        // we are going to implement R_3(x) (in sparse form) without use of tables
+        // the algorithm is the following: assuming our sparse base is 4 
+        // and we already have at our disposal the sparse representation of x = /sum x_i 4^i
+        // R_3(x) in sparse form will be y = /sum x_{i+3} 4^i, hence
+        // x = y * 4^3 + x_0 + x_1 * 4 + x_2 * 16;
+        // we rearrange it as following: 
+        // u = x_0 + x_1 * 4, x = y + u + x_2 * 16
+        // where u may take only the following possible values: [0, 1, 4, 5]
+        // and x_2 is boolean
         unimplemented!();
     }
 

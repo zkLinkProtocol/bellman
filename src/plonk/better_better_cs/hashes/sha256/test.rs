@@ -32,8 +32,8 @@ mod test {
                 vec![
                     Width4MainGateWithDNext::default().into_internal(),
                     RangeCheck32ConstraintGate::default().into_internal(),
-                    In04RangeGate::new(1).into_internal(),
-                    In04RangeGate::new(2).into_internal(),
+                    SparseRangeGate::new(1).into_internal(),
+                    SparseRangeGate::new(2).into_internal(),
                 ]
             )
         }
@@ -58,7 +58,7 @@ mod test {
 
             let supposed_output_vars = sha256_gadget.sha256(cs, &input_vars[..])?;
 
-            for (a, b) in supposed_output_vars.into_iter().zip(actual_output_vars.into_iter()) {
+            for (a, b) in supposed_output_vars.iter().zip(actual_output_vars.into_iter()) {
                 let a = match a {
                     Num::Allocated(x) => x,
                     Num::Constant(_) => unreachable!(),
@@ -96,7 +96,7 @@ mod test {
         // => the bytes will be  00, 00, 00, 00, 00, 00, 01, a0 
         let mut rng = rand::thread_rng();
 
-        let mut input = [0u8; 52];
+        let mut input = [0u8; 64];
         for i in 0..13 {
             input[i] = rng.gen();
         }

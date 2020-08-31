@@ -393,22 +393,29 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
 impl<E: Engine> Gate<E> for RangeCheck32ConstraintGate {}
 
 
-// In04Range gate: checks that element in a particular column is in range [0; 3]
+// SparseInrangeCheck: for given base (which will be contained in additional this gate-specific setup selector)
+// check that x has one of the following values: [0, 1, base, base + 1]
+// the motivation for introduction of this gate is the following: 
+// we will often meet the following pattern x = x_0 + x_1 * base
+// and we want to simultaneously verify that both [x_0, x_1] are bits
+// this is equivalent to x having one of 4 possible values mentioned before
+// the most useful case is to handle two succesive bits of binary representaion : for this we well have base = 2
+// note that this custom gate may as well check if x is a single bit: simply lay base = 0
 #[derive(Clone, Debug, Hash, Default)]
-pub struct In04RangeGate {
+pub struct SparseRangeGate {
     column_idx : usize,
 }
 
-impl In04RangeGate {
+impl SparseRangeGate {
     pub fn new(column_idx: usize) -> Self {
-        In04RangeGate { column_idx }
+        SparseRangeGate { column_idx }
     }
 }
 
 
-impl<E: Engine> GateInternal<E> for In04RangeGate {
+impl<E: Engine> GateInternal<E> for SparseRangeGate {
     fn name(&self) -> &'static str {
-        "In range [0;3] gate"
+        "sparse range check gate"
     }
 
     fn degree(&self) -> usize {
@@ -420,13 +427,18 @@ impl<E: Engine> GateInternal<E> for In04RangeGate {
     }
 
     fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
+        let name = <Self as GateInternal<E>>::name(&self);
         vec![
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, self.column_idx)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(self.column_idx)),
         ]
     }
 
     fn setup_polynomials(&self) -> Vec<PolyIdentifier> {
-        vec![]
+        let name = <Self as GateInternal<E>>::name(&self);
+        vec![
+            PolyIdentifier::GateSetupPolynomial(name, self.column_idx),
+        ]
     }
 
     fn variable_polynomials(&self) -> Vec<PolyIdentifier> {
@@ -452,20 +464,24 @@ impl<E: Engine> GateInternal<E> for In04RangeGate {
     }
 
     fn verify_on_row<'a>(&self, row: usize, poly_storage: &AssembledPolynomialStorage<'a, E>, _last_row: bool) -> E::Fr {
+        let name = <Self as GateInternal<E>>::name(&self);
         let q = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(self.column_idx), row);
+        let base = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, self.column_idx), row);
         
-        // B * (B - 1) * (B - 2) * (B - 3)
-        let mut res = q;
-        let one = E::Fr::one();
+        // q * (q - 1) * (q - base) * (q - base - 1)
+        let mut res = q.clone();
+        
+        let mut tmp = q.clone();
+        tmp.sub_assign(&E::Fr::one());
+        res.mul_assign(&tmp);
 
         let mut tmp = q.clone();
-        tmp.sub_assign(&one);
+        tmp.sub_assign(&base);
         res.mul_assign(&tmp);
 
-        tmp.sub_assign(&one);
-        res.mul_assign(&tmp);
-
-        tmp.sub_assign(&one);
+        let mut tmp = q;
+        tmp.sub_assign(&E::Fr::one());
+        tmp.sub_assign(&base);
         res.mul_assign(&tmp);
 
         res
@@ -513,17 +529,28 @@ impl<E: Engine> GateInternal<E> for In04RangeGate {
         let mut tmp = column_ref.clone();
         drop(column_ref);
 
+        let name = <Self as GateInternal<E>>::name(&self);
+        let base_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, self.column_idx)),
+            ldes_storage
+        );
+
         let one = E::Fr::one();
 
-        tmp.map(&worker,
-            |el| {
-                let mut tmp = *el;
+        tmp.map1(&worker, base_ref,
+            |el, base| {
+                let x = *el;
+
+                let mut tmp = x.clone();
                 tmp.sub_assign(&one);
                 el.mul_assign(&tmp);
-
-                tmp.sub_assign(&one);
+                
+                tmp = x.clone();
+                tmp.sub_assign(&base);
                 el.mul_assign(&tmp);
 
+                tmp = x;
+                tmp.sub_assign(&base);
                 tmp.sub_assign(&one);
                 el.mul_assign(&tmp);
             }, 
@@ -556,15 +583,23 @@ impl<E: Engine> GateInternal<E> for In04RangeGate {
         assert_eq!(challenges.len(), 1);
         let value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(self.column_idx)))
             .ok_or(SynthesisError::AssignmentMissing)?;
+        let name = <Self as GateInternal<E>>::name(&self);
+        let base = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, self.column_idx)))
+            .ok_or(SynthesisError::AssignmentMissing)?;
+        
         let mut result = value;
-        let mut temp = result.clone();
+        let x = result.clone();
 
+        let mut temp = x.clone();
         temp.sub_assign(&E::Fr::one());
         result.mul_assign(&temp);
 
-        temp.sub_assign(&E::Fr::one());
+        temp = x.clone();
+        temp.sub_assign(&base);
         result.mul_assign(&temp);
 
+        temp = x;
+        temp.sub_assign(&base);
         temp.sub_assign(&E::Fr::one());
         result.mul_assign(&temp);
 
@@ -591,7 +626,7 @@ impl<E: Engine> GateInternal<E> for In04RangeGate {
     }
 }
 
-impl<E: Engine> Gate<E> for In04RangeGate {}
+impl<E: Engine> Gate<E> for SparseRangeGate {}
 
 
 

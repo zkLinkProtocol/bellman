@@ -50,3 +50,9 @@ pub fn rotate_extract(value: usize, rotation: usize, extraction: usize) -> usize
 
     res
 }
+
+// simple right shift
+pub fn shift(value: usize, shift: usize) -> usize
+{
+    if shift > 0 {value >> shift} else {value}
+}
