@@ -10,7 +10,7 @@ use crate::plonk::polynomials::*;
 use crate::plonk::fft::cooley_tukey_ntt::*;
 
 
-// Custom gadget for range constraint for a 32-bit number x
+// Custom gadget for range constraint for a 32-bit number x represented
 // We can represent x via 16 constituent base-4 'quads' {q_0, ..., q_15}:
 // i.e. x = \sum_{i=0}^{15} q_i 4^i.
 // In program memory, we place an accumulating base-4 sum of x {a_0, ..., a_15}, where
@@ -46,6 +46,9 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 // of_h * (of_h - 1) * (of_h - 2) * (of_h - 3) = 0 - to assure that higher overflow_bit is in range [0; 3]
 // the last two equations are checked by a combination of MainGate and a Custom In04Range gate over columns B and C
 
+// for additional generality we alow x to be represented in sparse form (with particular base)
+// (such an extended version of gadget will be of certain use for us in sigma_1 function)
+// binary version of gadget is than equal to our generalized gadget with base = 2 
 // for the composition of two successive rows 
 // +-----+-----+-----+-----+
 // |  A  |  B  |  C  |  D  |
@@ -56,10 +59,10 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 // +-----+-----+-----+-----+
 //
 // we require the following set of equations to hold:
-// a1 - 4 * a0 \in [0, 3]
-// a2 - 4 * a1 \in [0, 3]
-// a3 - 4 * a2 \in [0, 3]
-// b0 - 4 * a3 \in [0, 3]
+// a1 - base^2 * a0 \in [0, 1, base, base+1]
+// a2 - base^2 * a1 \in [0, 1, base, base+1]
+// a3 - 4 * a2 \in [0, 1, base, base+1]
+// b0 - 4 * a3 \in [0, 1, base, base+1]
 #[derive(Clone, Debug, Hash, Default)]
 pub struct RangeCheck32ConstraintGate;
 
@@ -80,7 +83,9 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
     }
 
     fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
+        let name = <Self as GateInternal<E>>::name(&self);
         vec![
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
@@ -90,7 +95,9 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
     }
 
     fn setup_polynomials(&self) -> Vec<PolyIdentifier> {
+        let name = <Self as GateInternal<E>>::name(&self);
         vec![
+            PolyIdentifier::GateSetupPolynomial(name, 0)
         ]
     }
 
@@ -129,13 +136,14 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
         let d_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row);
         let d_next_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row+1);
 
+        let name = <Self as GateInternal<E>>::name(&self);
+        let base = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 0), row);
+
         let one = E::Fr::one();
-        let mut two = one;
-        two.double();
-        let mut three = two;
-        three.add_assign(&one);
-        let mut four = two;
-        four.double();
+        let mut base_plus_one = base.clone();
+        base_plus_one.add_assign(&one);
+        let mut base_squared = base.clone();
+        base_squared.square();
 
         for (high, high_and_low) in [
             (d_value, c_value),
@@ -144,7 +152,7 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
             (a_value, d_next_value),
         ].iter() {
             let mut shifted_high = *high;
-            shifted_high.mul_assign(&four);
+            shifted_high.mul_assign(&base_squared);
 
             let mut low = *high_and_low;
             low.sub_assign(&shifted_high);
@@ -156,11 +164,11 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
             total.mul_assign(&tmp);
 
             let mut tmp = low;
-            tmp.sub_assign(&two);
+            tmp.sub_assign(&base);
             total.mul_assign(&tmp);
 
             let mut tmp = low;
-            tmp.sub_assign(&three);
+            tmp.sub_assign(&base_plus_one);
             total.mul_assign(&tmp);
 
             if !total.is_zero() {
@@ -238,18 +246,17 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
             ldes_storage
         ).as_ref();
 
-        let one = E::Fr::one();
-        let mut two = one;
-        two.double();
-        let mut three = two;
-        three.add_assign(&one);
-        let mut four = two;
-        four.double();
+        let name = <Self as GateInternal<E>>::name(&self);
+        let base_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
+            ldes_storage
+        ).as_ref();
 
-        // c - 4d \in [0, 4)
-        // b - 4c \in [0, 4)
-        // a - 4b \in [0, 4)
-        // d_next - 4a \in [0, 4)
+        let one = E::Fr::one();
+        // c - base^2 * d \in [0, 1, base, bae+1]
+        // b - base^2 * c \in [0, 1, base, base+1]
+        // a - base^2 * b \in [0, 1, base, base+1]
+        // d_next - base^2 * a \in [0, 1, base, base+1]
 
         tmp.map_indexed(&worker,
             |i, el| {
@@ -258,6 +265,12 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
                 let c_value = c_raw_ref[i];
                 let d_value = d_raw_ref[i];
                 let d_next_value = d_next_raw_ref[i];
+                let base_value = base_ref[i];
+
+                let mut base_plus_one = base_value.clone();
+                base_plus_one.add_assign(&one);
+                let mut base_squared = base_value.clone();
+                base_squared.square();
 
                 let mut result = E::Fr::zero();
 
@@ -268,7 +281,7 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
                     (a_value, d_next_value),
                 ].iter().enumerate() {
                     let mut shifted_high = *high;
-                    shifted_high.mul_assign(&four);
+                    shifted_high.mul_assign(&base_squared);
 
                     let mut low = *high_and_low;
                     low.sub_assign(&shifted_high);
@@ -280,11 +293,11 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
                     total.mul_assign(&tmp);
 
                     let mut tmp = low;
-                    tmp.sub_assign(&two);
+                    tmp.sub_assign(&base_value);
                     total.mul_assign(&tmp);
 
                     let mut tmp = low;
-                    tmp.sub_assign(&three);
+                    tmp.sub_assign(&base_plus_one);
                     total.mul_assign(&tmp);
 
                     total.mul_assign(&challenges[contribution_idx]);
@@ -329,16 +342,18 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
             .ok_or(SynthesisError::AssignmentMissing)?;
         let d_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1))
             .ok_or(SynthesisError::AssignmentMissing)?;
+
+        let name = <Self as GateInternal<E>>::name(&self);
+        let base = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)))
+            .ok_or(SynthesisError::AssignmentMissing)?;
         
         let mut result = E::Fr::zero();
 
         let one = E::Fr::one();
-        let mut two = one;
-        two.double();
-        let mut three = two;
-        three.add_assign(&one);
-        let mut four = two;
-        four.double();
+        let mut base_plus_one = base.clone();
+        base_plus_one.add_assign(&one);
+        let mut base_squared = base.clone();
+        base_squared.square();
 
         for (contribution_idx, (high, high_and_low)) in [
             (d_value, c_value),
@@ -347,7 +362,7 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
             (a_value, d_next_value),
         ].iter().enumerate() {
             let mut shifted_high = *high;
-            shifted_high.mul_assign(&four);
+            shifted_high.mul_assign(&base_squared);
 
             let mut low = *high_and_low;
             low.sub_assign(&shifted_high);
@@ -359,11 +374,11 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
             total.mul_assign(&tmp);
 
             let mut tmp = low;
-            tmp.sub_assign(&two);
+            tmp.sub_assign(&base);
             total.mul_assign(&tmp);
 
             let mut tmp = low;
-            tmp.sub_assign(&three);
+            tmp.sub_assign(&base_plus_one);
             total.mul_assign(&tmp);
 
             total.mul_assign(&challenges[contribution_idx]);
