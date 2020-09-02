@@ -1618,13 +1618,20 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         if S::PRODUCE_SETUP {
             let apply_gate = false;
 
-            let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
-            if tracker.len() != n {
-                let padding = n - tracker.len();
-                tracker.grow(padding, false);
+            if let Some(tracker) = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>) {
+                if tracker.len() != n {
+                    let padding = n - tracker.len();
+                    tracker.grow(padding, false);
+                }
+                tracker.push(apply_gate);
+                debug_assert_eq!(n+1, tracker.len());
+            } else {
+                self.aux_gate_density.0.insert(gate.clone().into_internal(), BitVec::new());
+                let tracker = self.aux_gate_density.0.get_mut(gate.as_internal() as &dyn GateInternal<E>).unwrap();
+                tracker.grow(n, false);
+                tracker.push(apply_gate);
+                debug_assert_eq!(n+1, tracker.len());
             }
-            tracker.push(apply_gate);
-            debug_assert_eq!(n+1, tracker.len());
         }
 
         Ok(())

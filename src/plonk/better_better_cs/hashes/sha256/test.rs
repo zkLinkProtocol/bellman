@@ -94,8 +94,8 @@ mod test {
         
         // our current impementation of SHA256 does not support padding for now, 
         // and the gadget awaits 16 well formed chunks (of 32-bit numbers)
-        // so we deal with padding here explicitely and craft the following message: 
-        // 13 - randomly generated blocks of 32-bit numbers => 13 * 4 = 52 8-but number
+        // so we deal with padding here explicitly and craft the following message: 
+        // 13 - randomly generated blocks of 32-bit numbers => 13 * 4 = 52 8-bit number
         // we take L = 13 * 32 = 416 
         // 13-th chunk holds the 1 << 31 => bytes will be 01, 00, 00, 00
         // the last two chunks (14-th and 15-th) haol big-endian representation of 416 = 0x1a0 
