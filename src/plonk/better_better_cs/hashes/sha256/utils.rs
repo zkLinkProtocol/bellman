@@ -1,20 +1,24 @@
+use crate::num_bigint::BigUint;
+use crate::num_traits::{ Zero, One };
+
 // converts x = (x_0, x_1, ..., x_n) - bit decomposition of x into y = \sum_{i=1}^{n} x_i * base^i
-// due to our choices of base and input bit_length the sum never exceeds usize MAX VALUE
-pub fn map_into_sparse_form(input: usize, base: usize) -> usize
+pub fn map_into_sparse_form(input: usize, base: usize) -> BigUint
 {
     // if base is zero, than no convertion is actually needed
     if base == 0 {
-        return input;
+        return BigUint::from(input);
     }
     
-    let mut out : usize = 0;
-    let mut base_accumulator : usize = 1;
+    let mut out = BigUint::zero();
+    let mut base_accumulator = BigUint::one();
     let mut converted = input;
 
     while converted > 0 {
         let sparse_bit = converted & 1;
         converted >>= 1;
-        out += sparse_bit * base_accumulator;
+        if sparse_bit > 0 {
+            out += base_accumulator.clone();
+        }
         base_accumulator *= base;
     }
     

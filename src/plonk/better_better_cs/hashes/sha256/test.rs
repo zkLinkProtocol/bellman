@@ -83,6 +83,7 @@ mod test {
         Fr::from_repr(repr).expect("should parse")
     }
 
+    #[test]
     fn sha256_gadget_test() 
     {
         // SHA256 Pre-processing (Padding):

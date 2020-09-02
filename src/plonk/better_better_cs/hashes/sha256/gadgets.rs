@@ -595,20 +595,16 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 hb_fr = Some(Self::u64_to_ff(hb_val));
                 big_f /= base;
 
-                let y_full_val = Self::biguint_to_ff(&big_f);
-                y_full_fr = Some(Self::u64_to_ff(lbb_val));
+                let y_full_fr = Self::biguint_to_ff(&big_f);
                 big_f /= base_squared;
 
-                let y6_val = Self::biguint_to_ff(&big_f);
-                y6_fr = Some(Self::u64_to_ff(lbb_val));
+                let y6_fr = Self::biguint_to_ff(&big_f);
                 big_f /= base_squared;
 
-                let y4_val = Self::biguint_to_ff(&big_f);
-                y4_fr = Some(Self::u64_to_ff(lbb_val));
+                let y4_fr = Self::biguint_to_ff(&big_f);
                 big_f /= base_squared;
 
-                let y2_val = Self::biguint_to_ff(&big_f);
-                y2_fr = Some(Self::u64_to_ff(lbb_val));
+                let y2_fr = Self::biguint_to_ff(&big_f);
                 big_f /= base_squared;
 
                 assert!(big_f.is_zero());
@@ -621,7 +617,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let y_full = AllocatedNum::alloc(cs, || y_full_fr.grab())?;
         let y2 = AllocatedNum::alloc(cs, || y2_fr.grab())?;
         let y4 = AllocatedNum::alloc(cs, || y4_fr.grab())?;
-        let mut y6 = AllocatedNum::alloc(cs, || y6_fr.grab())?;
+        let y6 = AllocatedNum::alloc(cs, || y6_fr.grab())?;
 
         let base_squared_fr = Self::u64_to_ff(base_squared as u64);
 
@@ -674,9 +670,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     fn converter_helper(n: u64, sparse_base: usize, rotation: usize, extraction: usize) -> E::Fr {
         
         let t = map_into_sparse_form(rotate_extract(n as usize, rotation, extraction), sparse_base);
-        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
-        repr.as_mut()[0] = t as u64;
-        E::Fr::from_repr(repr).expect("should parse")
+        E::Fr::from_str(&t.to_string()).unwrap()
     }
 
     fn allocate_converted_num<CS: ConstraintSystem<E>>(
@@ -1337,9 +1331,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 let (sparse_low, sparse_low_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
                 let (sparse_mid, sparse_mid_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
-                let (sparse_high, sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
+                let (sparse_high, _sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
 
-                let full_normal = {
+                let _full_normal = {
                     // compose full normal = low + 2^11 * mid + 2^22 * high
                     let full_normal = AllocatedNum::ternary_lc_eq(
                         cs, 
@@ -1415,9 +1409,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         let n = input_repr.as_ref()[0] & ((1 << SHA256_GADGET_CHUNK_SIZE) - 1);
                         
                         let m = map_into_sparse_form(shift_right(n as usize, 3), SHA256_EXPANSION_BASE);
-                        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
-                        repr.as_mut()[0] = m as u64;
-                        E::Fr::from_repr(repr).expect("should parse")
+                        E::Fr::from_str(&m.to_string()).unwrap()
                     });
                     let full_sparse_shift3 = AllocatedNum::alloc(cs, || new_val.grab())?;
 
@@ -1479,9 +1471,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 let sparse_low = Self::query_table1(cs, &self.sha256_base4_widh10_table, &low)?;
                 let (sparse_mid, sparse_mid_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
-                let (sparse_high, sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
+                let (sparse_high, _sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
 
-                let full_normal = {
+                let _full_normal = {
                     // compose full normal = low + 2^10 * mid + 2^21 * high
                     let full_normal = AllocatedNum::ternary_lc_eq(
                         cs, 
