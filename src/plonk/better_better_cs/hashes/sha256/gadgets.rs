@@ -22,6 +22,7 @@ use super::custom_gates::*;
 use std::sync::Arc;
 use crate::num_bigint::BigUint;
 use crate::num_traits::cast::ToPrimitive;
+use crate::num_traits::Zero;
 use std::ops::Add;
 use std::iter;
 
@@ -484,7 +485,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 for i in 0..4 {
                     let x = [vars[4*i].get_variable(), vars[4*i+1].get_variable(), vars[4*i+2].get_variable(), vars[4*i+3].get_variable()];
                     cs.new_single_gate_for_trace_step(
-                        &RangeCheck32ConstraintGate::default(), 
+                        &RangeCheckConstraintGate::default(), 
                         &[two.clone()], 
                         &x, 
                         &[]
@@ -570,43 +571,105 @@ impl<E: Engine> Sha256GadgetParams<E> {
     {   
         let mut lbb_fr = None;
         let mut hb_fr = None;
-        let mut y_fr = None;
+        let mut y_full_fr = None;
+        let mut y2_fr = None;
+        let mut y4_fr = None;
+        let mut y6_fr = None;
         let base_squared = base * base;
 
         match x.get_value() {
             None => {},
             Some(val) => {
                 let mut big_f = BigUint::default();
-                let f_repr = f.clone().into_repr();
+                let f_repr = val.clone().into_repr();
                 for n in f_repr.as_ref().iter().rev() {
                     big_f <<= 64;
                     big_f += *n;
                 }
 
-                let lbb_val = big_f.clone() % BigUint::from(base_squared)).to_u64().unwrap();
+                let lbb_val = (big_f.clone() % BigUint::from(base_squared)).to_u64().unwrap();
                 lbb_fr = Some(Self::u64_to_ff(lbb_val));
                 big_f /= base_squared;
 
-                let hb_val = big_f.clone() % BigUint::from(base)).to_u64().unwrap();
+                let hb_val = (big_f.clone() % BigUint::from(base)).to_u64().unwrap();
                 hb_fr = Some(Self::u64_to_ff(hb_val));
                 big_f /= base;
 
-                let y_val = big_f.clone() % BigUint::from(base_squared)).to_u64().unwrap();
-                lbb_fr = Some(Self::u64_to_ff(lbb_val));
+                let y_full_val = Self::biguint_to_ff(&big_f);
+                y_full_fr = Some(Self::u64_to_ff(lbb_val));
                 big_f /= base_squared;
-                
-                        for _i in 0..num_slices {
-                            let remainder = 
-                            let new_val = Self::u64_exp_to_ff(remainder, 0);
-                            big_f /= input_slice_modulus;
-            }
+
+                let y6_val = Self::biguint_to_ff(&big_f);
+                y6_fr = Some(Self::u64_to_ff(lbb_val));
+                big_f /= base_squared;
+
+                let y4_val = Self::biguint_to_ff(&big_f);
+                y4_fr = Some(Self::u64_to_ff(lbb_val));
+                big_f /= base_squared;
+
+                let y2_val = Self::biguint_to_ff(&big_f);
+                y2_fr = Some(Self::u64_to_ff(lbb_val));
+                big_f /= base_squared;
+
+                assert!(big_f.is_zero());
+            },
         }
 
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+        let lbb = AllocatedNum::alloc(cs, || lbb_fr.grab())?;
+        let hb = AllocatedNum::alloc(cs, || hb_fr.grab())?;
+        let y_full = AllocatedNum::alloc(cs, || y_full_fr.grab())?;
+        let y2 = AllocatedNum::alloc(cs, || y2_fr.grab())?;
+        let y4 = AllocatedNum::alloc(cs, || y4_fr.grab())?;
+        let mut y6 = AllocatedNum::alloc(cs, || y6_fr.grab())?;
+
+        let base_squared_fr = Self::u64_to_ff(base_squared as u64);
+
+        cs.new_single_gate_for_trace_step(
+            &RangeCheckConstraintGate::default(), 
+            &[base_squared_fr.clone()], 
+            &[y6.get_variable(), y4.get_variable(), y2.get_variable(), dummy.get_variable()], 
+            &[]
+        )?;     
+
+        cs.begin_gates_batch_for_step()?;
         
-                            let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
-                            input_slices.push(tmp);
-                        }
-    
+        cs.new_gate_in_batch( 
+            &SparseRangeGate::new(1),
+            &[base_squared_fr.clone()],
+            &[x.get_variable(), lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
+            &[],
+        )?;
+
+        cs.new_gate_in_batch( 
+            &SparseRangeGate::new(2),
+            &[E::Fr::zero()],
+            &[x.get_variable(), lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
+            &[],
+        )?;
+
+        // the selectors in the main gate go in the following order:
+        // [q_a, q_b, q_c, q_d, q_m, q_const, q_d_next]
+        // we constraint the equation: -x + lbb + base^2 * hb + base^3 * y = 0;
+        // so in our case: q_a = -1, q_b = 1; q_c = base^2; q_d = base^2; q_m = q_const = q_d_next = 0;
+
+        let zero = E::Fr::zero();
+        let one = E::Fr::one();
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let base_cubed_fr = Self::u64_to_ff((base_squared * base) as u64);
+            
+        cs.new_gate_in_batch(
+            &CS::MainGate::default(),
+            &[minus_one, one, base_squared_fr, base_cubed_fr, zero.clone(), zero.clone(), zero],
+            &[x.get_variable(),lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
+            &[],
+        )?;
+
+        cs.end_gates_batch_for_step()?;
+
+        Ok((y_full, hb, lbb))
+    }
 
     fn converter_helper(n: u64, sparse_base: usize, rotation: usize, extraction: usize) -> E::Fr {
         
@@ -710,6 +773,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
     fn u64_to_ff(n: u64) -> E::Fr {
         Self::u64_exp_to_ff(n, 0)
+    }
+
+    fn biguint_to_ff(value: &BigUint) -> E::Fr {
+        E::Fr::from_str(&value.to_str_radix(10)).unwrap()
     }
 
     // returns closets upper integer to a / b

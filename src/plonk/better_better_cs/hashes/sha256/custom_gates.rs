@@ -61,12 +61,12 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 // we require the following set of equations to hold:
 // a1 - base^2 * a0 \in [0, 1, base, base+1]
 // a2 - base^2 * a1 \in [0, 1, base, base+1]
-// a3 - 4 * a2 \in [0, 1, base, base+1]
-// b0 - 4 * a3 \in [0, 1, base, base+1]
+// a3 - base^2 * a2 \in [0, 1, base, base+1]
+// b0 - base^2 * a3 \in [0, 1, base, base+1]
 #[derive(Clone, Debug, Hash, Default)]
-pub struct RangeCheck32ConstraintGate;
+pub struct RangeCheckConstraintGate;
 
-impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
+impl<E: Engine> GateInternal<E> for RangeCheckConstraintGate {
     fn name(&self) -> &'static str {
         "RangeCheck32ConstraintGate"
     }
@@ -405,7 +405,7 @@ impl<E: Engine> GateInternal<E> for RangeCheck32ConstraintGate {
     }
 }
 
-impl<E: Engine> Gate<E> for RangeCheck32ConstraintGate {}
+impl<E: Engine> Gate<E> for RangeCheckConstraintGate {}
 
 
 // SparseInrangeCheck: for given base (which will be contained in additional this gate-specific setup selector)

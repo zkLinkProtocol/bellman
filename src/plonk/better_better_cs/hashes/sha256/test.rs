@@ -34,7 +34,7 @@ mod test {
             Ok(
                 vec![
                     Width4MainGateWithDNext::default().into_internal(),
-                    RangeCheck32ConstraintGate::default().into_internal(),
+                    RangeCheckConstraintGate::default().into_internal(),
                     SparseRangeGate::new(1).into_internal(),
                     SparseRangeGate::new(2).into_internal(),
                 ]
