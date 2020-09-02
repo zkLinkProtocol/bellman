@@ -1358,6 +1358,17 @@ impl<E: Engine> PlonkConstraintSystemParams<E> for PlonkCsWidth4WithNextStepPara
     const CAN_ACCESS_NEXT_TRACE_STEP: bool = true;
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PlonkCsWidth4WithNextStepAndCustomGatesParams;
+
+impl<E: Engine> PlonkConstraintSystemParams<E> for PlonkCsWidth4WithNextStepAndCustomGatesParams {
+    const STATE_WIDTH: usize =  4;
+    const WITNESS_WIDTH: usize = 0;
+    const HAS_WITNESS_POLYNOMIALS: bool = false;
+    const HAS_CUSTOM_GATES: bool = true;
+    const CAN_ACCESS_NEXT_TRACE_STEP: bool = true;
+}
+
 use crate::plonk::polynomials::*;
 
 #[derive(Clone)]
@@ -2088,6 +2099,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             return true;
         }
         // expect a small number of inputs
+
+        if self.n() == 0 {
+            return true;
+        }
 
         // TODO: handle public inputs
 
