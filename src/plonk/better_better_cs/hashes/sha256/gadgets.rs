@@ -123,10 +123,31 @@ impl<E: Engine> NumWithTracker<E> {
 
 
 #[derive(Copy, Clone)]
-pub enum Strategy {
-    UseTwoTables,
-    UseCustomGadgets,
+pub enum GlobalStrategy {
+    // NOTE: this strategy is outdated as it requires introduction of two many additional tables: 
+    UseSpecializedTables, 
+    UseCustomGadgets,   
+    // dirty hack: the concept of strategy should be remade, however both two strategies below are the most novel
+    // and are designed to get completely rid of using custom gates
+    // the first strategy introduce new range_check table where the first column is the number, second - number of bits.
+    // due to the use of additional data: number of bits, this table allows arbitrary split of integer numbers:
+    // e.g. we may split 32-bit number x into chunks of succesive 8|5|10|8 bits with the only use of this single table.
+    // this table is particularly useful, when range checks and arbitrary splitting are also required outside sha_256_gadget 
+    // (and hence the table may be reused)
+    // if we are only concerned with the sha256 gadget itself than it is better to use the second strategy: 
+    // it introduce special split "8-1-2" table: where the first column is 8-bit integer, second column is 1-bit integer
+    // and the third column is 2-bit integer
+    // this table is more specialized and can't be so easily used outside sha256-gadget
+    UseRangeCheckTable(usize),
+    Use_8_1_2_SplitTable,
 }
+
+#[derive(Copy, Clone)]
+pub enum Strategy {
+    UseCustomTable,
+    NaivaApproach,
+}
+
 
 #[derive(Clone)]
 pub struct SparseChValue<E: Engine> {
@@ -162,6 +183,10 @@ pub struct Sha256Registers<E: Engine> {
 
 
 pub struct Sha256GadgetParams<E: Engine> {
+    global_strategy: GlobalStrategy,
+    // if we are going to use custom gates, there is no need in global table
+    global_table: Option<Arc<LookupTableApplication<E>>>,
+    
     // for the purpose of this flag, see comments at the beginning of "convert_into_sparse_majority_form" function
     majority_strategy: Strategy,
 
@@ -192,8 +217,8 @@ pub struct Sha256GadgetParams<E: Engine> {
     // the third column is unused completely
     sha256_base4_widh10_table: Arc<LookupTableApplication<E>>,
     // for normalization we are going to use the same table as in majority function - as their bases (4) are the same!
-    // we may implement R_3 and S_19 (see below) either with the help of tables, 
-    // or with the help of specially crafted custom gadgets
+    // we may implement R_3 and S_19 (see below) either with the help of specially crafted addtional tables, 
+    // or using split-and-recombine approach (which may require more trace steps but doen't introduce no new tables)
     r3_strategy: Strategy,
     sha256_base4_shift3_table : Option<Arc<LookupTableApplication<E>>>,
     s19_strategy: Strategy,
@@ -219,6 +244,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     pub fn new<CS: ConstraintSystem<E>>(
         cs: &mut CS, 
 
+        global_strategy: GlobalStrategy,
         majority_strategy: Strategy,
         r3_strategy: Strategy,
         s19_strategy: Strategy,
@@ -269,8 +295,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         let name4 : &'static str = "sha256_base4_rot2_extr10_table";
         let sha256_base4_rot2_extr10_table = match majority_strategy {
-            Strategy::UseCustomGadgets => None,
-            Strategy::UseTwoTables => {
+            Strategy::NaivaApproach => None,
+            Strategy::UseCustomTable => {
                 let sha256_base4_rot2_extr10_table = LookupTableApplication::new(
                     name4,
                     Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 2, SHA256_GADGET_CHUNK_SIZE-1, SHA256_MAJORITY_BASE, name4),
@@ -339,8 +365,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         let name11 : &'static str = "sha256_base4_shift3_table";
         let sha256_base4_shift3_table = match r3_strategy {
-            Strategy::UseCustomGadgets => None,
-            Strategy::UseTwoTables => {
+            Strategy::NaivaApproach => None,
+            Strategy::UseCustomTable => {
                 let sha256_base4_shift3_table = LookupTableApplication::new(
                     name11,
                     Sha256SparseShiftTable::new(SHA256_GADGET_CHUNK_SIZE, 3, SHA256_EXPANSION_BASE, name11),
@@ -354,8 +380,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         let name12 : &'static str = "sha256_base4_rot9_table";
         let sha256_base4_rot9_table = match s19_strategy {
-            Strategy::UseCustomGadgets=> None,
-            Strategy::UseTwoTables => {
+            Strategy::NaivaApproach => None,
+            Strategy::UseCustomTable => {
                 let sha256_base4_rot9_table = LookupTableApplication::new(
                     name11,
                     Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 9, 0, SHA256_EXPANSION_BASE, name12),
@@ -408,6 +434,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
         println!("Constructor is fine!");
 
         Ok(Sha256GadgetParams {
+            global_strategy,
+            global_table: None,
+
             majority_strategy,
             r3_strategy,
             s19_strategy,
@@ -586,6 +615,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         match x.get_value() {
             None => {},
             Some(val) => {
+                println!("IN");
                 let mut big_f = BigUint::default();
                 let f_repr = val.clone().into_repr();
                 for n in f_repr.as_ref().iter().rev() {
@@ -601,29 +631,32 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 hb_fr = Some(Self::u64_to_ff(hb_val));
                 big_f /= base;
 
-                let y_full_fr = Self::biguint_to_ff(&big_f);
+                y_full_fr = Some(Self::biguint_to_ff(&big_f));
                 big_f /= base_squared;
 
-                let y6_fr = Self::biguint_to_ff(&big_f);
+                y6_fr = Some(Self::biguint_to_ff(&big_f));
                 big_f /= base_squared;
 
-                let y4_fr = Self::biguint_to_ff(&big_f);
+                y4_fr = Some(Self::biguint_to_ff(&big_f));
                 big_f /= base_squared;
 
-                let y2_fr = Self::biguint_to_ff(&big_f);
+                y2_fr = Some(Self::biguint_to_ff(&big_f));
                 big_f /= base_squared;
 
                 assert!(big_f.is_zero());
             },
         }
-
+        println!("q");
         let dummy = AllocatedNum::alloc_zero(cs)?;
+        println!("w");
         let lbb = AllocatedNum::alloc(cs, || lbb_fr.grab())?;
+        println!("ww");
         let hb = AllocatedNum::alloc(cs, || hb_fr.grab())?;
         let y_full = AllocatedNum::alloc(cs, || y_full_fr.grab())?;
         let y2 = AllocatedNum::alloc(cs, || y2_fr.grab())?;
         let y4 = AllocatedNum::alloc(cs, || y4_fr.grab())?;
         let y6 = AllocatedNum::alloc(cs, || y6_fr.grab())?;
+        println!("e");
 
         let base_squared_fr = Self::u64_to_ff(base_squared as u64);
 
@@ -632,9 +665,12 @@ impl<E: Engine> Sha256GadgetParams<E> {
             &[base_squared_fr.clone()], 
             &[y6.get_variable(), y4.get_variable(), y2.get_variable(), dummy.get_variable()], 
             &[]
-        )?;     
+        )?;  
+        println!("f");
+   
 
         cs.begin_gates_batch_for_step()?;
+        println!("ff");
         
         cs.new_gate_in_batch( 
             &SparseRangeGate::new(1),
@@ -642,6 +678,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
             &[x.get_variable(), lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
             &[],
         )?;
+        println!("fff");
 
         cs.new_gate_in_batch( 
             &SparseRangeGate::new(2),
@@ -649,6 +686,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
             &[x.get_variable(), lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
             &[],
         )?;
+        println!("ffff");
 
         // the selectors in the main gate go in the following order:
         // [q_a, q_b, q_c, q_d, q_m, q_const, q_d_next]
@@ -669,6 +707,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
         )?;
 
         cs.end_gates_batch_for_step()?;
+
+        println!("beautiful end");
 
         Ok((y_full, hb, lbb))
     }
@@ -715,10 +755,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let vars = [key.get_variable(), res.get_variable(), dummy, dummy];
 
         println!("AAA");
-        // cs.allocate_variables_without_gate(
-        //     &vars,
-        //     &[]
-        // )?;
+        cs.allocate_variables_without_gate(
+            &vars,
+            &[]
+        )?;
         
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
         println!("BBB");
@@ -752,10 +792,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
         let vars = [key.get_variable(), res.0.get_variable(), res.1.get_variable(), dummy];
-        // cs.allocate_variables_without_gate(
-        //     &vars,
-        //     &[]
-        // )?;
+        cs.allocate_variables_without_gate(
+            &vars,
+            &[]
+        )?;
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
 
         cs.end_gates_batch_for_step()?;
@@ -960,7 +1000,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     {      
         let var = match (input.overflow_tracker, self.majority_strategy)  {
             (OverflowTracker::SignificantOverflow, _) => unimplemented!(),
-            (OverflowTracker::SmallOverflow(_), _) | (OverflowTracker::OneBitOverflow, Strategy::UseCustomGadgets) => {
+            (OverflowTracker::SmallOverflow(_), _) | (OverflowTracker::OneBitOverflow, Strategy::NaivaApproach) => {
                 Self::extact_32_from_overflowed_num(cs, &input.num)?
             },
             (_, _) => input.num,
@@ -998,8 +1038,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let (sparse_low, sparse_low_rot2) = Self::query_table2(cs, &self.sha256_base4_rot2_table, &low)?;
                 let (sparse_mid, sparse_mid_rot2) = Self::query_table2(cs, &self.sha256_base4_rot2_table, &mid)?;
                 let high_chunk_table = match self.majority_strategy {
-                    Strategy::UseTwoTables => self.sha256_base4_rot2_extr10_table.as_ref().unwrap(),
-                    Strategy::UseCustomGadgets => &self.sha256_base4_rot2_table,
+                    Strategy::UseCustomTable => self.sha256_base4_rot2_extr10_table.as_ref().unwrap(),
+                    Strategy::NaivaApproach => &self.sha256_base4_rot2_table,
                 };
                 let (sparse_high, _sparse_high_rot2) = Self::query_table2(cs, high_chunk_table, &high)?;
 
@@ -1405,10 +1445,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     // Note: we should also check that y is at most eight bit long! 
                     // the additional difficulty is that y is itself represented in sparse form
                     let r3 = match self.r3_strategy {
-                        Strategy::UseTwoTables => {
+                        Strategy::UseCustomTable => {
                             Self::query_table1(cs, self.sha256_base4_shift3_table.as_ref().unwrap(), &low)? 
                         },
-                        Strategy::UseCustomGadgets => {
+                        Strategy::NaivaApproach => {
                             let (y, _hb, _lbb) = Self::unpack_chunk(cs, sparse_low, SHA256_EXPANSION_BASE)?;
                             y
                         }
@@ -1536,18 +1576,21 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 let full_sparse_rot19 = {
                     let sparse_mid_rot9 = match self.r3_strategy {
-                        Strategy::UseTwoTables => {
+                        Strategy::UseCustomTable => {
                             Self::query_table2(cs, self.sha256_base4_rot9_table.as_ref().unwrap(), &mid)?.1 
                         },
-                        Strategy::UseCustomGadgets => {
+                        Strategy::NaivaApproach => {
                             // we already have x = mid_rot7 (in sparse form!) - and we need to rotate it two more bits right
                             // in order, to accomplish this we do the following :
                             // split x as y| hb | lbb
                             // the result, we are looking for is z = lbb | y | hb  
+                            println!("before error");
                             let (y, hb, lbb) = Self::unpack_chunk(cs, sparse_mid, SHA256_EXPANSION_BASE)?;
+                            println!("before error2");
                             let sparse_mid_rot9 = Self::allocate_converted_num(
                                 cs, &mid, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 9, 0
                             )?;
+                            println!("before error3");
 
                             let y_coef = Self::u64_exp_to_ff(4, 1);
                             let lbb_coef = Self::u64_exp_to_ff(4, 9);

@@ -19,6 +19,7 @@ mod test {
     struct TestSha256Circuit<E:Engine>{
         input: [E::Fr; 16],
         output: [E::Fr; 8],
+        global_strategy: GlobalStrategy,
         majority_strategy: Strategy,
         r3_strategy: Strategy,
         s19_strategy: Strategy,
@@ -57,7 +58,7 @@ mod test {
 
             let sha256_gadget = Sha256GadgetParams::new(
                 cs, 
-                self.majority_strategy, self.r3_strategy, self.s19_strategy, 
+                self.global_strategy, self.majority_strategy, self.r3_strategy, self.s19_strategy, 
                 self.ch_base_num_of_chunks, self.maj_base_num_of_chunks, self.sheduler_base_num_of_chunks,
             )?;
 
@@ -133,9 +134,13 @@ mod test {
         let circuit = TestSha256Circuit::<Bn256>{
             input: input_fr_arr,
             output: output_fr_arr,
-            majority_strategy: Strategy::UseTwoTables,
-            r3_strategy: Strategy::UseCustomGadgets,
-            s19_strategy: Strategy::UseCustomGadgets,
+
+            // Note: this parameters may be played with!
+            global_strategy: GlobalStrategy::UseRangeCheckTable(11),
+            majority_strategy: Strategy::UseCustomTable,
+            r3_strategy: Strategy::NaivaApproach,
+            s19_strategy: Strategy::NaivaApproach,
+
             ch_base_num_of_chunks: None,
             maj_base_num_of_chunks: None,
             sheduler_base_num_of_chunks: None,
