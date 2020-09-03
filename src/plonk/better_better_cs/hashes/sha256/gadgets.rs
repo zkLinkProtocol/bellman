@@ -405,6 +405,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
             Self::u64_to_ff(0x90befffa), Self::u64_to_ff(0xa4506ceb), Self::u64_to_ff(0xbef9a3f7), Self::u64_to_ff(0xc67178f2),
         ];
 
+        println!("Constructor is fine!");
+
         Ok(Sha256GadgetParams {
             majority_strategy,
             r3_strategy,
@@ -482,6 +484,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let mut two = E::Fr::one();
                 two.double();
 
+                println!("AAA");
+
                 for i in 0..4 {
                     let x = [vars[4*i].get_variable(), vars[4*i+1].get_variable(), vars[4*i+2].get_variable(), vars[4*i+3].get_variable()];
                     cs.new_single_gate_for_trace_step(
@@ -491,6 +495,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[]
                     )?;
                 }
+
+                println!("BBB");
 
                 let (of_l_value, of_h_value) = match x.get_value() {
                     None => (None, None),
@@ -707,11 +713,15 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
         let vars = [key.get_variable(), res.get_variable(), dummy, dummy];
-        cs.allocate_variables_without_gate(
-            &vars,
-            &[]
-        )?;
+
+        println!("AAA");
+        // cs.allocate_variables_without_gate(
+        //     &vars,
+        //     &[]
+        // )?;
+        
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+        println!("BBB");
 
         cs.end_gates_batch_for_step()?;
 
@@ -742,10 +752,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
         let vars = [key.get_variable(), res.0.get_variable(), res.1.get_variable(), dummy];
-        cs.allocate_variables_without_gate(
-            &vars,
-            &[]
-        )?;
+        // cs.allocate_variables_without_gate(
+        //     &vars,
+        //     &[]
+        // )?;
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
 
         cs.end_gates_batch_for_step()?;
@@ -1470,6 +1480,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let high = Self::allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2*SHA256_GADGET_CHUNK_SIZE-1, 0, 0, 0)?;
 
                 let sparse_low = Self::query_table1(cs, &self.sha256_base4_widh10_table, &low)?;
+                println!("low: {:?}", sparse_low.get_value());
                 let (sparse_mid, sparse_mid_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
                 let (sparse_high, _sparse_high_rot7) = Self::query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
 
@@ -1483,6 +1494,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     )?;
                     full_normal
                 };
+                println!("WQE");
 
                 let full_sparse_rot17 = {
                     // full_sparse_rot17 = mid_sparse_rot7 + 4^(11-7) * sparse_high + 4^(22-7) * sparse_low
@@ -1502,6 +1514,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                     full_sparse_rot17
                 };
+                println!("WQE2");
 
                 let full_sparse_shift10 = {
                     // full_sparse_shift10 = mid_sparse + 4^(11) * sparse_high
@@ -1519,6 +1532,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     )?;
                     full_sparse_shift10
                 };
+                 println!("WQE3");
 
                 let full_sparse_rot19 = {
                     let sparse_mid_rot9 = match self.r3_strategy {
@@ -1547,11 +1561,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
                             sparse_mid_rot9
                         },
                     };
+                     println!("WQE4");
 
                     // full_sparse_rot19 = mid_sparse_rot9 + 4^(11-9) * sparse_high + 4^(22-9) * sparse_low
                     let full_sparse_rot19 = Self::allocate_converted_num(
                         cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 19, 0
                     )?;
+                    println!("WQE5");
               
                     let rot19_limb_0_shift = Self::u64_exp_to_ff(4, 22 - 9);
                     let rot19_limb_2_shift = Self::u64_exp_to_ff(4, 11 - 9);
@@ -1564,6 +1580,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     )?;
                     full_sparse_rot19
                 };
+                println!("WQE6");
 
                 let t = Num::Allocated(full_sparse_rot17.add_two(cs, full_sparse_rot19, full_sparse_shift10)?);      
                 let r = Self::normalize(
@@ -1573,6 +1590,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     SHA256_EXPANSION_BASE, 
                     self.sheduler_base_num_of_chunks,
                 )?;
+                println!("WQE7");
         
                 return Ok(r);
             }
@@ -1599,8 +1617,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
         }
 
         for j in 16..64 {
+            println!("XXX");
             let tmp1 = self.sigma_1(cs, &res[j - 2])?;
+             println!("XXY");
             let tmp2 = self.sigma_0(cs, &res[j - 15])?;
+             println!("XXZ");
 
             let mut tmp3 = Num::sum(cs, &[tmp1, res[j-7].clone(), tmp2, res[j-16].clone()])?;
             tmp3 = Self::extact_32_from_overflowed_num(cs, &tmp3)?;
@@ -1629,8 +1650,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         for block in message.chunks(16) {
             let expanded_block = self.message_expansion(cs, block)?;
+            println!("HERE");
             regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
+            println!("THERE");
         }
+        println!("DONE");
 
         let res = [
             Self::extact_32_from_tracked_num(cs, regs.a)?,
