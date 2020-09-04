@@ -670,7 +670,8 @@ impl<E: Engine> LookupTableInternal<E> for Sha256MajorityTable<E> {
 pub const SHA256_EXPANSION_BASE: usize = 4;
 
 
-// first column - number, second column - number of bits for this number
+// NOTE the second column is of almost no use for us now, it can be filled with suitable data
+// (e.g. Hamming distance or parity bit, or length of number in bits, etc.)
 #[derive(Clone)]
 pub struct ExtendedRangeTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 2],
@@ -690,7 +691,6 @@ impl<E: Engine> ExtendedRangeTable<E> {
             res += 1;
             input >>= 1;
         }
-
         res
     }
 
@@ -698,16 +698,17 @@ impl<E: Engine> ExtendedRangeTable<E> {
         let mut key = Vec::with_capacity(1 << bits);
         let mut value = Vec::with_capacity(1 << bits);
         let mut map = std::collections::HashMap::with_capacity(1 << bits);
+        let zero = E::Fr::zero();
 
         for x in 0..(1 << bits) {
-            let y = Self::log2(x);
+            //let y = Self::log2(x);
 
             let x = E::Fr::from_str(&x.to_string()).unwrap();
-            let y = E::Fr::from_str(&y.to_string()).unwrap();
+            //let y = E::Fr::from_str(&y.to_string()).unwrap();
             
             key.push(x);
-            value.push(y);
-            map.insert(x, y);
+            value.push(zero);
+            map.insert(x, zero);
         }
 
         Self {
@@ -789,64 +790,73 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
 pub struct SplitTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 3],
     chunks_length: [usize; 3],
+    table_lookup_set: std::collections::HashSet<(E::Fr, E::Fr, E::Fr)>,
     name: &'static str,
 }
 
 
 impl<E: Engine> SplitTable<E> {
     pub fn new(chunks_length: [usize; 3], name: &'static str) -> Self {
-        let mut key0 = Vec::with_capacity(1 << bits);
-        let mut key1 = Vec::with_capacity(1 << bits);
-        let mut key2 = Vec::with_capacity(1 << bits);
+        let mut key0 = Vec::with_capacity(1 << chunks_length[0]);
+        let mut key1 = Vec::with_capacity(1 << chunks_length[1]);
+        let mut key2 = Vec::with_capacity(1 << chunks_length[2]);
+        let mut table_lookup_set = std::collections::HashSet::with_capacity(chunks_length.iter().sum());
 
-        for x in 0..(1 << bits) {
-
-            let x = E::Fr::from_str(&x.to_string()).unwrap();
-            let y = E::Fr::from_str(&y.to_string()).unwrap();
-            
-            key.push(x);
-            value.push(y);
-            map.insert(x, y);
+        for x in 0..(1 << chunks_length[0]) {
+            for y in 0..(1 << chunks_length[1]) {
+                for z in 0..(1 << chunks_length[2]) {
+                    let x = E::Fr::from_str(&x.to_string()).unwrap();
+                    let y = E::Fr::from_str(&y.to_string()).unwrap();
+                    let z = E::Fr::from_str(&z.to_string()).unwrap();
+                    
+                    key0.push(x);
+                    key1.push(y);
+                    key2.push(z);
+                    table_lookup_set.insert((x, y, z));
+                }
+            }    
         }
 
         Self {
-            table_entries: [key, value],
-            table_lookup_map: map,
-            bits,
+            table_entries: [key0, key1, key2],
+            chunks_length,
+            table_lookup_set,
             name,
         }
     }
 }
 
 
-impl<E: Engine> std::fmt::Debug for ExtendedRangeTable<E> {
+impl<E: Engine> std::fmt::Debug for SplitTable<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExtendedRangeTable")
-            .field("bits", &self.bits)
+        f.debug_struct("SplitTable")
+            .field("l", &self.chunks_length[0])
+            .field("r", &self.chunks_length[1])
+            .field("m", &self.chunks_length[2])
             .finish()
     }
 }
 
 
-impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
+impl<E: Engine> LookupTableInternal<E> for SplitTable<E> {
     fn name(&self) -> &'static str {
         self.name
     }
     fn table_size(&self) -> usize {
-        let bits = chunks_length.iter().sum();
+        let bits : usize = self.chunks_length.iter().sum();
         1 << bits
     }
     fn num_keys(&self) -> usize {
-        1
+        3
     }
     fn num_values(&self) -> usize {
-        1
+        0
     }
     fn allows_combining(&self) -> bool {
         true
     }
     fn get_table_values_for_polys(&self) -> Vec<Vec<E::Fr>> {
-        vec![self.table_entries[0].clone(), self.table_entries[1].clone()]
+        vec![self.table_entries[0].clone(), self.table_entries[1].clone(), self.table_entries[2].clone()]
     }
     fn table_id(&self) -> E::Fr {
         table_id_from_string(self.name)
@@ -866,20 +876,19 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
         assert!(keys.len() == self.num_keys());
         assert!(values.len() == self.num_values());
 
-        if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
-            return entry == &(values[0]);
-        }
-        false
+        !self.table_lookup_set.get(&(keys[0], keys[1], keys[2])).is_none() 
     }
 
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == self.num_keys());
 
-        if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
-            return Ok(vec![*entry])
+        let res = if self.table_lookup_set.get(&(keys[0], keys[1], keys[2])).is_none() {
+            Err(SynthesisError::Unsatisfiable)
         }
-
-        Err(SynthesisError::Unsatisfiable)
+        else {
+            Ok(vec![])
+        };
+        res 
     }
 }
 

@@ -136,7 +136,7 @@ mod test {
             output: output_fr_arr,
 
             // Note: this parameters may be played with!
-            global_strategy: GlobalStrategy::UseRangeCheckTable(11),
+            global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
             majority_strategy: Strategy::UseCustomTable,
             r3_strategy: Strategy::NaivaApproach,
             s19_strategy: Strategy::NaivaApproach,
