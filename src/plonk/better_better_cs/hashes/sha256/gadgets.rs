@@ -1949,7 +1949,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2*SHA256_GADGET_CHUNK_SIZE-1, 0, 0, 0)?;
 
                 let sparse_low = self.query_table1(cs, &self.sha256_base4_widh10_table, &low)?;
-                println!("low: {:?}", sparse_low.get_value());
                 let (sparse_mid, sparse_mid_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
                 let (sparse_high, _sparse_high_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
 
@@ -2004,7 +2003,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                  println!("WQE3");
 
                 let full_sparse_rot19 = {
-                    let sparse_mid_rot9 = match self.strategy {
+                    let sparse_mid_rot9 = match self.global_strategy {
                         GlobalStrategy::UseSpecializedTables => {
                             self.query_table2(cs, self.sha256_base4_rot9_table.as_ref().unwrap(), &mid)?.1 
                         },
@@ -2031,30 +2030,29 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         },
                         // work in binary form
                         _ => {
-                            let (y_normal, hb_normal, lbb_normal) = self.unpack_chunk(cs, mid, 2)?;
-                            let mid_rot2 = self.allocate_converted_num(
-                                cs, &mid, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 2, 0
+                            let mid_normal_rot2 = self.allocate_converted_num(
+                                cs, &mid, SHA256_GADGET_CHUNK_SIZE, 0, 0, 2, 0
                             )?;
-
-                            let y_coef = Self::u64_exp_to_ff(4, 1);
-                            let lbb_coef = Self::u64_exp_to_ff(4, 9);
+                            let (y_normal, hb_normal, lbb_normal) = self.unpack_chunk(cs, mid, 2)?;
+                            
+                            let y_coef = Self::u64_to_ff(1 << 1);
+                            let lbb_coef = Self::u64_to_ff(1 << 9);
 
                             AllocatedNum::ternary_lc_eq(
                                 cs, 
                                 &[E::Fr::one(), y_coef, lbb_coef],
-                                &[hb, y, lbb],
-                                &sparse_mid_rot9,
+                                &[hb_normal, y_normal, lbb_normal],
+                                &mid_normal_rot2,
                             )?;
+                            let (_, sparse_mid_rot9) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid_normal_rot2)?;
                             sparse_mid_rot9
-                        }
+                        },
                     };
-                     println!("WQE4");
 
                     // full_sparse_rot19 = mid_sparse_rot9 + 4^(11-9) * sparse_high + 4^(22-9) * sparse_low
                     let full_sparse_rot19 = self.allocate_converted_num(
                         cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 19, 0
                     )?;
-                    println!("WQE5");
               
                     let rot19_limb_0_shift = Self::u64_exp_to_ff(4, 22 - 9);
                     let rot19_limb_2_shift = Self::u64_exp_to_ff(4, 11 - 9);
@@ -2067,7 +2065,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     )?;
                     full_sparse_rot19
                 };
-                println!("WQE6");
 
                 let t = Num::Allocated(full_sparse_rot17.add_two(cs, full_sparse_rot19, full_sparse_shift10)?);      
                 let r = self.normalize(

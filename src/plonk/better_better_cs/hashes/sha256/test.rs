@@ -21,8 +21,6 @@ mod test {
         output: [E::Fr; 8],
         global_strategy: GlobalStrategy,
         majority_strategy: Strategy,
-        r3_strategy: Strategy,
-        s19_strategy: Strategy,
         ch_base_num_of_chunks: Option<usize>,
         maj_base_num_of_chunks: Option<usize>,
         sheduler_base_num_of_chunks: Option<usize>,
@@ -58,7 +56,7 @@ mod test {
 
             let sha256_gadget = Sha256GadgetParams::new(
                 cs, 
-                self.global_strategy, self.majority_strategy, self.r3_strategy, self.s19_strategy, 
+                self.global_strategy, self.majority_strategy,
                 self.ch_base_num_of_chunks, self.maj_base_num_of_chunks, self.sheduler_base_num_of_chunks,
             )?;
 
@@ -138,8 +136,6 @@ mod test {
             // Note: this parameters may be played with!
             global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
             majority_strategy: Strategy::UseCustomTable,
-            r3_strategy: Strategy::NaivaApproach,
-            s19_strategy: Strategy::NaivaApproach,
 
             ch_base_num_of_chunks: None,
             maj_base_num_of_chunks: None,
