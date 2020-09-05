@@ -371,7 +371,7 @@ impl<E: Engine> AllocatedNum<E> {
             coeffs.push(E::Fr::zero());
         }
 
-        AllocatedNum::ternary_lc_eq(cs, &coeffs[..], &vars[..], total)?;
+        AllocatedNum::ternary_lc_eq(cs, &coeffs[..], &current_vars[..], total)?;
         Ok(())
     }
 

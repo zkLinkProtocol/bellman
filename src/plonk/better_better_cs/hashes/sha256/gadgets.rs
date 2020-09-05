@@ -281,8 +281,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let ch_base_num_of_chunks = ch_base_num_of_chunks.unwrap_or(CH_BASE_DEFAULT_NUM_OF_CHUNKS);
         let maj_base_num_of_chunks = maj_base_num_of_chunks.unwrap_or(MAJ_BASE_DEFAULT_NUM_OF_CHUNKS);
         let sheduler_base_num_of_chunks = sheduler_base_num_of_chunks.unwrap_or(SHEDULER_BASE_DEFAULT_NUM_OF_CHUNKS);
-        
-        let columns = vec![
+
+        let columns3 = vec![
             PolyIdentifier::VariablesPolynomial(0), 
             PolyIdentifier::VariablesPolynomial(1), 
             PolyIdentifier::VariablesPolynomial(2)
@@ -292,7 +292,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_base7_rot6_table = LookupTableApplication::new(
             name1,
             Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 6, 0, SHA256_CHOOSE_BASE, name1),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -300,7 +300,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_base7_rot3_extr10_table = LookupTableApplication::new(
             name2,
             Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 3, SHA256_GADGET_CHUNK_SIZE-1, SHA256_CHOOSE_BASE, name2),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -308,7 +308,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_base4_rot2_table = LookupTableApplication::new(
             name3,
             Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 2, 0, SHA256_MAJORITY_BASE, name3),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -323,7 +323,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let sha256_base4_rot2_extr10_table = LookupTableApplication::new(
                     name4,
                     Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 2, SHA256_GADGET_CHUNK_SIZE-1, SHA256_MAJORITY_BASE, name4),
-                    columns.clone(),
+                    columns3.clone(),
                     true
                 );
 
@@ -335,7 +335,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_ch_normalization_table = LookupTableApplication::new(
             name5,
             Sha256ChooseTable::new(ch_base_num_of_chunks, name5),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -343,7 +343,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_maj_normalization_table = LookupTableApplication::new(
             name6,
             Sha256MajorityTable::new(maj_base_num_of_chunks, name6),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -351,7 +351,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_ch_xor_table = LookupTableApplication::new(
             name7,
             Sha256NormalizationTable::new(SHA256_CHOOSE_BASE, ch_base_num_of_chunks, name7),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -359,7 +359,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_maj_xor_table = LookupTableApplication::new(
             name8,
             Sha256NormalizationTable::new(SHA256_MAJORITY_BASE, maj_base_num_of_chunks, name8),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -367,7 +367,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_base4_rot7_table = LookupTableApplication::new(
             name9,
             Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 7, 0, SHA256_EXPANSION_BASE, name9),
-            columns.clone(),
+            columns3.clone(),
             true
         );
         
@@ -375,7 +375,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_base4_widh10_table = LookupTableApplication::new(
             name10,
             Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE - 1, 0, 0, SHA256_EXPANSION_BASE, name10),
-            columns.clone(),
+            columns3.clone(),
             true
         );
 
@@ -392,7 +392,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let sha256_base4_shift3_table = LookupTableApplication::new(
                     name11,
                     Sha256SparseShiftTable::new(SHA256_GADGET_CHUNK_SIZE, 3, SHA256_EXPANSION_BASE, name11),
-                    columns.clone(),
+                    columns3.clone(),
                     true
                 );
                 Some(cs.add_table(sha256_base4_shift3_table)?)
@@ -406,7 +406,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let sha256_base4_rot9_table = LookupTableApplication::new(
                     name11,
                     Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 9, 0, SHA256_EXPANSION_BASE, name12),
-                    columns.clone(),
+                    columns3.clone(),
                     true
                 );
 
@@ -426,7 +426,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let global_table = LookupTableApplication::new(
                     name13,
                     ExtendedRangeTable::new(num_bits, name13),
-                    columns.clone(),
+                    columns3.clone(),
                     true
                 );
                 Some(cs.add_table(global_table)?)
@@ -435,7 +435,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let global_table = LookupTableApplication::new(
                     name13,
                     SplitTable::new([8, 2, 1], name13),
-                    columns.clone(),
+                    columns3.clone(),
                     true
                 );
                 Some(cs.add_table(global_table)?)
@@ -1648,16 +1648,21 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 }
 
                 for i in 0..num_slices {
+                    println!("B");
                     let tmp = self.query_table1(cs, table, &input_slices[i])?;
+                    println!("C");
                     output_slices.push(tmp);
                 }
+                println!("D");
 
                 let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
                 let input_base = Self::u64_exp_to_ff(input_slice_modulus as u64, 0);
                 let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
 
+                println!("num of slices: {}", num_slices);
                 AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
                 AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
+                println!("E");
 
                 return Ok(Num::Allocated(output));
             }
@@ -1802,6 +1807,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
                 let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
 
+                println!("full: {}, low: {}, mid: {}, high: {}", var.get_value().unwrap(), low.get_value().unwrap(), 
+                    mid.get_value().unwrap(), high.get_value().unwrap());
+
                 let (sparse_low, sparse_low_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
                 let (sparse_mid, sparse_mid_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
                 let (sparse_high, _sparse_high_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
@@ -1814,6 +1822,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[low.clone(), mid, high],
                         &var,
                     )?;
+                    println!("full normal");
                     full_normal
                 };
 
@@ -1822,16 +1831,19 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     let full_sparse_rot7 = self.allocate_converted_num(
                         cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 7, 0
                     )?;
+                    println!("full_sparse_rot7: {}", full_sparse_rot7.get_value().unwrap());
 
                     let rot7_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 7);
                     let rot7_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7);
 
+                    println!("full sparse 21");
                     AllocatedNum::ternary_lc_eq(
                         cs, 
                         &[E::Fr::one(), rot7_limb_1_shift, rot7_limb_2_shift],
                         &[sparse_low_rot7, sparse_mid.clone(), sparse_high.clone()],
                         &full_sparse_rot7,
                     )?;
+                    println!("full sparse1");
 
                     full_sparse_rot7
                 };
@@ -1851,6 +1863,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[sparse_mid_rot7, sparse_low.clone(), sparse_high.clone()],
                         &full_sparse_rot18,
                     )?;
+                    println!("full sparse2");
 
                     full_sparse_rot18
                 };
@@ -1895,13 +1908,14 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     // full_sparse_shift3 = sparse_low_shift3 + 4^(11 - 3) * sparse_mid + 4^(22 - 3) * sparse_high
                     let shift3_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 3);
                     let shift3_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 3);
-
+                    println!("full sparse11");
                     AllocatedNum::ternary_lc_eq(
                         cs, 
                         &[E::Fr::one(), shift3_limb_1_shift, shift3_limb_2_shift],
                         &[r3, sparse_mid, sparse_high],
                         &full_sparse_shift3,
                     )?;
+                    println!("full sparse3");
                     full_sparse_shift3
                 };
 
@@ -2033,7 +2047,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
                             let mid_normal_rot2 = self.allocate_converted_num(
                                 cs, &mid, SHA256_GADGET_CHUNK_SIZE, 0, 0, 2, 0
                             )?;
+                            println!("before");
                             let (y_normal, hb_normal, lbb_normal) = self.unpack_chunk(cs, mid, 2)?;
+                            println!("after");
                             
                             let y_coef = Self::u64_to_ff(1 << 1);
                             let lbb_coef = Self::u64_to_ff(1 << 9);
@@ -2066,7 +2082,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     full_sparse_rot19
                 };
 
-                let t = Num::Allocated(full_sparse_rot17.add_two(cs, full_sparse_rot19, full_sparse_shift10)?);      
+                let t = Num::Allocated(full_sparse_rot17.add_two(cs, full_sparse_rot19, full_sparse_shift10)?); 
+                println!("A");     
                 let r = self.normalize(
                     cs, &t, 
                     &self.sha256_sheduler_xor_table,

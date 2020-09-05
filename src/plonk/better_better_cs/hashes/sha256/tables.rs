@@ -318,7 +318,9 @@ impl<E: Engine> LookupTableInternal<E> for Sha256NormalizationTable<E> {
         1
     }
     fn num_values(&self) -> usize {
-        1
+        // TODO: the third column is actually unused,
+        // but current interface doesn't support this possibility
+        1 + 1
     }
     fn allows_combining(&self) -> bool {
         true
@@ -674,8 +676,7 @@ pub const SHA256_EXPANSION_BASE: usize = 4;
 // (e.g. Hamming distance or parity bit, or length of number in bits, etc.)
 #[derive(Clone)]
 pub struct ExtendedRangeTable<E: Engine> {
-    table_entries: [Vec<E::Fr>; 2],
-    table_lookup_map: std::collections::HashMap<E::Fr, E::Fr>,
+    table_entries: [Vec<E::Fr>; 3],
     bits: usize,
     name: &'static str,
 }
@@ -696,24 +697,16 @@ impl<E: Engine> ExtendedRangeTable<E> {
 
     pub fn new(bits: usize, name: &'static str) -> Self {
         let mut key = Vec::with_capacity(1 << bits);
-        let mut value = Vec::with_capacity(1 << bits);
-        let mut map = std::collections::HashMap::with_capacity(1 << bits);
-        let zero = E::Fr::zero();
+        let value1 = vec![E::Fr::zero(); 1 << bits];
+        let value2 = value1.clone();
 
         for x in 0..(1 << bits) {
-            //let y = Self::log2(x);
-
             let x = E::Fr::from_str(&x.to_string()).unwrap();
-            //let y = E::Fr::from_str(&y.to_string()).unwrap();
-            
             key.push(x);
-            value.push(zero);
-            map.insert(x, zero);
         }
 
         Self {
-            table_entries: [key, value],
-            table_lookup_map: map,
+            table_entries: [key, value1, value2],
             bits,
             name,
         }
@@ -741,13 +734,13 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
         1
     }
     fn num_values(&self) -> usize {
-        1
+        1 + 1
     }
     fn allows_combining(&self) -> bool {
         true
     }
     fn get_table_values_for_polys(&self) -> Vec<Vec<E::Fr>> {
-        vec![self.table_entries[0].clone(), self.table_entries[1].clone()]
+        vec![self.table_entries[0].clone(), self.table_entries[1].clone(), self.table_entries[2].clone()]
     }
     fn table_id(&self) -> E::Fr {
         table_id_from_string(self.name)
@@ -767,18 +760,13 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
         assert!(keys.len() == self.num_keys());
         assert!(values.len() == self.num_values());
 
-        if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
-            return entry == &(values[0]);
-        }
-        false
+        unimplemented!();
     }
 
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == self.num_keys());
 
-        if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
-            return Ok(vec![*entry])
-        }
+        unimplemented!();
 
         Err(SynthesisError::Unsatisfiable)
     }
