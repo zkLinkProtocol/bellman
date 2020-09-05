@@ -219,9 +219,7 @@ pub struct Sha256GadgetParams<E: Engine> {
     // for normalization we are going to use the same table as in majority function - as their bases (4) are the same!
     // we may implement R_3 and S_19 (see below) either with the help of specially crafted addtional tables, 
     // or using split-and-recombine approach (which may require more trace steps but doen't introduce no new tables)
-    r3_strategy: Strategy,
     sha256_base4_shift3_table : Option<Arc<LookupTableApplication<E>>>,
-    s19_strategy: Strategy,
     sha256_base4_rot9_table : Option<Arc<LookupTableApplication<E>>>,
     sha256_sheduler_xor_table : Arc<LookupTableApplication<E>>,
 
@@ -262,13 +260,17 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Self::u64_exp_to_ff(n, 0)
     }
 
+    // returns closets upper integer to a / b
+    fn round_up(a: usize, b : usize) -> usize {
+        let additional_chunks : usize = if a % b > 0 {1} else {0};
+        a/b + additional_chunks
+    }
+
     pub fn new<CS: ConstraintSystem<E>>(
         cs: &mut CS, 
 
         global_strategy: GlobalStrategy,
         majority_strategy: Strategy,
-        r3_strategy: Strategy,
-        s19_strategy: Strategy,
 
         ch_base_num_of_chunks: Option<usize>,
         maj_base_num_of_chunks: Option<usize>,
@@ -385,24 +387,22 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let sha256_base4_widh10_table = cs.add_table(sha256_base4_widh10_table)?;
 
         let name11 : &'static str = "sha256_base4_shift3_table";
-        let sha256_base4_shift3_table = match r3_strategy {
-            Strategy::NaivaApproach => None,
-            Strategy::UseCustomTable => {
+        let sha256_base4_shift3_table = match global_strategy {
+            GlobalStrategy::UseSpecializedTables => {
                 let sha256_base4_shift3_table = LookupTableApplication::new(
                     name11,
                     Sha256SparseShiftTable::new(SHA256_GADGET_CHUNK_SIZE, 3, SHA256_EXPANSION_BASE, name11),
                     columns.clone(),
                     true
                 );
-
                 Some(cs.add_table(sha256_base4_shift3_table)?)
             }
+            _ => None,
         };
 
         let name12 : &'static str = "sha256_base4_rot9_table";
-        let sha256_base4_rot9_table = match s19_strategy {
-            Strategy::NaivaApproach => None,
-            Strategy::UseCustomTable => {
+        let sha256_base4_rot9_table = match global_strategy {
+            GlobalStrategy::UseSpecializedTables => {
                 let sha256_base4_rot9_table = LookupTableApplication::new(
                     name11,
                     Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 9, 0, SHA256_EXPANSION_BASE, name12),
@@ -412,6 +412,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 Some(cs.add_table(sha256_base4_rot9_table)?)
             }
+            _ => None,
         };
 
         let name13 : &'static str = "global_table";
@@ -484,10 +485,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok(Sha256GadgetParams {
             global_strategy,
             global_table,
-
             majority_strategy,
-            r3_strategy,
-            s19_strategy,
 
             ch_base_num_of_chunks,
             maj_base_num_of_chunks,
@@ -623,14 +621,14 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok(vars.pop().expect("top element exists"))
     }
 
-    fn extact_32_with_range_table<CS: ConstraintSystem<E>>(
+    fn extract_32_with_range_table<CS: ConstraintSystem<E>>(
         &self, 
         cs: &mut CS, 
         var: &AllocatedNum<E>, 
         chunk_bitlen: usize, 
     ) -> Result<AllocatedNum<E>> 
     {
-        let num_of_chunks = self.round_up(SHA256_REG_WIDTH, chunk_bitlen);
+        let num_of_chunks = Self::round_up(SHA256_REG_WIDTH, chunk_bitlen);
         let high_chunk_bitlen = SHA256_REG_WIDTH - chunk_bitlen * (num_of_chunks - 1);
         let mut chunks : Vec<AllocatedNum<E>> = Vec::with_capacity(num_of_chunks);
         
@@ -686,9 +684,9 @@ impl<E: Engine> Sha256GadgetParams<E> {
         // moreover, we may actually do more and split our number as of|10|11|11| bits.
         // note, that we also exploit the fact that out overflow can't be two large
         // and in any case will fit into the range table
-        let range_table = self.global_table.unwrap();
+        let range_table = self.global_table.as_ref().unwrap();
 
-        let range_check = |var: &AllocatedNum<E>, shift: usize| -> Result<()> {
+        let mut range_check = |var: &AllocatedNum<E>, shift: usize| -> Result<()> {
             if shift == 0 {
                 cs.begin_gates_batch_for_step()?; 
                 let vars = [var.get_variable(), dummy, dummy, dummy];
@@ -746,7 +744,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
             Ok(())
         }; 
 
-        let chunks_iter = chunks.iter().peekable();
+        let mut chunks_iter = chunks.iter().peekable();
         while let Some(chunk) = chunks_iter.next() {
             if chunks_iter.peek().is_some() {
                 // this is not the top-most chunk: only one range check is required
@@ -771,7 +769,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         AllocatedNum::ternary_lc_eq(
             cs, 
             &[E::Fr::one(), full_reg_size, E::Fr::zero()],
-            &[extracted, of, dummy],
+            &[extracted.clone(), of, dummy],
             &var
         )?;
 
@@ -803,21 +801,17 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let f_repr = fr.into_repr();
                 let n = f_repr.as_ref()[0];
 
-                let new_val = Self::u64_to_ff((n >> (i * chunk_bitlen)) & ((1 << mask) - 1));
-                low = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-                mid = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-                high = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;   
-                of = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-                extracted = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+                let low_val = Self::u64_to_ff(n & ((1 << chunk_bitlen) - 1));
+                low = AllocatedNum::alloc(cs, || Ok(low_val))?;
 
-                for i in 0..num_of_chunks {
-                    let mask = if i != num_of_chunks - 1 { chunk_bitlen} else { high_chunk_bitlen};
-                    
-                    let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
-                    chunks.push(tmp);
-                }
+                let mid_val = Self::u64_to_ff((n >> chunk_bitlen) & ((1 << chunk_bitlen) - 1));
+                mid = AllocatedNum::alloc(cs, || Ok(mid_val))?;
 
-                let of_val = Self::u64_to_ff(n >> SHA256_REG_WIDTH);
+                let high_val = Self::u64_to_ff((n >> 2*chunk_bitlen) & ((1 << high_chunk_bitlen) - 1));
+                high = AllocatedNum::alloc(cs, || Ok(high_val))?;
+
+                // NOTE that we also use high_chunk_bitlen to generate mask for of!
+                let of_val = Self::u64_to_ff((n >> SHA256_REG_WIDTH) & ((1 << high_chunk_bitlen) - 1));
                 of = AllocatedNum::alloc(cs, || Ok(of_val))?;
 
                 let extracted_val = Self::u64_to_ff(n & ((1 << SHA256_REG_WIDTH) - 1));
@@ -825,102 +819,23 @@ impl<E: Engine> Sha256GadgetParams<E> {
             },
         };
 
-        // assume we have a range table which allows us to check if x is in [0; 2^chunk_bitlen - 1]
-        // (or in other words that binary representation of x is at most chunk_bitlen bits in length)
-        // assume than, that our task is to check that some value x is actually at most n bits in length (here n < chunk_bitlen)
-        // in order to do this we have in fact to query table twice:
-        // first time we check that value x is in range [0; 2^chunk_bitlen - 1]
-        // and secon time we check that x * 2^(chunk_bitlen - n) is in the same range
-        // note, that in our decomposition into chunks only the top_most chunk may be overflowed and requires such
-        // a more thorough check (this is what the parameter "strict used for")
-        // in this case both checks (that x is in range and that  x * 2^(chunk_bitlen - n) is in range)
-        // will occupy only two consecutive lines of trace  - 
-        // we leverage the fact, that there only two used columns (apart from sparse_rotate_tables) in range table
-        // and hence we may allocate first range check (for x) and arithmetic operation ( y =  x * 2^(chunk_bitlen - n))
-        // on the same line
-        // if we are do not have special range table in our disposal, we are going to use sha256-specific-tables in order to
-        // perform range checks, as most of them have the first column similar to that of range table! 
-        // moreover, we may actually do more and split our number as of|10|11|11| bits.
-        // note, that we also exploit the fact that out overflow can't be two large
-        // and in any case will fit into the range table
-        let range_table = self.global_table.unwrap();
-
-        let range_check = |var: &AllocatedNum<E>, shift: usize| -> Result<()> {
-            if shift == 0 {
-                cs.begin_gates_batch_for_step()?; 
-                let vars = [var.get_variable(), dummy, dummy, dummy];
-
-                cs.allocate_variables_without_gate(
-                    &vars,
-                    &[]
-                )?;
-                
-                cs.apply_single_lookup_gate(&vars[..range_table.width()], range_table.clone())?;
-                cs.end_gates_batch_for_step()?;
+        let mut range_check = |var: &AllocatedNum<E>, is_11_bit_check: bool| -> Result<()> {
+            if is_11_bit_check {
+                self.query_table2(cs, &self.sha256_base4_rot7_table, var)?;
             }
             else {
-                let new_val = match var.get_value() {
-                    None => None,
-                    Some(fr) => {
-                        let f_repr = fr.into_repr();
-                        let n = f_repr.as_ref()[0] << shift;
-                        Some(Self::u64_to_ff(n))
-                    },
-                };
-                let shifted_var = AllocatedNum::alloc(cs, || new_val.grab())?;
-                
-                let zero = E::Fr::zero();
-                let mut minus_one = E::Fr::one();
-                minus_one.negate();
-                let coef = Self::u64_to_ff(1 << shift);
-
-                cs.begin_gates_batch_for_step()?; 
-                
-                let first_trace_step = [var.get_variable(), dummy, dummy, shifted_var.get_variable()];
-
-                cs.new_gate_in_batch(
-                    &CS::MainGate::default(),
-                    &[coef, zero.clone(), zero.clone(), minus_one, zero.clone(), zero.clone(), zero],
-                    &first_trace_step[..],
-                    &[],
-                )?;
-                
-                cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
-                cs.end_gates_batch_for_step()?;
-
-                cs.begin_gates_batch_for_step()?; 
-                let second_trace_step = [shifted_var.get_variable(), dummy, dummy, dummy];
-
-                cs.allocate_variables_without_gate(
-                    &second_trace_step,
-                    &[]
-                )?;
-                
-                cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
-                cs.end_gates_batch_for_step()?;
+                self.query_table1(cs, &self.sha256_base4_widh10_table, var)?;
             }
-
             Ok(())
-        }; 
-
-        let chunks_iter = chunks.iter().peekable();
-        while let Some(chunk) = chunks_iter.next() {
-            if chunks_iter.peek().is_some() {
-                // this is not the top-most chunk: only one range check is required
-                range_check(chunk, 0);                
-            } else {
-                // this is the top-most chunk
-                // however, it is not strcitly neccessary that both range-checks are required 
-                // (for x and x * 2^(chunk_bitlen -n))
-                // if bitlen of topmost chunks is equal to the chunk_bitlen, than there is no possibility of overflow
-                // e.g, this is the case of range table of bitlength 16
-                range_check(chunk, SHA256_REG_WIDTH - high_chunk_bitlen);
-            }
-        }
-        range_check(&of, 0); 
-
+        };
+        
+        range_check(&low, true);
+        range_check(&mid, true);
+        range_check(&high, false);
+        range_check(&of, false);
+                      
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
-        AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
+        AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted)?;
 
         // check that extracted + of * 32 = input
         let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);
@@ -928,13 +843,12 @@ impl<E: Engine> Sha256GadgetParams<E> {
         AllocatedNum::ternary_lc_eq(
             cs, 
             &[E::Fr::one(), full_reg_size, E::Fr::zero()],
-            &[extracted, of, dummy],
+            &[extracted.clone(), of, dummy],
             &var
         )?;
 
         Ok(extracted)
     }
-
 
     fn extact_32_from_overflowed_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, var: &Num<E>) -> Result<Num<E>> {
         let res = match var {
@@ -943,13 +857,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
             },
             Num::Allocated(x) => {
                 let extracted_var = match self.global_strategy {
-                    GlobalStrategy::UseCustomGadgets => self.extact_32_with_custom_gates(cs, x),
-                    GlobalStrategy::UseRangeCheckTable(num_bits) => self.extract_32_with_range_table(cs, x, num_bits),
+                    GlobalStrategy::UseCustomGadgets => self.extact_32_with_custom_gates(cs, x)?,
+                    GlobalStrategy::UseRangeCheckTable(num_bits) => self.extract_32_with_range_table(cs, x, num_bits)?,
                     // do extraction, reusing sha256-specific tables
-                    _ => self.extract_using_sparse_rotate_table(cs, x);
+                    _ => self.extract_using_sparse_rotate_table(cs, x)?,
                 };
-                Num::Allocated(x);
-            }
+                Num::Allocated(extracted_var)
+            },
         };
 
         Ok(res)
@@ -980,13 +894,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
             GlobalStrategy::UseSpecializedTables => unimplemented!(),
             GlobalStrategy::Use_8_1_2_SplitTable => {
                 assert_eq!(base, 2);
-                //self.unpack_chunks_with_split_table(cs, x)
-                unimplemented!();
+                self.unpack_chunk_with_split_table(cs, x)
             },
             GlobalStrategy::UseRangeCheckTable(num_bits) => {
                 assert_eq!(base, 2);
-                //self.unpack_chunk_with_range_table(cs, x, num_bits)
-                unimplemented!();
+                self.unpack_chunk_with_range_table(cs, x, num_bits)
             },
         };
         res
@@ -1097,6 +1009,158 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok((y_full, hb, lbb))
     }
 
+    fn unpack_chunk_with_split_table<CS: ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        x: AllocatedNum<E>, 
+    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)>
+    {
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+        let mut y = dummy.clone();
+        let mut hb = y.clone();
+        let mut lbb = hb.clone();
+
+        let res = match x.get_value() {
+            None => {
+                y = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?; 
+                hb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+                lbb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+            },
+            Some(fr) => {
+                let f_repr = fr.into_repr();
+                let n = f_repr.as_ref()[0];
+
+                let lbb_val = Self::u64_to_ff(n & 3);
+                lbb = AllocatedNum::alloc(cs, || Ok(lbb_val))?;
+
+                let hb_val = Self::u64_to_ff((n >> 2) & 1);
+                hb = AllocatedNum::alloc(cs, || Ok(hb_val))?;
+
+                let y_val = Self::u64_to_ff(n >> 3);
+                y = AllocatedNum::alloc(cs, || Ok(y_val))?;
+            },     
+        };
+
+        cs.begin_gates_batch_for_step()?;
+
+        let vars = [y.get_variable(), hb.get_variable(), lbb.get_variable(), dummy.get_variable()];
+        let table = self.global_table.as_ref().unwrap();
+
+        cs.allocate_variables_without_gate(
+            &vars,
+            &[]
+        )?;
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+
+        cs.end_gates_batch_for_step()?;
+
+        AllocatedNum::ternary_lc_eq(
+            cs,
+            &[E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3)],
+            &[lbb.clone(), hb.clone(), y.clone()],
+            &x,
+        )?;
+
+        Ok((y, hb, lbb))
+    }
+
+    fn unpack_chunk_with_range_table<CS: ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        x: AllocatedNum<E>, 
+        table_bitlen: usize,
+    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)>
+    {
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+        let mut y = dummy.clone();
+        let mut hb = y.clone();
+        let mut lbb = hb.clone();
+
+        let res = match x.get_value() {
+            None => {
+                y = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?; 
+                hb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+                lbb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+            },
+            Some(fr) => {
+                let f_repr = fr.into_repr();
+                let n = f_repr.as_ref()[0];
+
+                let lbb_val = Self::u64_to_ff(n & 3);
+                lbb = AllocatedNum::alloc(cs, || Ok(lbb_val))?;
+
+                let hb_val = Self::u64_to_ff((n >> 2) & 1);
+                hb = AllocatedNum::alloc(cs, || Ok(hb_val))?;
+
+                let y_val = Self::u64_to_ff(n >> 3);
+                y = AllocatedNum::alloc(cs, || Ok(y_val))?;
+            },     
+        };
+
+        let range_table = self.global_table.as_ref().unwrap();
+        let dummy = dummy.get_variable();
+
+        let mut range_check = |var: &AllocatedNum<E>, var_bitlen: usize| -> Result<()> {
+            assert!(var_bitlen != table_bitlen);
+            let shift = table_bitlen - var_bitlen;
+            
+            let new_val = match var.get_value() {
+                None => None,
+                Some(fr) => {
+                    let f_repr = fr.into_repr();
+                    let n = f_repr.as_ref()[0] << shift;
+                    Some(Self::u64_to_ff(n))
+                },
+            };
+            let shifted_var = AllocatedNum::alloc(cs, || new_val.grab())?;
+            
+            let zero = E::Fr::zero();
+            let mut minus_one = E::Fr::one();
+            minus_one.negate();
+            let coef = Self::u64_to_ff(1 << shift);
+
+            cs.begin_gates_batch_for_step()?; 
+            
+            let first_trace_step = [var.get_variable(), dummy, dummy, shifted_var.get_variable()];
+
+            cs.new_gate_in_batch(
+                &CS::MainGate::default(),
+                &[coef, zero.clone(), zero.clone(), minus_one, zero.clone(), zero.clone(), zero],
+                &first_trace_step[..],
+                &[],
+            )?;
+            
+            cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
+            cs.end_gates_batch_for_step()?;
+
+            cs.begin_gates_batch_for_step()?; 
+            let second_trace_step = [shifted_var.get_variable(), dummy, dummy, dummy];
+
+            cs.allocate_variables_without_gate(
+                &second_trace_step,
+                &[]
+            )?;
+            
+            cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
+            cs.end_gates_batch_for_step()?;
+
+            Ok(())
+        };
+
+        range_check(&lbb, 2)?;
+        range_check(&hb, 1)?;
+        range_check(&y, 8)?;
+
+        AllocatedNum::ternary_lc_eq(
+            cs,
+            &[E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3)],
+            &[lbb.clone(), hb.clone(), y.clone()],
+            &x,
+        )?;
+        
+        Ok((y, hb, lbb))
+    } 
+
     fn converter_helper(&self, n: u64, sparse_base: usize, rotation: usize, extraction: usize) -> E::Fr {
         let t = map_into_sparse_form(rotate_extract(n as usize, rotation, extraction), sparse_base);
         E::Fr::from_str(&t.to_string()).unwrap()
@@ -1185,13 +1249,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         cs.end_gates_batch_for_step()?;
         Ok(res)
-    }
-
-    
-    // returns closets upper integer to a / b
-    fn round_up(a: usize, b : usize) -> usize {
-        let additional_chunks : usize = if a % b > 0 {1} else {0};
-        a/b + additional_chunks
     }
 
     fn convert_into_sparse_chooser_form<CS : ConstraintSystem<E>>(
@@ -1810,12 +1867,18 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     // and x_2 is boolean
                     // Note: we should also check that y is at most eight bit long! 
                     // the additional difficulty is that y is itself represented in sparse form
-                    let r3 = match self.r3_strategy {
-                        Strategy::UseCustomTable => {
+                    let r3 = match self.global_strategy {
+                        GlobalStrategy::UseSpecializedTables => {
                             self.query_table1(cs, self.sha256_base4_shift3_table.as_ref().unwrap(), &low)? 
                         },
-                        Strategy::NaivaApproach => {
+                        GlobalStrategy::UseCustomGadgets => {
                             let (y, _hb, _lbb) = self.unpack_chunk(cs, sparse_low, SHA256_EXPANSION_BASE)?;
+                            y
+                        },
+                        // work in base 2 and then apply table
+                        _ => {
+                            let (y_normal, _hb_normal, _lb_normal) = self.unpack_chunk(cs, low, 2)?;
+                            let (y, _) = self.query_table2(cs, &self.sha256_base4_rot7_table, &y_normal)?;
                             y
                         }
                     };
@@ -1941,22 +2004,19 @@ impl<E: Engine> Sha256GadgetParams<E> {
                  println!("WQE3");
 
                 let full_sparse_rot19 = {
-                    let sparse_mid_rot9 = match self.r3_strategy {
-                        Strategy::UseCustomTable => {
+                    let sparse_mid_rot9 = match self.strategy {
+                        GlobalStrategy::UseSpecializedTables => {
                             self.query_table2(cs, self.sha256_base4_rot9_table.as_ref().unwrap(), &mid)?.1 
                         },
-                        Strategy::NaivaApproach => {
+                        GlobalStrategy::UseCustomGadgets => {
                             // we already have x = mid_rot7 (in sparse form!) - and we need to rotate it two more bits right
                             // in order, to accomplish this we do the following :
                             // split x as y| hb | lbb
                             // the result, we are looking for is z = lbb | y | hb  
-                            println!("before error");
                             let (y, hb, lbb) = self.unpack_chunk(cs, sparse_mid, SHA256_EXPANSION_BASE)?;
-                            println!("before error2");
                             let sparse_mid_rot9 = self.allocate_converted_num(
                                 cs, &mid, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 9, 0
                             )?;
-                            println!("before error3");
 
                             let y_coef = Self::u64_exp_to_ff(4, 1);
                             let lbb_coef = Self::u64_exp_to_ff(4, 9);
@@ -1969,6 +2029,24 @@ impl<E: Engine> Sha256GadgetParams<E> {
                             )?;
                             sparse_mid_rot9
                         },
+                        // work in binary form
+                        _ => {
+                            let (y_normal, hb_normal, lbb_normal) = self.unpack_chunk(cs, mid, 2)?;
+                            let mid_rot2 = self.allocate_converted_num(
+                                cs, &mid, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 2, 0
+                            )?;
+
+                            let y_coef = Self::u64_exp_to_ff(4, 1);
+                            let lbb_coef = Self::u64_exp_to_ff(4, 9);
+
+                            AllocatedNum::ternary_lc_eq(
+                                cs, 
+                                &[E::Fr::one(), y_coef, lbb_coef],
+                                &[hb, y, lbb],
+                                &sparse_mid_rot9,
+                            )?;
+                            sparse_mid_rot9
+                        }
                     };
                      println!("WQE4");
 
