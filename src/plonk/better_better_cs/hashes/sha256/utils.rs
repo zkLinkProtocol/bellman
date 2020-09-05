@@ -51,7 +51,7 @@ pub fn map_from_sparse_form(input: usize, base: usize) -> usize
 pub fn rotate_extract(value: usize, rotation: usize, extraction: usize) -> usize
 {
     let temp = if extraction > 0 {value & ((1 << extraction) - 1)} else {value}; 
-    let res = if rotation > 0 {(temp >> rotation) + (temp << (32 - rotation))} else {temp};
+    let res = if rotation > 0 {(temp >> rotation) + ((temp << (32 - rotation)) & 0xffffffff) } else {temp};
 
     res
 }
