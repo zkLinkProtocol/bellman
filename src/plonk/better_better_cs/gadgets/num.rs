@@ -348,11 +348,11 @@ impl<E: Engine> AllocatedNum<E> {
     where CS: ConstraintSystem<E>
     {
         let mut acc_fr = E::Fr::one();
-        let mut coeffs = Vec::with_capacity(4);
-        let mut current_vars = Vec::with_capacity(4);
+        let mut coeffs = Vec::with_capacity(3);
+        let mut current_vars = Vec::with_capacity(3);
 
         for var in vars.iter() {
-            if vars.len() < 3 {
+            if current_vars.len() < 3 {
                 coeffs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
                 current_vars.push(var.clone());
@@ -360,13 +360,14 @@ impl<E: Engine> AllocatedNum<E> {
             else {
                 // we have filled in the whole vector!
                 let temp = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
-                coeffs = vec![E::Fr::one()];
-                current_vars = vec![temp];
+                coeffs = vec![E::Fr::one(), acc_fr.clone()];
+                current_vars = vec![temp, var.clone()];
+                acc_fr.mul_assign(&base);
             }
         }
 
         // pad with dummy variables
-        for _i in vars.len()..3 {
+        for _i in current_vars.len()..3 {
             current_vars.push(AllocatedNum::alloc_zero(cs)?);
             coeffs.push(E::Fr::zero());
         }
@@ -608,13 +609,13 @@ impl<E: Engine> Num<E> {
         Ok(res)
     }
 
-    pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, coeffs: &[E::Fr], nums: &[Num<E>]) -> Result<Self, SynthesisError>
+    pub fn lc<CS: ConstraintSystem<E>>(cs: &mut CS, input_coeffs: &[E::Fr], inputs: &[Num<E>]) -> Result<Self, SynthesisError>
     {
-        assert_eq!(coeffs.len(), nums.len());
+        assert_eq!(input_coeffs.len(), inputs.len());
 
         // corner case: all our values are actually constants
-        if nums.iter().all(| x | x.is_constant()) {
-            let value = nums.iter().zip(coeffs.iter()).fold(E::Fr::zero(), |acc, (x, coef)| {
+        if inputs.iter().all(| x | x.is_constant()) {
+            let value = inputs.iter().zip(input_coeffs.iter()).fold(E::Fr::zero(), |acc, (x, coef)| {
                 let mut temp = x.get_value().unwrap();
                 temp.mul_assign(&coef);
                 temp.add_assign(&acc);
@@ -627,14 +628,13 @@ impl<E: Engine> Num<E> {
         // okay, from now one we may be sure that we have at least one allocated term
         let mut constant_term = E::Fr::zero();
         let mut vars = Vec::with_capacity(3);
-        let mut local_coeffs = Vec::with_capacity(3);
-        let mut first_lc = true;
+        let mut coeffs = Vec::with_capacity(3);
         let mut res_var = AllocatedNum::alloc_zero(cs)?;
 
         // Note: the whole thing may be a little more efficient with the use of custom gates
         // exploiting (d_next)
 
-        for (x, coef) in nums.iter().zip(coeffs.iter()) {
+        for (x, coef) in inputs.iter().zip(input_coeffs.iter()) {
             match x {
                 Num::Constant(x) => {
                     let mut temp = x.clone();
@@ -642,36 +642,28 @@ impl<E: Engine> Num<E> {
                     constant_term.add_assign(&temp);
                 },
                 Num::Allocated(x) => {
-                    if vars.is_empty() && !first_lc {
-                        vars.push(res_var.clone());
-                        local_coeffs.push(E::Fr::one());
-                    }
-                    else if vars.len() < 3 
+                    if vars.len() < 3 
                     {
                         vars.push(x.clone());
-                        local_coeffs.push(coef.clone());
+                        coeffs.push(coef.clone());
                     }
                     else {
-                        // we already have three elements in our vector
-                        first_lc = false;
-                        res_var = AllocatedNum::ternary_lc_with_const(cs, &local_coeffs[..], &vars[..], &constant_term)?;
+                        res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
 
                         constant_term = E::Fr::zero();
-                        vars = Vec::with_capacity(3);
-                        local_coeffs = Vec::with_capacity(3);
+                        vars = vec![res_var, x.clone()];
+                        coeffs = vec![E::Fr::one(), coef.clone()];
                     }
                 }
             }
         }
 
-        if !vars.is_empty() {
-            // pad with dummy variables
-            for _i in vars.len()..3 {
-                vars.push(AllocatedNum::alloc_zero(cs)?);
-                local_coeffs.push(E::Fr::zero());
-            }
-            res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
+        // pad with dummy variables
+        for _i in vars.len()..3 {
+            vars.push(AllocatedNum::alloc_zero(cs)?);
+            coeffs.push(E::Fr::zero());
         }
+        res_var = AllocatedNum::ternary_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
 
         Ok(Num::Allocated(res_var))
     }
@@ -679,7 +671,7 @@ impl<E: Engine> Num<E> {
     // same as lc but with all the coefficients set to be 1
     pub fn sum<CS: ConstraintSystem<E>>(cs: &mut CS, nums: &[Num<E>]) -> Result<Self, SynthesisError>
     {
-        let coeffs = vec![E::Fr::zero(); nums.len()];
+        let coeffs = vec![E::Fr::one(); nums.len()];
         Self::lc(cs, &coeffs[..], &nums[..])
     }
 }
