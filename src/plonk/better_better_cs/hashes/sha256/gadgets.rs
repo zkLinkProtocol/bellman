@@ -480,8 +480,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
             Self::u64_to_ff(0x90befffa), Self::u64_to_ff(0xa4506ceb), Self::u64_to_ff(0xbef9a3f7), Self::u64_to_ff(0xc67178f2),
         ];
 
-        println!("Constructor is fine!");
-
         Ok(Sha256GadgetParams {
             global_strategy,
             global_table,
@@ -828,19 +826,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
             }
             Ok(())
         };
-
-        println!("before range check!");
-        println!("low: {}", low.get_value().unwrap());
         
         range_check(&low, true);
-        println!("before range check!");
         range_check(&mid, true);
-        println!("before range check!");
         range_check(&high, false);
-        println!("before range check!");
         range_check(&of, false);
-
-        println!("after range check!");
                       
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
         AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted)?;
@@ -1059,7 +1049,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
             &[]
         )?;
 
-        println!("inside split table");
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
 
         cs.end_gates_batch_for_step()?;
@@ -1299,8 +1288,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
                 let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
                 let high = self.allocate_converted_num(
-                    cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE - 1
-                )?;
+                    cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
 
                 let (sparse_low, sparse_low_rot6) = self.query_table2(cs, &self.sha256_base7_rot6_table, &low)?;
                 let (sparse_mid, _sparse_mid_rot6) = self.query_table2(cs, &self.sha256_base7_rot6_table, &mid)?;
@@ -1321,7 +1309,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let full_sparse = {
                     // full_sparse = low_sparse + 7^11 * mid_sparse + 7^22 * high_sparse
                     let sparse_full = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 0, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 0, SHA256_REG_WIDTH
                     )?;
 
                     let limb_1_shift = Self::u64_exp_to_ff(7, 11);
@@ -1340,7 +1328,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let full_sparse_rot6 = {
                     // full_sparse_rot6 = low_sparse_rot6 + 7^(11-6) * sparse_mid + 7^(22-6) * sparse_high
                     let full_sparse_rot6 = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 6, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 6, SHA256_REG_WIDTH
                     )?;
 
                     let rot6_limb_1_shift = Self::u64_exp_to_ff(7, 11-6);
@@ -1359,7 +1347,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let full_sparse_rot11 = {
                     // full_sparse_rot11 = sparse_mid + 7^(22-11) * sparse_high + 7^(32-11) * sparse_low
                     let full_sparse_rot11 = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 11, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 11, SHA256_REG_WIDTH
                     )?;
 
                     let rot11_limb_0_shift = Self::u64_exp_to_ff(7, 32 - 11);
@@ -1368,7 +1356,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     AllocatedNum::ternary_lc_eq(
                         cs, 
                         &[E::Fr::one(), rot11_limb_0_shift, rot11_limb_2_shift],
-                        &[sparse_mid, sparse_low.clone(), sparse_high.clone()],
+                        &[sparse_mid.clone(), sparse_low.clone(), sparse_high],
                         &full_sparse_rot11,
                     )?;
 
@@ -1376,18 +1364,18 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 };
 
                 let full_sparse_rot_25 = {
-                    // full_sparse_rot25 = sparse_high_rot3 + 7^(32-25) * sparse_low + 7^(32-25+11) * sparse_mid
+                    // full_sparse_rot25 = sparse_high_rot3 + 7^(11-3) * sparse_low + 7^(22-3) * sparse_mid
                     let full_sparse_rot25 = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 25, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 25, SHA256_REG_WIDTH
                     )?;
 
-                    let rot11_limb_0_shift = Self::u64_exp_to_ff(7, 32 - 25);
-                    let rot11_limb_2_shift = Self::u64_exp_to_ff(7, 32 - 25 + 11);
+                    let rot25_limb_0_shift = Self::u64_exp_to_ff(7, 10 - 3);
+                    let rot25_limb_1_shift = Self::u64_exp_to_ff(7, 21 - 3);
 
                     AllocatedNum::ternary_lc_eq(
                         cs, 
-                        &[E::Fr::one(), rot11_limb_0_shift, rot11_limb_2_shift],
-                        &[sparse_high_rot3, sparse_low, sparse_high],
+                        &[E::Fr::one(), rot25_limb_0_shift, rot25_limb_1_shift],
+                        &[sparse_high_rot3, sparse_low, sparse_mid],
                         &full_sparse_rot25,
                     )?;
 
@@ -1464,7 +1452,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
                 let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
                 let high = self.allocate_converted_num(
-                    cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE - 1
+                    cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE
                 )?;
 
                 let (sparse_low, sparse_low_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &low)?;
@@ -1483,14 +1471,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[low, mid, high],
                         &var,
                     )?;
-
                     var.clone()
                 };
 
                 let full_sparse = {
                     // full_sparse = low_sparse + 4^11 * mid_sparse + 4^22 * high_sparse
                     let sparse_full = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 0, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 0, SHA256_REG_WIDTH
                     )?;
 
                     let limb_1_shift = Self::u64_exp_to_ff(4, 11);
@@ -1502,18 +1489,17 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[sparse_low.clone(), sparse_mid.clone(), sparse_high.clone()],
                         &sparse_full,
                     )?;
-
                     sparse_full
                 };
 
                 let full_sparse_rot2 = {
-                    // full_sparse_rot6 = low_sparse_rot2 + 4^(11-2) * sparse_mid + 4^(22-2) * sparse_high
+                    // full_sparse_rot2 = low_sparse_rot2 + 4^(11-2) * sparse_mid + 4^(22-2) * sparse_high
                     let full_sparse_rot2 = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 2, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 2, SHA256_REG_WIDTH
                     )?;
 
-                    let rot2_limb_1_shift = Self::u64_exp_to_ff(4, 11-2);
-                    let rot2_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 6);
+                    let rot2_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 2);
+                    let rot2_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 2);
 
                     AllocatedNum::ternary_lc_eq(
                         cs, 
@@ -1521,14 +1507,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[sparse_low_rot2, sparse_mid.clone(), sparse_high.clone()],
                         &full_sparse_rot2,
                     )?;
-
                     full_sparse_rot2
                 };
 
                 let full_sparse_rot13 = {
                     // full_sparse_rot13 = sparse_mid_rot2 + 4^(22-11-2) * sparse_high + 4^(32-11-2) * sparse_low
                     let full_sparse_rot13 = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 13, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 13, SHA256_REG_WIDTH
                     )?;
 
                     let rot13_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 2 - 11);
@@ -1540,14 +1525,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[sparse_mid_rot2, sparse_low.clone(), sparse_high.clone()],
                         &full_sparse_rot13,
                     )?;
-
                     full_sparse_rot13
                 };
 
                 let full_sparse_rot_22 = {
                     // full_sparse_rot22 = sparse_high + 4^(32 - 22) * sparse_low + 4^(32 - 22 + 11) * sparse_mid
                     let full_sparse_rot22 = self.allocate_converted_num(
-                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_CHOOSE_BASE, 22, SHA256_REG_WIDTH - 1
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 22, SHA256_REG_WIDTH
                     )?;
 
                     let rot22_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 22);
@@ -1650,7 +1634,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         for _i in 0..num_slices {
                             let remainder = (big_f.clone() % BigUint::from(input_slice_modulus)).to_u64().unwrap();
                             let new_val = Self::u64_to_ff(remainder);
-                            println!("chunk val: {}", new_val);
                             big_f /= input_slice_modulus;
                             let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
                             input_slices.push(tmp);
@@ -1666,15 +1649,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 }
 
                 let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
-                println!("INPUT: {}", x.get_value().unwrap());
                 let input_base = Self::u64_to_ff(input_slice_modulus as u64);
                 let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
 
-                println!("num of slicess: {}", num_slices);
                 AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
-                println!("EE");
                 AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
-                println!("E");
 
                 return Ok(Num::Allocated(output));
             }
@@ -1699,6 +1678,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
             SHA256_CHOOSE_BASE, 
             self.ch_base_num_of_chunks
         )?;
+        
         let r1 = self.normalize(
             cs, &t1, 
             &self.sha256_ch_xor_table, 
@@ -1748,22 +1728,19 @@ impl<E: Engine> Sha256GadgetParams<E> {
         round_constants: &[E::Fr],
     ) -> Result<Sha256Registers<E>>
     {
-        println!("before forms");
         let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
         let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
         let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
         let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
-        println!("in forms");
+
         let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
         let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
         let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
         let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
-        println!("after forms");
 
         for i in 0..64 {
             let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
             let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
-            println!("after ch and maj");
             
             // temp1 will be overflowed two much (4 bits in total), so we are going to reduce it in any case
             // TODO: may be it is possible to optimize it somehow?
@@ -1823,9 +1800,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
                 let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
 
-                println!("full: {}, low: {}, mid: {}, high: {}", var.get_value().unwrap(), low.get_value().unwrap(), 
-                    mid.get_value().unwrap(), high.get_value().unwrap());
-
                 let (sparse_low, sparse_low_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
                 let (sparse_mid, sparse_mid_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
                 let (sparse_high, _sparse_high_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
@@ -1838,7 +1812,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[low.clone(), mid, high],
                         &var,
                     )?;
-                    println!("full normal");
                     full_normal
                 };
 
@@ -1847,27 +1820,21 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     let full_sparse_rot7 = self.allocate_converted_num(
                         cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 7, 0
                     )?;
-                    println!("full_sparse_rot7: {}", full_sparse_rot7.get_value().unwrap());
 
                     let t = var.get_value().unwrap();
                     let repr = t.into_repr();
                     let n = (repr.as_ref()[0] >> 0) & ((1 << SHA256_REG_WIDTH) - 1);
                     let m = self.converter_helper(n, SHA256_EXPANSION_BASE, 7, 0);
-                    println!("in: {}, out: {}, in_fr: {}", n, m, var.get_value().unwrap());
-
 
                     let rot7_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 7);
                     let rot7_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 7);
 
-                    println!("full sparse 21");
                     AllocatedNum::ternary_lc_eq(
                         cs, 
                         &[E::Fr::one(), rot7_limb_1_shift, rot7_limb_2_shift],
                         &[sparse_low_rot7, sparse_mid.clone(), sparse_high.clone()],
                         &full_sparse_rot7,
                     )?;
-                    println!("full sparse1");
-
                     full_sparse_rot7
                 };
 
@@ -1886,8 +1853,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         &[sparse_mid_rot7, sparse_low.clone(), sparse_high.clone()],
                         &full_sparse_rot18,
                     )?;
-                    println!("full sparse2");
-
                     full_sparse_rot18
                 };
 
@@ -1931,14 +1896,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     // full_sparse_shift3 = sparse_low_shift3 + 4^(11 - 3) * sparse_mid + 4^(22 - 3) * sparse_high
                     let shift3_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 3);
                     let shift3_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 3);
-                    println!("full sparse11");
+                    
                     AllocatedNum::ternary_lc_eq(
                         cs, 
                         &[E::Fr::one(), shift3_limb_1_shift, shift3_limb_2_shift],
                         &[r3, sparse_mid, sparse_high],
                         &full_sparse_shift3,
                     )?;
-                    println!("full sparse3");
                     full_sparse_shift3
                 };
 
@@ -1999,7 +1963,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     )?;
                     full_normal
                 };
-                println!("WQE");
 
                 let full_sparse_rot17 = {
                     // full_sparse_rot17 = mid_sparse_rot7 + 4^(11-7) * sparse_high + 4^(22-7) * sparse_low
@@ -2019,7 +1982,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                     full_sparse_rot17
                 };
-                println!("WQE2");
 
                 let full_sparse_shift10 = {
                     // full_sparse_shift10 = mid_sparse + 4^(11) * sparse_high
@@ -2038,7 +2000,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     )?;
                     full_sparse_shift10
                 };
-                 println!("WQE3");
 
                 let full_sparse_rot19 = {
                     let sparse_mid_rot9 = match self.global_strategy {
@@ -2066,24 +2027,37 @@ impl<E: Engine> Sha256GadgetParams<E> {
                             )?;
                             sparse_mid_rot9
                         },
-                        // work in binary form
+                        
                         _ => {
-                            let (y_normal, hb_normal, lbb_normal) = self.unpack_chunk(cs, mid, 2)?;
-                            
-                            let y_coef = Self::u64_to_ff(1 << 1);
-                            let lbb_coef = Self::u64_to_ff(1 << 9);
+                            // a bit hacky!
+                            let sparse_mid_rot9 = self.allocate_converted_num(
+                                cs, &mid, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 9, 0
+                            )?;
+                            let (y_normal, hb_normal, lbb_normal) = self.unpack_chunk(cs, mid.clone(), 2)?;
+                            let dummy = AllocatedNum::alloc_zero(cs)?;
 
-                            let mid_normal_rot2 = AllocatedNum::ternary_lc_with_const(
+                            let y_coef = Self::u64_to_ff(1 << 1);
+                            let tmp = AllocatedNum::ternary_lc_with_const(
                                 cs, 
-                                &[E::Fr::one(), y_coef, lbb_coef],
-                                &[hb_normal, y_normal, lbb_normal],
+                                &[E::Fr::one(), y_coef, E::Fr::zero()],
+                                &[hb_normal, y_normal, dummy.clone()],
                                 &E::Fr::zero(),
                             )?;
-                            let (_, sparse_mid_rot9) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid_normal_rot2)?;
+
+                            let (_, sparse_mid_rot9_a) = self.query_table2(cs, &self.sha256_base4_rot7_table, &tmp)?;
+                            let (sparse_mid_rot9_b, _) = self.query_table2(cs, &self.sha256_base4_rot7_table, &lbb_normal)?;
+                            
+                            AllocatedNum::ternary_lc_eq(
+                                cs, 
+                                &[E::Fr::one(), Self::u64_exp_to_ff(4, 32 - 9), E::Fr::zero()],
+                                &[sparse_mid_rot9_a, sparse_mid_rot9_b, dummy],
+                                &sparse_mid_rot9
+                            )?;
+
                             sparse_mid_rot9
                         },
                     };
-                    println!("strange alloc");
+
                     // full_sparse_rot19 = mid_sparse_rot9 + 4^(11-9) * sparse_high + 4^(22-9) * sparse_low
                     let full_sparse_rot19 = self.allocate_converted_num(
                         cs, &var, SHA256_REG_WIDTH, 0, SHA256_EXPANSION_BASE, 19, 0
@@ -2101,8 +2075,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     full_sparse_rot19
                 };
 
-                let t = Num::Allocated(full_sparse_rot17.add_two(cs, full_sparse_rot19, full_sparse_shift10)?); 
-                println!("A");     
+                let t = Num::Allocated(full_sparse_rot17.add_two(cs, full_sparse_rot19, full_sparse_shift10)?);     
                 let r = self.normalize(
                     cs, &t, 
                     &self.sha256_sheduler_xor_table,
@@ -2110,7 +2083,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     SHA256_EXPANSION_BASE, 
                     self.sheduler_base_num_of_chunks,
                 )?;
-                println!("WQE7");
         
                 return Ok(r);
             }
@@ -2137,11 +2109,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
         }
 
         for j in 16..64 {
-            println!("XXX");
             let tmp1 = self.sigma_1(cs, &res[j - 2])?;
-             println!("XXY");
             let tmp2 = self.sigma_0(cs, &res[j - 15])?;
-             println!("XXZ");
 
             let mut tmp3 = Num::sum(cs, &[tmp1, res[j-7].clone(), tmp2, res[j-16].clone()])?;
             tmp3 = self.extact_32_from_overflowed_num(cs, &tmp3)?;
@@ -2170,11 +2139,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         for block in message.chunks(16) {
             let expanded_block = self.message_expansion(cs, block)?;
-            println!("HERE");
             regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
-            println!("THERE");
         }
-        println!("DONE");
 
         let res = [
             self.extact_32_from_tracked_num(cs, regs.a)?,

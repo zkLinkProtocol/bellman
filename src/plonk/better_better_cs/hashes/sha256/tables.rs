@@ -43,7 +43,12 @@ impl<E: Engine> Sha256SparseRotateTable<E> {
         let mut map = std::collections::HashMap::with_capacity(1 << bits);
 
         for x in 0..(1 << bits) {
-            let y = map_into_sparse_form(x, base);
+            let y = if extraction > 0 {
+                map_into_sparse_form(rotate_extract(x, 0, extraction), base)
+            }
+            else {
+                map_into_sparse_form(x, base)
+            };
             let z = map_into_sparse_form(rotate_extract(x, rotation, extraction), base);
 
             let x = E::Fr::from_str(&x.to_string()).unwrap();
@@ -479,7 +484,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256ChooseTable<E> {
         1
     }
     fn num_values(&self) -> usize {
-        1
+        1 + 1
     }
     fn allows_combining(&self) -> bool {
         true
@@ -626,7 +631,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256MajorityTable<E> {
         1
     }
     fn num_values(&self) -> usize {
-        1
+        1 + 1
     }
     fn allows_combining(&self) -> bool {
         true

@@ -135,7 +135,7 @@ mod test {
 
             // Note: this parameters may be played with!
             global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
-            majority_strategy: Strategy::UseCustomTable,
+            majority_strategy: Strategy::NaivaApproach,
 
             ch_base_num_of_chunks: None,
             maj_base_num_of_chunks: None,
