@@ -271,9 +271,9 @@ impl<E: Engine> AllocatedNum<E> {
         let mut first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
         first_term.scale(&coefs[0]);
         let mut second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
-        second_term.scale(&coefs[0]);
+        second_term.scale(&coefs[1]);
         let mut third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
-        third_term.scale(&coefs[0]);
+        third_term.scale(&coefs[2]);
         let result_term = ArithmeticTerm::from_variable(res_var.get_variable());
         
         let mut term = MainGateTerm::new();
@@ -325,9 +325,9 @@ impl<E: Engine> AllocatedNum<E> {
         let mut first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
         first_term.scale(&coefs[0]);
         let mut second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
-        second_term.scale(&coefs[0]);
+        second_term.scale(&coefs[1]);
         let mut third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
-        third_term.scale(&coefs[0]);
+        third_term.scale(&coefs[2]);
         let result_term = ArithmeticTerm::from_variable(res_var.get_variable());
         let const_term = ArithmeticTerm::constant(c.clone());
         
