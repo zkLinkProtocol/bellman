@@ -627,7 +627,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
     ) -> Result<AllocatedNum<E>> 
     {
         let num_of_chunks = Self::round_up(SHA256_REG_WIDTH, chunk_bitlen);
-        let high_chunk_bitlen = SHA256_REG_WIDTH - chunk_bitlen * (num_of_chunks - 1);
+        println!("chunk_bitlen: {}, num_of_chunks: {}", chunk_bitlen, num_of_chunks);
+        let diff = SHA256_REG_WIDTH - chunk_bitlen * num_of_chunks;
+        let high_chunk_bitlen =  if diff > 0 { diff } else { chunk_bitlen };
+        println!("high_chunk_bitlen: {}", high_chunk_bitlen);
         let mut chunks : Vec<AllocatedNum<E>> = Vec::with_capacity(num_of_chunks);
         
         let dummy = AllocatedNum::alloc_zero(cs)?;
@@ -698,6 +701,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 cs.end_gates_batch_for_step()?;
             }
             else {
+                println!("val: {}", var.get_value().unwrap());
+                println!("shift: {}", shift);
                 let new_val = match var.get_value() {
                     None => None,
                     Some(fr) => {
@@ -719,11 +724,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 cs.new_gate_in_batch(
                     &CS::MainGate::default(),
-                    &[coef, zero.clone(), zero.clone(), minus_one, zero.clone(), zero.clone(), zero],
+                    &[coef, zero.clone(), zero.clone(), zero.clone(), minus_one, zero.clone(), zero],
                     &first_trace_step[..],
                     &[],
                 )?;
-                
+                println!("1");
                 cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
                 cs.end_gates_batch_for_step()?;
 
@@ -734,29 +739,38 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     &second_trace_step,
                     &[]
                 )?;
-                
+                println!("2");
                 cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
+                println!("3");
                 cs.end_gates_batch_for_step()?;
             }
 
             Ok(())
         }; 
 
+
+        println!("ERROR HERE");
+
         let mut chunks_iter = chunks.iter().peekable();
         while let Some(chunk) = chunks_iter.next() {
             if chunks_iter.peek().is_some() {
                 // this is not the top-most chunk: only one range check is required
-                range_check(chunk, 0);                
+                println!("ER1_IN");
+                range_check(chunk, 0);  
+                println!("ER1_OUT");              
             } else {
                 // this is the top-most chunk
                 // however, it is not strcitly neccessary that both range-checks are required 
                 // (for x and x * 2^(chunk_bitlen -n))
                 // if bitlen of topmost chunks is equal to the chunk_bitlen, than there is no possibility of overflow
                 // e.g, this is the case of range table of bitlength 16
-                range_check(chunk, SHA256_REG_WIDTH - high_chunk_bitlen);
+                println!("ER2_IN");
+                range_check(chunk, chunk_bitlen - high_chunk_bitlen);
+                println!("ER2_OUT");   
             }
         }
         range_check(&of, 0); 
+        println!("ER_OF");
 
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
         AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
@@ -826,11 +840,15 @@ impl<E: Engine> Sha256GadgetParams<E> {
             }
             Ok(())
         };
+
+        println!("THERE");
         
         range_check(&low, true);
         range_check(&mid, true);
         range_check(&high, false);
         range_check(&of, false);
+
+        println!("AFTER THERE");
                       
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
         AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted)?;
@@ -1075,6 +1093,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let mut hb = y.clone();
         let mut lbb = hb.clone();
 
+        println!("HERE");
+
         let res = match x.get_value() {
             None => {
                 y = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?; 
@@ -1149,6 +1169,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
         range_check(&lbb, 2)?;
         range_check(&hb, 1)?;
         range_check(&y, 8)?;
+
+        println!("AFTER HERE");
 
         AllocatedNum::ternary_lc_eq(
             cs,
@@ -2110,10 +2132,13 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         for j in 16..64 {
             let tmp1 = self.sigma_1(cs, &res[j - 2])?;
+            println!("SIGMA1");
             let tmp2 = self.sigma_0(cs, &res[j - 15])?;
+            println!("SIGMA0");
 
             let mut tmp3 = Num::sum(cs, &[tmp1, res[j-7].clone(), tmp2, res[j-16].clone()])?;
             tmp3 = self.extact_32_from_overflowed_num(cs, &tmp3)?;
+            println!("OF");
             res.push(tmp3);
         }
 
@@ -2139,6 +2164,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         for block in message.chunks(16) {
             let expanded_block = self.message_expansion(cs, block)?;
+            println!("EXPANDED");
             regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
         }
 

@@ -765,15 +765,22 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
         assert!(keys.len() == self.num_keys());
         assert!(values.len() == self.num_values());
 
-        unimplemented!();
+        let repr = keys[0].into_repr();
+        for chunk in repr.as_ref().iter().skip(1) {
+            if *chunk != 0 {
+                return false;
+            }
+        }
+
+        let n = repr.as_ref()[0];
+        n & ((1 << self.bits) - 1)  == n
     }
 
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == self.num_keys());
+        let res = if self.is_valid_entry(keys, &[]) {Ok(vec![])} else {Err(SynthesisError::Unsatisfiable)};
 
-        unimplemented!();
-
-        Err(SynthesisError::Unsatisfiable)
+        res
     }
 }
 

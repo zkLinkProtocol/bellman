@@ -17,7 +17,7 @@ mod test {
 
 
     struct TestSha256Circuit<E:Engine>{
-        input: [E::Fr; 16],
+        input: Vec<E::Fr>,
         output: [E::Fr; 8],
         global_strategy: GlobalStrategy,
         majority_strategy: Strategy,
@@ -78,51 +78,40 @@ mod test {
     fn slice_to_ff<Fr: PrimeField>(slice: &[u8]) -> Fr {
         assert_eq!(slice.len(), 4);
         let mut repr : <Fr as PrimeField>::Repr = Fr::zero().into_repr();
-        repr.as_mut()[0] = slice[0] as u64 + ((slice[1] as u64) << 8) + ((slice[2] as u64) << 16) + ((slice[3] as u64) << 24);
+        repr.as_mut()[0] = slice[3] as u64 + ((slice[2] as u64) << 8) + ((slice[1] as u64) << 16) + ((slice[0] as u64) << 24);
         Fr::from_repr(repr).expect("should parse")
     }
 
     #[test]
-    fn sha256_gadget_test() 
+    fn sha256_gadget_single_block_test() 
     {
         // SHA256 Pre-processing (Padding):
         // begin with the original message of length L bits
         // append a single '1' bit
         // append K '0' bits, where K is the minimum number >= 0 such that L + 1 + K + 64 is a multiple of 512
         // append L as a 64-bit big-endian integer, making the total post-processed length a multiple of 512 bits
-        
-        // our current impementation of SHA256 does not support padding for now, 
-        // and the gadget awaits 16 well formed chunks (of 32-bit numbers)
-        // so we deal with padding here explicitly and craft the following message: 
-        // 13 - randomly generated blocks of 32-bit numbers => 13 * 4 = 52 8-bit number
-        // we take L = 13 * 32 = 416 
-        // 13-th chunk holds the 1 << 31 => bytes will be 01, 00, 00, 00
-        // the last two chunks (14-th and 15-th) haol big-endian representation of 416 = 0x1a0 
-        // => the bytes will be  00, 00, 00, 00, 00, 00, 01, a0 
         let mut rng = rand::thread_rng();
 
         let mut input = [0u8; 64];
-        for i in 0..13 {
+        for i in 0..55 {
             input[i] = rng.gen();
         }
-        input[52] = 01;
-        // 53, 54, 55 are zero
-        // as well as 56, 57, 58, 59, 60, 61, 
+        input[55] = 0b10000000;
         input[62] = 01;
-        input[63] = 0xa0;
+        input[63] = 0xb8;
 
         // create a Sha256 object
         let mut hasher = Sha256::new();
         // write input message
-        hasher.update(&input[..]);
+        hasher.update(&input[0..55]);
         // read hash digest and consume hasher
         let output = hasher.finalize();
 
-        let mut input_fr_arr = [Fr::zero(); 16];
+        let mut input_fr_arr = Vec::with_capacity(16);
         let mut output_fr_arr = [Fr::zero(); 8];
 
         for (i, block) in input.chunks(4).enumerate() {
-            input_fr_arr[i] = slice_to_ff::<Fr>(block);
+            input_fr_arr.push(slice_to_ff::<Fr>(block));
         }
 
         for (i, block) in output.chunks(4).enumerate() {
@@ -134,6 +123,69 @@ mod test {
             output: output_fr_arr,
 
             // Note: this parameters may be played with!
+            // for now, the only testes versions are the following combinations
+            // global_strategy: Use_8_1_2_split, majority_strategy: NaiveApproach
+            // global_strategy: UseRangeTable(16), majority_strategy: NaiveApproach
+            global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
+            majority_strategy: Strategy::NaivaApproach,
+
+            ch_base_num_of_chunks: None,
+            maj_base_num_of_chunks: None,
+            sheduler_base_num_of_chunks: None,
+        };
+
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+
+        circuit.synthesize(&mut assembly).expect("must work");
+        println!("Assembly contains {} gates", assembly.n());
+        println!("Total length of all tables: {}", assembly.total_length_of_all_tables);
+        assert!(assembly.is_satisfied());
+    }
+
+    #[test]
+    fn sha256_gadget_multiple_blocks_test() 
+    {
+        const NUM_OF_BLOCKS: usize = 2;
+        let mut rng = rand::thread_rng();
+
+        let mut input = [0u8; 64 * NUM_OF_BLOCKS];
+        for i in 0..(64 * (NUM_OF_BLOCKS-1) + 55) {
+            input[i] = rng.gen();
+        }
+        input[64 * (NUM_OF_BLOCKS-1) + 55] = 0b10000000;
+        
+        let total_number_of_bits = (64 * (NUM_OF_BLOCKS-1) + 55) * 8;
+        input[60] = (total_number_of_bits >> 24) as u8;
+        input[63] = (total_number_of_bits >> 16) as u8;
+        input[62] = (total_number_of_bits >> 8) as u8;
+        input[63] = total_number_of_bits as u8;
+
+        // create a Sha256 object
+        let mut hasher = Sha256::new();
+        // write input message
+        hasher.update(&input[0..(64 * (NUM_OF_BLOCKS-1) + 55)]);
+        // read hash digest and consume hasher
+        let output = hasher.finalize();
+
+        let mut input_fr_arr = Vec::with_capacity(16 * NUM_OF_BLOCKS);
+        let mut output_fr_arr = [Fr::zero(); 8];
+
+        for (i, block) in input.chunks(4).enumerate() {
+            input_fr_arr.push(slice_to_ff::<Fr>(block));
+        }
+
+        for (i, block) in output.chunks(4).enumerate() {
+            output_fr_arr[i] = slice_to_ff::<Fr>(block);
+        }
+        
+        let circuit = TestSha256Circuit::<Bn256>{
+            input: input_fr_arr,
+            output: output_fr_arr,
+
+            // Note: this parameters may be played with!
+            // for now, the only testes versions are the following combinations
+            // global_strategy: Use_8_1_2_split, majority_strategy: NaiveApproach
+            // global_strategy: UseRangeTable(16), majority_strategy: NaiveApproach
             global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
             majority_strategy: Strategy::NaivaApproach,
 
