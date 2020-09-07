@@ -674,10 +674,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
     ) -> Result<AllocatedNum<E>> 
     {
         let num_of_chunks = Self::round_up(SHA256_REG_WIDTH, chunk_bitlen);
-        println!("chunk_bitlen: {}, num_of_chunks: {}", chunk_bitlen, num_of_chunks);
         let diff = SHA256_REG_WIDTH - chunk_bitlen * num_of_chunks;
         let high_chunk_bitlen =  if diff > 0 { diff } else { chunk_bitlen };
-        println!("high_chunk_bitlen: {}", high_chunk_bitlen);
         let mut chunks : Vec<AllocatedNum<E>> = Vec::with_capacity(num_of_chunks);
         
         let dummy = AllocatedNum::alloc_zero(cs)?;
@@ -748,8 +746,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 cs.end_gates_batch_for_step()?;
             }
             else {
-                println!("val: {}", var.get_value().unwrap());
-                println!("shift: {}", shift);
                 let new_val = match var.get_value() {
                     None => None,
                     Some(fr) => {
@@ -775,7 +771,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     &first_trace_step[..],
                     &[],
                 )?;
-                println!("1");
+
                 cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
                 cs.end_gates_batch_for_step()?;
 
@@ -786,38 +782,29 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     &second_trace_step,
                     &[]
                 )?;
-                println!("2");
+                
                 cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
-                println!("3");
                 cs.end_gates_batch_for_step()?;
             }
 
             Ok(())
         }; 
 
-
-        println!("ERROR HERE");
-
         let mut chunks_iter = chunks.iter().peekable();
         while let Some(chunk) = chunks_iter.next() {
             if chunks_iter.peek().is_some() {
                 // this is not the top-most chunk: only one range check is required
-                println!("ER1_IN");
-                range_check(chunk, 0);  
-                println!("ER1_OUT");              
+                range_check(chunk, 0);              
             } else {
                 // this is the top-most chunk
                 // however, it is not strcitly neccessary that both range-checks are required 
                 // (for x and x * 2^(chunk_bitlen -n))
                 // if bitlen of topmost chunks is equal to the chunk_bitlen, than there is no possibility of overflow
                 // e.g, this is the case of range table of bitlength 16
-                println!("ER2_IN");
-                range_check(chunk, chunk_bitlen - high_chunk_bitlen);
-                println!("ER2_OUT");   
+                range_check(chunk, chunk_bitlen - high_chunk_bitlen);  
             }
         }
         range_check(&of, 0); 
-        println!("ER_OF");
 
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
         AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
@@ -1136,8 +1123,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
         let mut hb = y.clone();
         let mut lbb = hb.clone();
 
-        println!("HERE");
-
         let res = match x.get_value() {
             None => {
                 y = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?; 
@@ -1212,8 +1197,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
         range_check(&lbb, 2)?;
         range_check(&hb, 1)?;
         range_check(&y, 8)?;
-
-        println!("AFTER HERE");
 
         AllocatedNum::ternary_lc_eq(
             cs,
@@ -1358,8 +1341,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let (sparse_mid, _sparse_mid_rot6) = self.query_table2(cs, &self.sha256_base7_rot6_table, &mid)?;
                 let (sparse_high, sparse_high_rot3) = self.query_table2(cs, &self.sha256_base7_rot3_extr10_table, &high)?;
 
-                println!("w");
-
                 let full_normal = {
                     // compose full normal = low + 2^11 * mid + 2^22 * high
                     AllocatedNum::ternary_lc_eq(
@@ -1371,7 +1352,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                     var.clone()
                 };
-                println!("ww");
 
                 let full_sparse = {
                     // full_sparse = low_sparse + 7^11 * mid_sparse + 7^22 * high_sparse
@@ -1391,7 +1371,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                     sparse_full
                 };
-                println!("www");
 
                 let full_sparse_rot6 = {
                     // full_sparse_rot6 = low_sparse_rot6 + 7^(11-6) * sparse_mid + 7^(22-6) * sparse_high
@@ -1802,20 +1781,15 @@ impl<E: Engine> Sha256GadgetParams<E> {
         round_constants: &[E::Fr],
     ) -> Result<Sha256Registers<E>>
     {
-        println!("before");
         let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
         let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
         let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
         let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
-        println!("mid");
+        
         let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
-        println!("1");
         let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
-        println!("2");
         let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
-        println!("3");
         let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
-        println!("after");
 
         for i in 0..64 {
             let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
@@ -2222,7 +2196,6 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         for block in message.chunks(16) {
             let expanded_block = self.message_expansion(cs, block)?;
-            println!("EXPANDED");
             regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
         }
 

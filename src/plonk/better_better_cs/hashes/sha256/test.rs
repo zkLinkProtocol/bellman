@@ -90,7 +90,8 @@ mod test {
         // append a single '1' bit
         // append K '0' bits, where K is the minimum number >= 0 such that L + 1 + K + 64 is a multiple of 512
         // append L as a 64-bit big-endian integer, making the total post-processed length a multiple of 512 bits
-        let mut rng = rand::thread_rng();
+        let seed: &[_] = &[1, 2, 3, 4, 5];
+        let mut rng: StdRng = SeedableRng::from_seed(seed);
 
         let mut input = [0u8; 64];
         for i in 0..55 {
@@ -146,9 +147,7 @@ mod test {
     fn sha256_gadget_multiple_blocks_test() 
     {
         const NUM_OF_BLOCKS: usize = 3;
-        //let mut rng = rand::thread_rng();
-        let seed: &[_] = &[100];
-        let mut rng: StdRng = SeedableRng::from_seed(seed);
+        let mut rng = rand::thread_rng();
 
         let mut input = [0u8; 64 * NUM_OF_BLOCKS];
         for i in 0..(64 * (NUM_OF_BLOCKS-1) + 55) {
