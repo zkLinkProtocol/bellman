@@ -25,6 +25,8 @@ use crate::num_traits::cast::ToPrimitive;
 use crate::num_traits::Zero;
 use std::ops::Add;
 use std::iter;
+use std::cmp::Ordering;
+use std::cmp;
 
 
 type Result<T> = std::result::Result<T, SynthesisError>;
@@ -32,12 +34,44 @@ type Result<T> = std::result::Result<T, SynthesisError>;
 
 // helper struct for tracking how far current value from being in 32-bit range
 // our gadget is suited to handle at most 4-bit overflows itself
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq)]
 pub enum OverflowTracker {
     NoOverflow,
     OneBitOverflow,
     SmallOverflow(u64), // overflow less or equal than 4 bits
     SignificantOverflow
+}
+
+impl OverflowTracker {
+    fn is_overflowed(&self) -> bool {
+        let res = match self {
+            OverflowTracker::NoOverflow => false,
+            _ => true,
+        };
+        res
+    }
+}
+
+impl Ord for OverflowTracker {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let a : u64 = self.clone().into();
+        let b : u64 = other.clone().into();
+        a.cmp(&b)
+    }
+}
+
+impl PartialOrd for OverflowTracker {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for OverflowTracker {
+    fn eq(&self, other: &Self) -> bool {
+        let a : u64 = self.clone().into();
+        let b : u64 = other.clone().into();
+        a == b
+    }
 }
 
 impl Into<u64> for OverflowTracker {
@@ -104,6 +138,19 @@ impl<E: Engine> NumWithTracker<E> {
         })
     }
 
+    pub fn add_tracked<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &NumWithTracker<E>) -> Result<Self> {
+        let new_num = self.num.add(cs, &other.num)?;
+        let new_tracker = match self.num.is_constant() && other.num.is_constant() {
+            true => OverflowTracker::NoOverflow,
+            false => cmp::max(self.overflow_tracker, other.overflow_tracker) + OverflowTracker::OneBitOverflow,
+        };
+
+        Ok(NumWithTracker{
+            num: new_num,
+            overflow_tracker: new_tracker,
+        })
+    }
+
     pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, first: &Num<E>, second: &Num<E>) -> Result<Self> {
         let new_num = self.num.add_two(cs, first, second)?;
         let new_tracker = match (self.num.is_constant(), first.is_constant(), second.is_constant()) {
@@ -151,7 +198,7 @@ pub enum Strategy {
 
 #[derive(Clone)]
 pub struct SparseChValue<E: Engine> {
-    normal: Num<E>,
+    normal: NumWithTracker<E>,
     sparse: Num<E>,
     // all rots are in sparse representation as well
     rot6: Num<E>,
@@ -161,7 +208,7 @@ pub struct SparseChValue<E: Engine> {
 
 #[derive(Clone)]
 pub struct SparseMajValue<E: Engine> {
-    normal: Num<E>,
+    normal: NumWithTracker<E>,
     sparse: Num<E>,
     // all rots are in sparse representation as well
     rot2: Num<E>,
@@ -840,15 +887,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
             }
             Ok(())
         };
-
-        println!("THERE");
         
         range_check(&low, true);
         range_check(&mid, true);
         range_check(&high, false);
         range_check(&of, false);
-
-        println!("AFTER THERE");
                       
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
         AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted)?;
@@ -1278,10 +1321,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
         input: NumWithTracker<E>, 
     ) -> Result<SparseChValue<E>> 
     { 
-        let var = match input.overflow_tracker {
+        let (var, new_tracker) = match input.overflow_tracker {
             OverflowTracker::SignificantOverflow => unimplemented!(),
-            OverflowTracker::SmallOverflow(_) => self.extact_32_from_overflowed_num(cs, &input.num)?,
-            _ => input.num,
+            OverflowTracker::SmallOverflow(_) => (self.extact_32_from_overflowed_num(cs, &input.num)?, OverflowTracker::NoOverflow),
+            _ => (input.num, input.overflow_tracker),
         };
         
         match var {
@@ -1291,7 +1334,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let n = repr.as_ref()[0] & ((1 << 32) - 1); 
                 
                 let res = SparseChValue {
-                    normal: Num::Constant(x),
+                    normal: (Num::Constant(x)).into(),
                     sparse: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 0, 0)),
                     rot6: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 6, 0)),
                     rot11: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 11, 0)),
@@ -1300,8 +1343,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                 return Ok(res)
             },
-            Num::Allocated(var) => {
-                
+            Num::Allocated(var) => {               
                 // split our 32bit variable into 11-bit chunks:
                 // there will be three chunks (low, mid, high) for 32bit number
                 // note that, we can deal here with possible 1-bit overflow: (as 3 * 11 = 33)
@@ -1316,6 +1358,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let (sparse_mid, _sparse_mid_rot6) = self.query_table2(cs, &self.sha256_base7_rot6_table, &mid)?;
                 let (sparse_high, sparse_high_rot3) = self.query_table2(cs, &self.sha256_base7_rot3_extr10_table, &high)?;
 
+                println!("w");
+
                 let full_normal = {
                     // compose full normal = low + 2^11 * mid + 2^22 * high
                     AllocatedNum::ternary_lc_eq(
@@ -1327,6 +1371,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                     var.clone()
                 };
+                println!("ww");
 
                 let full_sparse = {
                     // full_sparse = low_sparse + 7^11 * mid_sparse + 7^22 * high_sparse
@@ -1346,6 +1391,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
                     sparse_full
                 };
+                println!("www");
 
                 let full_sparse_rot6 = {
                     // full_sparse_rot6 = low_sparse_rot6 + 7^(11-6) * sparse_mid + 7^(22-6) * sparse_high
@@ -1405,7 +1451,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 };
 
                 let res = SparseChValue{
-                    normal: Num::Allocated(full_normal),
+                    normal: NumWithTracker { 
+                        num: Num::Allocated(full_normal), 
+                        overflow_tracker: new_tracker, 
+                    },
                     sparse: Num::Allocated(full_sparse),
                     rot6: Num::Allocated(full_sparse_rot6),
                     rot11: Num::Allocated(full_sparse_rot11),
@@ -1440,12 +1489,12 @@ impl<E: Engine> Sha256GadgetParams<E> {
         input: NumWithTracker<E>, 
     ) -> Result<SparseMajValue<E>> 
     {      
-        let var = match (input.overflow_tracker, self.majority_strategy)  {
+        let (var, new_tracker) = match (input.overflow_tracker, self.majority_strategy)  {
             (OverflowTracker::SignificantOverflow, _) => unimplemented!(),
             (OverflowTracker::SmallOverflow(_), _) | (OverflowTracker::OneBitOverflow, Strategy::NaivaApproach) => {
-                self.extact_32_from_overflowed_num(cs, &input.num)?
+                (self.extact_32_from_overflowed_num(cs, &input.num)?, OverflowTracker::NoOverflow)
             },
-            (_, _) => input.num,
+            (_, _) => (input.num, input.overflow_tracker),
         };
 
         match var {
@@ -1455,7 +1504,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let n = repr.as_ref()[0] & ((1 << 32) - 1); 
                 
                 let res = SparseMajValue {
-                    normal: Num::Constant(x),
+                    normal: (Num::Constant(x)).into(),
                     sparse: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 0, 0)),
                     rot2: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 2, 0)),
                     rot13: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 13, 0)),
@@ -1570,7 +1619,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 };
 
                 let res = SparseMajValue{
-                    normal: Num::Allocated(full_normal),
+                    normal: NumWithTracker {
+                        num: Num::Allocated(full_normal), 
+                        overflow_tracker: new_tracker, 
+                    },
                     sparse: Num::Allocated(full_sparse),
                     rot2: Num::Allocated(full_sparse_rot2),
                     rot13: Num::Allocated(full_sparse_rot13),
@@ -1750,15 +1802,20 @@ impl<E: Engine> Sha256GadgetParams<E> {
         round_constants: &[E::Fr],
     ) -> Result<Sha256Registers<E>>
     {
+        println!("before");
         let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
         let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
         let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
         let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
-
+        println!("mid");
         let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
+        println!("1");
         let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
+        println!("2");
         let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
+        println!("3");
         let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
+        println!("after");
 
         for i in 0..64 {
             let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
@@ -1767,7 +1824,11 @@ impl<E: Engine> Sha256GadgetParams<E> {
             // temp1 will be overflowed two much (4 bits in total), so we are going to reduce it in any case
             // TODO: may be it is possible to optimize it somehow?
             let rc = Num::Constant(round_constants[i]);
-            let temp1_unreduced = Num::sum(cs, &[h.normal, ch.num, inputs[i].clone(), rc])?;
+            // ch overflow is no more than 1 bit
+            // ch + input + const = 3 bits of
+            // hence if h is overflowed, wo wan't catch this!
+            
+            let temp1_unreduced = Num::sum(cs, &[h.normal.num, ch.num, inputs[i].clone(), rc])?;
             let temp1 = self.extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
 
             h = g;
@@ -1780,18 +1841,18 @@ impl<E: Engine> Sha256GadgetParams<E> {
             c = b;
             b = a;
             let temp3 = maj.add(cs, &temp1)?;
-            a =self. convert_into_sparse_majority_form(cs, temp3)?;
+            a =self.convert_into_sparse_majority_form(cs, temp3)?;
         }
 
         let regs = Sha256Registers {
-            a: regs.a.add(cs, &a.normal)?,
-            b: regs.b.add(cs, &b.normal)?,
-            c: regs.c.add(cs, &c.normal)?,
-            d: regs.d.add(cs, &d.normal)?,
-            e: regs.e.add(cs, &e.normal)?,
-            f: regs.f.add(cs, &f.normal)?,
-            g: regs.g.add(cs, &g.normal)?,
-            h: regs.h.add(cs, &h.normal)?,
+            a: regs.a.add_tracked(cs, &a.normal)?,
+            b: regs.b.add_tracked(cs, &b.normal)?,
+            c: regs.c.add_tracked(cs, &c.normal)?,
+            d: regs.d.add_tracked(cs, &d.normal)?,
+            e: regs.e.add_tracked(cs, &e.normal)?,
+            f: regs.f.add_tracked(cs, &f.normal)?,
+            g: regs.g.add_tracked(cs, &g.normal)?,
+            h: regs.h.add_tracked(cs, &h.normal)?,
         };
         
         Ok(regs)
@@ -2132,13 +2193,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         for j in 16..64 {
             let tmp1 = self.sigma_1(cs, &res[j - 2])?;
-            println!("SIGMA1");
             let tmp2 = self.sigma_0(cs, &res[j - 15])?;
-            println!("SIGMA0");
 
             let mut tmp3 = Num::sum(cs, &[tmp1, res[j-7].clone(), tmp2, res[j-16].clone()])?;
             tmp3 = self.extact_32_from_overflowed_num(cs, &tmp3)?;
-            println!("OF");
             res.push(tmp3);
         }
 

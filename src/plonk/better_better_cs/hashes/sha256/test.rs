@@ -13,7 +13,7 @@ mod test {
 
     use super::super::gadgets::*;
     use super::super::custom_gates::*;
-    use rand::Rng;
+    use rand::{Rng, SeedableRng, StdRng};
 
 
     struct TestSha256Circuit<E:Engine>{
@@ -145,8 +145,10 @@ mod test {
     #[test]
     fn sha256_gadget_multiple_blocks_test() 
     {
-        const NUM_OF_BLOCKS: usize = 2;
-        let mut rng = rand::thread_rng();
+        const NUM_OF_BLOCKS: usize = 3;
+        //let mut rng = rand::thread_rng();
+        let seed: &[_] = &[100];
+        let mut rng: StdRng = SeedableRng::from_seed(seed);
 
         let mut input = [0u8; 64 * NUM_OF_BLOCKS];
         for i in 0..(64 * (NUM_OF_BLOCKS-1) + 55) {
@@ -155,10 +157,10 @@ mod test {
         input[64 * (NUM_OF_BLOCKS-1) + 55] = 0b10000000;
         
         let total_number_of_bits = (64 * (NUM_OF_BLOCKS-1) + 55) * 8;
-        input[60] = (total_number_of_bits >> 24) as u8;
-        input[63] = (total_number_of_bits >> 16) as u8;
-        input[62] = (total_number_of_bits >> 8) as u8;
-        input[63] = total_number_of_bits as u8;
+        input[64 * (NUM_OF_BLOCKS-1) + 60] = (total_number_of_bits >> 24) as u8;
+        input[64 * (NUM_OF_BLOCKS-1) + 61] = (total_number_of_bits >> 16) as u8;
+        input[64 * (NUM_OF_BLOCKS-1) + 62] = (total_number_of_bits >> 8) as u8;
+        input[64 * (NUM_OF_BLOCKS-1) + 63] = total_number_of_bits as u8;
 
         // create a Sha256 object
         let mut hasher = Sha256::new();
@@ -186,7 +188,7 @@ mod test {
             // for now, the only testes versions are the following combinations
             // global_strategy: Use_8_1_2_split, majority_strategy: NaiveApproach
             // global_strategy: UseRangeTable(16), majority_strategy: NaiveApproach
-            global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
+            global_strategy: GlobalStrategy::UseRangeCheckTable(16),
             majority_strategy: Strategy::NaivaApproach,
 
             ch_base_num_of_chunks: None,
