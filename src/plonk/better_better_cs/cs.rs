@@ -307,6 +307,7 @@ impl<E: Engine> ArithmeticTerm<E> {
 #[derive(Clone, Debug)]
 pub struct MainGateTerm<E: Engine>{
     terms: Vec<ArithmeticTerm<E>>,
+    vars_scratch: std::collections::HashMap<Variable, usize>,
     num_multiplicative_terms: usize,
     num_constant_terms: usize
 }
@@ -315,6 +316,7 @@ impl<E: Engine> MainGateTerm<E> {
     pub fn new() -> Self {
         Self {
             terms: Vec::with_capacity(8),
+            vars_scratch: std::collections::HashMap::with_capacity(8),
             num_multiplicative_terms: 0,
             num_constant_terms: 0
         }
@@ -325,17 +327,35 @@ impl<E: Engine> MainGateTerm<E> {
     }
 
     pub fn add_assign(&mut self, other: ArithmeticTerm<E>) {
-        match &other {
+        match other {
             ArithmeticTerm::Product(_, _) => {
                 self.num_multiplicative_terms += 1;
+                self.terms.push(other);
             },
-            ArithmeticTerm::SingleVariable(_, _) => {},
+            ArithmeticTerm::SingleVariable(var, coeff) => {
+                // deduplicate 
+                if self.vars_scratch.get(&var).is_some() {
+                    let index = *self.vars_scratch.get(&var).unwrap();
+                    match &mut self.terms[index] {
+                        ArithmeticTerm::SingleVariable(_, ref mut c) => {
+                            c.add_assign(&coeff);
+                        },
+                        _ => {
+                            unreachable!()
+                        }
+                    }
+                } else {
+                    // just push
+                    self.vars_scratch.insert(var, self.terms.len());
+                    self.terms.push(other);
+                }
+            },
             ArithmeticTerm::Constant(_) => {
                 self.num_constant_terms += 1;
+                self.terms.push(other);
             },
         }
-        self.terms.push(other);
-
+        
         debug_assert!(self.num_constant_terms <= 1, "must duplicate constants");        
     }
 
@@ -343,18 +363,16 @@ impl<E: Engine> MainGateTerm<E> {
         match &mut other {
             ArithmeticTerm::Product(_, ref mut coeff) => {
                 coeff.negate();
-                self.num_multiplicative_terms += 1;
             },
             ArithmeticTerm::SingleVariable(_, ref mut coeff) => {
                 coeff.negate();
             },
             ArithmeticTerm::Constant(ref mut coeff) => {
-                coeff.negate();
-                self.num_constant_terms += 1;       
+                coeff.negate(); 
             },
         }
 
-        self.terms.push(other);
+        self.add_assign(other);
 
         debug_assert!(self.num_constant_terms <= 1, "must not duplicate constants");        
     }
