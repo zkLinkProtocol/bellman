@@ -336,3 +336,114 @@ impl<E: Engine> LookupTableInternal<E> for SplitTable<E> {
         Err(SynthesisError::Unsatisfiable)
     }
 }
+
+
+#[derive(Clone)]
+pub struct XorRotateTable<E: Engine> {
+    table_entries: [Vec<E::Fr>; 3],
+    table_lookup_map: std::collections::HashMap<(E::Fr, E::Fr), E::Fr>,
+    bits: usize,
+    shift: usize,
+    name: &'static str,
+}
+
+
+impl<E: Engine> XorRotateTable<E> {
+
+    pub fn new(bits: usize, shift: usize, name: &'static str) -> Self {
+        let mut key0 = Vec::with_capacity(1 << bits);
+        let mut key1 = Vec::with_capacity(1 << bits);
+        let mut value = Vec::with_capacity(1 << (2 * bits));
+        let mut map = std::collections::HashMap::with_capacity(1 << (2 * bits));
+
+        for x in 0..(1 << bits) {
+            for y in 0..(1 << bits) {
+                let tmp = x ^ y;
+                let z = (tmp >> shift) | (tmp << (32 - shift));
+
+                let x = E::Fr::from_str(&x.to_string()).unwrap();
+                let y = E::Fr::from_str(&y.to_string()).unwrap();
+                let z = E::Fr::from_str(&z.to_string()).unwrap();
+
+                key0.push(x);
+                key1.push(y);
+                value.push(z);
+
+                map.insert((x, y), z);
+            }    
+        }
+
+        Self {
+            table_entries: [key0, key1, value],
+            table_lookup_map: map,
+            bits,
+            shift,
+            name,
+        }
+    }
+}
+
+
+impl<E: Engine> std::fmt::Debug for XorRotateTable<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("XorRotateTable")
+            .field("bits", &self.bits)
+            .field("shift", &self.shift)
+            .finish()
+    }
+}
+
+
+impl<E: Engine> LookupTableInternal<E> for XorRotateTable<E> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn table_size(&self) -> usize {
+        1 << (2 * self.bits)
+    }
+    fn num_keys(&self) -> usize {
+        2
+    }
+    fn num_values(&self) -> usize {
+        1
+    }
+    fn allows_combining(&self) -> bool {
+        true
+    }
+    fn get_table_values_for_polys(&self) -> Vec<Vec<E::Fr>> {
+        vec![self.table_entries[0].clone(), self.table_entries[1].clone(), self.table_entries[2].clone()]
+    }
+    fn table_id(&self) -> E::Fr {
+        table_id_from_string(self.name)
+    }
+    fn sort(&self, _values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
+        unimplemented!()
+    }
+    fn box_clone(&self) -> Box<dyn LookupTableInternal<E>> {
+        Box::from(self.clone())
+    }
+    fn column_is_trivial(&self, column_num: usize) -> bool {
+        assert!(column_num < 3);
+        false
+    }
+
+    fn is_valid_entry(&self, keys: &[E::Fr], values: &[E::Fr]) -> bool {
+        assert!(keys.len() == self.num_keys());
+        assert!(values.len() == self.num_values());
+
+        if let Some(entry) = self.table_lookup_map.get(&(keys[0], keys[1])) {
+            return entry == &(values[0]);
+        }
+        false
+    }
+
+    fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
+        assert!(keys.len() == self.num_keys());
+
+        if let Some(entry) = self.table_lookup_map.get(&(keys[0], keys[1])) {
+            return Ok(vec![*entry])
+        }
+
+        Err(SynthesisError::Unsatisfiable)
+    }
+}

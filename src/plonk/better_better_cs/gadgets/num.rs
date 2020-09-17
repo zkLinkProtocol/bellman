@@ -111,6 +111,26 @@ impl<E: Engine> AllocatedNum<E> {
         })
     }
 
+    pub fn alloc_cnst<CS>(
+        cs: &mut CS, fr: E::Fr,
+    ) -> Result<Self, SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        let var = cs.alloc(|| { Ok(fr.clone()) })?;
+
+        let self_term = ArithmeticTerm::<E>::from_variable(var);
+        let other_term = ArithmeticTerm::constant(fr.clone());
+        let mut term = MainGateTerm::new();
+        term.sub_assign(other_term);
+
+        cs.allocate_main_gate(term)?;
+
+        Ok(AllocatedNum {
+            value: Some(fr),
+            variable: var
+        })
+    }
+
     pub fn add<CS>(
         &self,
         cs: &mut CS,
@@ -673,5 +693,21 @@ impl<E: Engine> Num<E> {
     {
         let coeffs = vec![E::Fr::one(); nums.len()];
         Self::lc(cs, &coeffs[..], &nums[..])
+    }
+
+    // for given array of slices : [x0, x1, x2, ..., xn] of arbitrary length, base n and total accumulated x
+    // validates that x = x0 + x1 * base + x2 * base^2 + ... + xn * base^n
+    pub fn long_weighted_sum<CS>(cs: &mut CS, vars: &[Self], base: &E::Fr) -> Result<Self, SynthesisError>
+    where CS: ConstraintSystem<E>
+    {
+        let mut coeffs = Vec::with_capacity(vars.len());
+        let mut acc = E::Fr::one();
+
+        for _ in 0..vars.len() {
+            coeffs.push(acc.clone());
+            acc.mul_assign(&base);
+        }
+
+        Self::lc(cs, &coeffs[..], vars)
     }
 }
