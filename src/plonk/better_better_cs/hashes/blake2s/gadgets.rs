@@ -16,6 +16,7 @@ use crate::plonk::better_better_cs::gadgets::assignment::{
 };
 use std::sync::Arc;
 use splitmut::SplitMut;
+use std::{ iter, mem };
 
 type Result<T> = std::result::Result<T, SynthesisError>;
 
@@ -44,6 +45,28 @@ fn u64_to_ff<Fr: PrimeField>(n: u64) -> Fr {
 impl From<splitmut::SplitMutError> for SynthesisError {
     fn from(_splitmut_err: splitmut::SplitMutError) -> SynthesisError {
         SynthesisError::UnexpectedIdentity
+    }
+}
+
+
+pub trait IdentifyFirstLast: Iterator + Sized {
+    fn identify_first_last(self) -> Iter<Self>;
+}
+
+impl<I> IdentifyFirstLast for I where I: Iterator {
+    fn identify_first_last(self) -> Iter<Self> {
+        Iter(true, self.peekable())
+    }
+}
+
+pub struct Iter<I>(bool, iter::Peekable<I>) where I: Iterator;
+
+impl<I> Iterator for Iter<I> where I: Iterator {
+    type Item = (bool, bool, I::Item);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let first = mem::replace(&mut self.0, false);
+        self.1.next().map(|e| (first, self.1.peek().is_none(), e))
     }
 }
 
@@ -284,7 +307,11 @@ impl<E: Engine> Blake2sGadget<E> {
                 let new_cnst = u64_to_ff(n);
                 Num::Constant(new_cnst)
             },
-            (_, _) => unreachable!()
+            (Num::Allocated(var), Num::Constant(cnst)) | (Num::Constant(cnst), Num::Allocated(var)) => {
+                let cnst_var = AllocatedNum::alloc_cnst(cs, *cnst)?;
+                let new_var = self.query_table_internal(cs, table, &var, &cnst_var)?;
+                Num::Allocated(new_var)
+            }
         };
 
         Ok(res)
@@ -442,7 +469,7 @@ impl<E: Engine> Blake2sGadget<E> {
         cs: &mut CS, 
         v: &mut RegisterFile<E>, 
         a: usize, b: usize, c: usize, d: usize,
-        t0: &mut Register<E>, t1: &mut Register<E>, 
+        t0: &Num<E>, t1: &Num<E>, 
     ) -> Result<()>
     {
         let mut temp_arr = <[Num<E>; 4]>::default();
@@ -451,9 +478,12 @@ impl<E: Engine> Blake2sGadget<E> {
         let b = z.at(b)?;
         let c = z.at(c)?;
         let d = z.at(d)?;
+
+        let mut t0 : Register<E> = t0.clone().into();
+        let mut t1 : Register<E> = t1.clone().into();
         
         // v[a] := (v[a] + v[b] + x) mod 2**w
-        *a = self.add3(cs, a, b, t0)?.into();
+        *a = self.add3(cs, a, b, &mut t0)?.into();
 
         // v[d] := (v[d] ^ v[a]) >>> 16
         let x = self.get_decomposed(cs, a)?;
@@ -485,7 +515,7 @@ impl<E: Engine> Blake2sGadget<E> {
         *b = new_val.into();
 
         // v[a] := (v[a] + v[b] + y) mod 2**w
-        *a = self.add3(cs, a, b, t1)?.into();
+        *a = self.add3(cs, a, b, &mut t1)?.into();
 
         // v[d] := (v[d] ^ v[a]) >>> 8
         let x = self.get_decomposed(cs, a)?;
@@ -543,7 +573,7 @@ impl<E: Engine> Blake2sGadget<E> {
     }
 
     fn F<CS>(
-        &self, cs: &mut CS, mut hash_state: RegisterFile<E>, mut message: RegisterFile<E>, total_len: u64, last_block: bool,
+        &self, cs: &mut CS, mut hash_state: RegisterFile<E>, m: &[Num<E>], total_len: u64, last_block: bool,
     ) -> Result<RegisterFile<E>>
     where CS: ConstraintSystem<E>
     {
@@ -569,16 +599,15 @@ impl<E: Engine> Blake2sGadget<E> {
         for i in 0..10 {
             // Message word selection permutation for this round.
             let s = &self.sigmas[i];
-            let mut m = message.regs.get_muts();
 
-            self.G(cs, &mut v, 0, 4, 8, 12, m.at(s[0])?, m.at(s[1])?)?;
-            self.G(cs, &mut v, 1, 5, 9, 13, m.at(s[2])?, m.at(s[3])?)?;
-            self.G(cs, &mut v, 2, 6, 10, 14, m.at(s[4])?, m.at(s[5])?)?;
-            self.G(cs, &mut v, 3, 7, 11, 15, m.at(s[6])?, m.at(s[7])?)?;
-            self.G(cs, &mut v, 0, 5, 10, 15, m.at(s[8])?, m.at(s[9])?)?;
-            self.G(cs, &mut v, 1, 6, 11, 12, m.at(s[10])?, m.at(s[11])?)?;
-            self.G(cs, &mut v, 2, 7, 8, 13, m.at(s[12])?, m.at(s[13])?)?;
-            self.G(cs, &mut v, 3, 4, 9, 14, m.at(s[14])?, m.at(s[15])?)?;
+            self.G(cs, &mut v, 0, 4, 8, 12, &m[s[0]], &m[s[1]])?;
+            self.G(cs, &mut v, 1, 5, 9, 13, &m[s[2]], &m[s[3]])?;
+            self.G(cs, &mut v, 2, 6, 10, 14, &m[s[4]], &m[s[5]])?;
+            self.G(cs, &mut v, 3, 7, 11, 15, &m[s[6]], &m[s[7]])?;
+            self.G(cs, &mut v, 0, 5, 10, 15, &m[s[8]], &m[s[9]])?;
+            self.G(cs, &mut v, 1, 6, 11, 12, &m[s[10]], &m[s[11]])?;
+            self.G(cs, &mut v, 2, 7, 8, 13, &m[s[12]], &m[s[13]])?;
+            self.G(cs, &mut v, 3, 4, 9, 14, &m[s[14]], &m[s[15]])?;
         }
 
         // XOR the two halves.
@@ -604,29 +633,26 @@ impl<E: Engine> Blake2sGadget<E> {
         Ok(res)
     }
 
-    fn blake2s<CS: ConstraintSystem<E>>(&self, cs: mut CS, data: &[Num<E>]) -> Result<Num<E>> 
+    pub fn digest<CS: ConstraintSystem<E>>(&self, cs: &mut CS, data: &[Num<E>]) -> Result<Vec<Num<E>>> 
     {
         // h[0..7] := IV[0..7] // Initialization Vector.
-        let mut hash_state
-//  |
-//  | // Parameter block p[0]
-//  | h[0] := h[0]  ^ (kk << 8) ^ nn
-//  |
-//  | // Process padded key and data blocks
-//  | IF dd > 1 THEN
-//  | | FOR i = 0 TO dd - 2 DO
-//  | | | h := F( h, d[i], (i + 1) * bb, FALSE )
-//  | | END FOR.
-//  | END IF.
-//  |
-//  | // Final block.
-//  | IF kk = 0 THEN
-//  | | h := F( h, d[dd - 1], ll, TRUE )
-//  | ELSE
-//  | | h := F( h, d[dd - 1], ll + bb, TRUE )
-//  | END IF.
-//  |
-//  | RETURN first "nn" bytes from little-endian word array h[].
-//  |
-//  END FUNCTION.
+        let mut total_len : u64 = 0;
+        let mut hash_state = RegisterFile { regs: Vec::with_capacity(8) };
+        for i in 0..8 {
+            hash_state.regs.push(self.iv[i].clone());
+        }
+
+        for (_is_first, is_last, block) in data.chunks(16).identify_first_last() 
+        {
+            assert_eq!(block.len(), 16);
+            total_len += 64;
+            hash_state = self.F(cs, hash_state, &block[..], total_len, is_last)?;
+        }
+
+        let mut res = Vec::with_capacity(8);
+        for i in 0..8 {
+            res.push(self.get_full(cs, &mut hash_state.regs[0])?);
+        }
+        Ok(res)
+    }
 }

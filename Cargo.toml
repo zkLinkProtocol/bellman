@@ -19,6 +19,7 @@ cfg-if = "0.1"
 num_bigint = {package="num-bigint", version = "0.3"}
 num_traits = {package="num-traits", version = "0.2"}
 sha2 = "0.9"
+blake2 = "0.9"
 splitmut = "0.2"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
