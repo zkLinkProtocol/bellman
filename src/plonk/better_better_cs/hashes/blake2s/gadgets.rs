@@ -384,7 +384,7 @@ impl<E: Engine> Blake2sGadget<E> {
                 let mut temp = fr1.clone();
                 temp.add_assign(&fr2);
                 let f_repr = temp.into_repr();
-                let n = f_repr.as_ref()[0] >> 32;
+                let n = f_repr.as_ref()[0] & 0xffffffff;
                 Num::Constant(u64_to_ff(n))
             },
             (_, _) => {
@@ -413,7 +413,6 @@ impl<E: Engine> Blake2sGadget<E> {
                 res
             },
         };
-
         Ok(res)
     }
 
@@ -423,6 +422,7 @@ impl<E: Engine> Blake2sGadget<E> {
         let x = self.get_full(cs, reg1)?;
         let y = self.get_full(cs, reg2)?;
         let z = self.get_full(cs, reg3)?;
+        println!("x: {}, y: {}, z: {}", x.get_value().unwrap(), y.get_value().unwrap(), z.get_value().unwrap());
 
         let res = match (&x, &y, &z) {
             (Num::Constant(fr1), Num::Constant(fr2), Num::Constant(fr3)) => {
@@ -430,10 +430,11 @@ impl<E: Engine> Blake2sGadget<E> {
                 temp.add_assign(&fr2);
                 temp.add_assign(&fr3);
                 let f_repr = temp.into_repr();
-                let n = f_repr.as_ref()[0] >> 32;
+                let n = f_repr.as_ref()[0] & 0xffffffff;
                 Num::Constant(u64_to_ff(n))
             },
             (_, _, _) => {
+                println!("here");
                 let fr1 = x.get_value();
                 let fr2 = y.get_value();
                 let fr3 = y.get_value();
@@ -448,7 +449,7 @@ impl<E: Engine> Blake2sGadget<E> {
                     },
                     (_, _, _) => None,
                 };
-                
+                println!("of val: {:?}", of_val);
                 let of_var = AllocatedNum::alloc(cs, || of_val.grab())?;
                 self.range_check(cs, &of_var)?;
                 let of = Num::Allocated(of_var);
@@ -488,9 +489,11 @@ impl<E: Engine> Blake2sGadget<E> {
         // v[d] := (v[d] ^ v[a]) >>> 16
         let x = self.get_decomposed(cs, a)?;
         let y = self.get_decomposed(cs, d)?;
+        
         for i in 0..4 {
             temp_arr[i] = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &y.arr[i])?;
         }
+        
         let new_val = DecomposedRegister { 
             arr: [temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone(), temp_arr[1].clone()]
         };
@@ -502,11 +505,12 @@ impl<E: Engine> Blake2sGadget<E> {
         // v[b] := (v[b] ^ v[c]) >>> 12
         let x = self.get_decomposed(cs, b)?;
         let y = self.get_decomposed(cs, c)?;
+        
         temp_arr[1] = self.query_table(cs, &self.xor_rotate_table4, 4, &x.arr[1], &y.arr[1])?;
         temp_arr[0] = self.query_table(cs, &self.xor_table, 0, &x.arr[0], &y.arr[0])?;
         temp_arr[2] = self.query_table(cs, &self.xor_table, 0, &x.arr[2], &y.arr[2])?;
         temp_arr[3] = self.query_table(cs, &self.xor_table, 0, &x.arr[3], &y.arr[3])?;
-    
+
         let new_val = Num::lc(
             cs, 
             &[E::Fr::one(), u64_to_ff(1 << 4), u64_to_ff(1 << 12), u64_to_ff(1 << 20)], 
@@ -516,7 +520,8 @@ impl<E: Engine> Blake2sGadget<E> {
 
         // v[a] := (v[a] + v[b] + y) mod 2**w
         *a = self.add3(cs, a, b, &mut t1)?.into();
-
+        println!("a val: {}", a.full.1.get_value().unwrap());
+        
         // v[d] := (v[d] ^ v[a]) >>> 8
         let x = self.get_decomposed(cs, a)?;
         let y = self.get_decomposed(cs, d)?;
@@ -527,9 +532,12 @@ impl<E: Engine> Blake2sGadget<E> {
             arr: [temp_arr[1].clone(), temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone()]
         };
         *d = new_val.into();
+        let _ = self.get_full(cs, d)?;
+        
         
         // v[c] := (v[c] + v[d]) mod 2**w
         *c = self.add2(cs, c, d)?.into();
+        
 
         // v[b] := (v[b] ^ v[c]) >>> 7
         let x = self.get_decomposed(cs, b)?;
@@ -601,14 +609,23 @@ impl<E: Engine> Blake2sGadget<E> {
             let s = &self.sigmas[i];
 
             self.G(cs, &mut v, 0, 4, 8, 12, &m[s[0]], &m[s[1]])?;
+            println!("olo");
             self.G(cs, &mut v, 1, 5, 9, 13, &m[s[2]], &m[s[3]])?;
+            println!("olot");
             self.G(cs, &mut v, 2, 6, 10, 14, &m[s[4]], &m[s[5]])?;
+            println!("olot1");
             self.G(cs, &mut v, 3, 7, 11, 15, &m[s[6]], &m[s[7]])?;
+            println!("olot2");
             self.G(cs, &mut v, 0, 5, 10, 15, &m[s[8]], &m[s[9]])?;
+            println!("olot3");
             self.G(cs, &mut v, 1, 6, 11, 12, &m[s[10]], &m[s[11]])?;
+            println!("olot4");
             self.G(cs, &mut v, 2, 7, 8, 13, &m[s[12]], &m[s[13]])?;
+            println!("olot5");
             self.G(cs, &mut v, 3, 4, 9, 14, &m[s[14]], &m[s[15]])?;
+            println!("olot6");
         }
+        println!("olotr");
 
         // XOR the two halves.
         let mut res = RegisterFile { regs: Vec::with_capacity(8) };

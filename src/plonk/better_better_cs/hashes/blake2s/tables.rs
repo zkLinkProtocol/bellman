@@ -359,7 +359,7 @@ impl<E: Engine> XorRotateTable<E> {
         for x in 0..(1 << bits) {
             for y in 0..(1 << bits) {
                 let tmp = x ^ y;
-                let z : u32 = (tmp >> shift) | (tmp << (32 - shift));
+                let z : u32 = (tmp >> shift) | ((tmp << (32 - shift)) & 0xffffffff);
 
                 let x = E::Fr::from_str(&x.to_string()).unwrap();
                 let y = E::Fr::from_str(&y.to_string()).unwrap();

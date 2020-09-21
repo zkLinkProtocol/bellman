@@ -17,7 +17,8 @@ use crate::plonk::better_better_cs::cs::{
     Variable, 
     ConstraintSystem,
     ArithmeticTerm,
-    MainGateTerm
+    MainGateTerm,
+    MainGate
 };
 
 use super::assignment::{
@@ -306,6 +307,79 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(())
     }
 
+    // given vector of coefs: [c0, c1, c2, c3],
+    // vector of vars: [var0, var1, var2, var3],
+    // and supposed result var,
+    // check if var = c0 * var0 + c1 * var1 + c2 * var2 + c3 * var3
+    // NB: var3 will be located on the next row!
+    pub fn quartic_lc_eq<CS>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+        res_var: &Self,
+    ) -> Result<(), SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), 4);
+        
+        // check if equality indeed holds
+        match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value(), vars[3].get_value(), res_var.get_value()) {
+            (Some(val0), Some(val1), Some(val2), Some(val3), Some(res_val)) => {
+
+                let mut running_sum = val0;
+                running_sum.mul_assign(&coefs[0]);
+
+                let mut tmp = val1;
+                tmp.mul_assign(&coefs[1]);
+                running_sum.add_assign(&tmp);
+
+                let mut tmp = val2;
+                tmp.mul_assign(&coefs[2]);
+                running_sum.add_assign(&tmp);
+
+                let mut tmp = val3;
+                tmp.mul_assign(&coefs[3]);
+                running_sum.add_assign(&tmp);
+
+                assert_eq!(running_sum, res_val)
+            }
+            (_, _ , _ , _, _) => {},
+        };
+
+        let dummy = Self::alloc_zero(cs)?;
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        let idx_of_last_linear_term = range_of_linear_terms.last().expect("must have an index");
+
+        let mut first_term = ArithmeticTerm::from_variable(vars[0].get_variable());
+        first_term.scale(&coefs[0]);
+        let mut second_term = ArithmeticTerm::from_variable(vars[1].get_variable());
+        second_term.scale(&coefs[1]);
+        let mut third_term = ArithmeticTerm::from_variable(vars[2].get_variable());
+        third_term.scale(&coefs[2]);
+        let result_term = ArithmeticTerm::from_variable(res_var.get_variable());
+
+        let mut gate_term = MainGateTerm::new();
+        gate_term.add_assign(first_term);
+        gate_term.add_assign(second_term);
+        gate_term.add_assign(third_term);
+        gate_term.sub_assign(result_term);
+       
+        let (mut vars, mut coeffs) = CS::MainGate::format_term(gate_term, dummy.variable)?;
+        coeffs[idx_of_last_linear_term] = coeffs[3].clone();
+
+        let mg = CS::MainGate::default();
+
+        cs.new_single_gate_for_trace_step(
+            &mg,
+            &coeffs,
+            &vars,
+            &[]
+        )?;
+
+        Ok(())
+    }
+
     // given vector of coefs: [c0, c1, c2],
     // vector of vars: [var0, var1, var2],
     // and constant_elem : c
@@ -336,6 +410,7 @@ impl<E: Engine> AllocatedNum<E> {
 
                 running_sum.add_assign(&c);
                 Some(running_sum)
+                //Some(E::Fr::zero())
             },
             (_, _ , _ ) => None,
         };
