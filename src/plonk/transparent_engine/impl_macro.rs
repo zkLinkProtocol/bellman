@@ -201,6 +201,14 @@ macro_rules! transparent_engine_impl {
             fn from_xy_checked(_x: Self::Base, _y: Self::Base) -> Result<Self, crate::pairing::GroupDecodingError> {
                 Ok(<$fr as crate::ff::Field>::zero())
             }
+
+            fn a_coeff() -> Self::Base {
+                unimplemented!()
+            }
+
+            fn b_coeff() -> Self::Base {
+                unimplemented!()
+            }
         }
 
         impl crate::pairing::RawEncodable for $fr {
