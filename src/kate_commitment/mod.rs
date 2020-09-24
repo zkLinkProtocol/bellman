@@ -465,6 +465,25 @@ pub fn commit_using_values_on_coset<E: Engine>(
     Ok(res.into_affine())
 }
 
+pub fn calculate_batch_opening_quotient_from_monomials<E: Engine>(
+    polys: &[Polynomial<E::Fr, Coefficients>],
+    challenges: &[E::Fr],
+    at: E::Fr,
+    worker: &Worker,
+) -> Result<Polynomial<E::Fr, Coefficients>, SynthesisError> {
+    assert_eq!(polys.len(), challenges.len());
+    assert!(polys.len() > 0);
+    let mut tmp = polys[0].clone();
+    tmp.scale(worker, challenges[0]);
+    for (p, c) in polys[1..].iter().zip(challenges[1..].iter()) {
+        tmp.add_assign_scaled(worker, p, c);
+    }
+
+    let quotient = divide_single::<E>(tmp.as_ref(), at);
+    
+    Polynomial::from_coeffs(quotient)
+}
+
 pub fn open_from_monomials<E: Engine>(
     poly: &Polynomial<E::Fr, Coefficients>,
     at: E::Fr,
