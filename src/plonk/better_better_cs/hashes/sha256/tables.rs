@@ -763,7 +763,7 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
 
     fn is_valid_entry(&self, keys: &[E::Fr], values: &[E::Fr]) -> bool {
         assert!(keys.len() == self.num_keys());
-        assert!(values.len() == self.num_values());
+        //assert!(values.len() == self.num_values());
 
         let repr = keys[0].into_repr();
         for chunk in repr.as_ref().iter().skip(1) {
@@ -778,7 +778,7 @@ impl<E: Engine> LookupTableInternal<E> for ExtendedRangeTable<E> {
 
     fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         assert!(keys.len() == self.num_keys());
-        let res = if self.is_valid_entry(keys, &[]) {Ok(vec![])} else {Err(SynthesisError::Unsatisfiable)};
+        let res = if self.is_valid_entry(keys, &[]) {Ok(vec![E::Fr::zero(), E::Fr::zero()])} else {Err(SynthesisError::Unsatisfiable)};
 
         res
     }

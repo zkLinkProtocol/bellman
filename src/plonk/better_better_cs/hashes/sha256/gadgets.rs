@@ -273,6 +273,8 @@ pub struct Sha256GadgetParams<E: Engine> {
     sha256_base4_rot9_table : Option<Arc<LookupTableApplication<E>>>,
     sha256_sheduler_xor_table : Arc<LookupTableApplication<E>>,
 
+    range_table: Arc<LookupTableApplication<E>>,
+
     // constants 
     iv: [E::Fr; 8],
     round_constants: [E::Fr; 64],
@@ -282,9 +284,10 @@ pub struct Sha256GadgetParams<E: Engine> {
 
 const SHA256_GADGET_CHUNK_SIZE : usize = 11; 
 const SHA256_REG_WIDTH : usize = 32;
-const CH_BASE_DEFAULT_NUM_OF_CHUNKS : usize = 4; // 7^4 is fine
-const MAJ_BASE_DEFAULT_NUM_OF_CHUNKS : usize = 6; // 4^6 is fine
-const SHEDULER_BASE_DEFAULT_NUM_OF_CHUNKS : usize = 6; // 4^6 is STILL fine (nothing happaned from previous line of code)
+const CH_BASE_DEFAULT_NUM_OF_CHUNKS : usize = 5; // 7^4 is fine
+const MAJ_BASE_DEFAULT_NUM_OF_CHUNKS : usize = 8; // 4^6 is fine
+const SHEDULER_BASE_DEFAULT_NUM_OF_CHUNKS : usize = 8; // 4^6 is STILL fine (nothing happened from previous line of code)
+const RANGE_TABLE_WIDTH : usize = 16;
 
 
 impl<E: Engine> Sha256GadgetParams<E> {
@@ -492,6 +495,16 @@ impl<E: Engine> Sha256GadgetParams<E> {
             }
         };
 
+        let name14 : &'static str = "range_table";
+        let range_table = LookupTableApplication::new(
+            name14,
+            ExtendedRangeTable::new(RANGE_TABLE_WIDTH, name14),
+            columns3.clone(),
+            true
+        );
+        let range_table = cs.add_table(range_table)?;
+        
+
         // TODO: handle the case when these are not equal
         assert_eq!(maj_base_num_of_chunks, sheduler_base_num_of_chunks);
         let sha256_sheduler_xor_table = sha256_maj_xor_table.clone();
@@ -554,6 +567,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
             sha256_base4_shift3_table,
             sha256_base4_rot9_table,
             sha256_sheduler_xor_table,
+
+            range_table,
 
             iv,
             round_constants,
@@ -927,8 +942,15 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok(res)
     }
 
-    fn deduce_of(&self, of_trackers: [OverflowTracker]) -> OverflowTracker {
-        
+    fn deduce_of(&self, mut of_trackers: Vec<OverflowTracker>) -> OverflowTracker
+    {
+        assert!(!of_trackers.is_empty());
+        of_trackers.sort();
+        let mut cur_of = of_trackers[0];
+        for of in of_trackers.into_iter().skip(1) {
+            cur_of = cmp::max(of, cur_of) + OverflowTracker::OneBitOverflow;
+        }
+        cur_of
     }
 
     // for given 11-bit number x (represented in sparse form), y|hb|lbb, where lbb - 2-bits, hb - 1bit and y 8-bit
@@ -1095,24 +1117,46 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
         cs.begin_gates_batch_for_step()?;
 
-        let vars = [y.get_variable(), hb.get_variable(), lbb.get_variable(), dummy.get_variable()];
+        let vars = [y.get_variable(), hb.get_variable(), lbb.get_variable(), x.get_variable()];
         let table = self.global_table.as_ref().unwrap();
 
-        cs.allocate_variables_without_gate(
-            &vars,
-            &[]
-        )?;
+        // cs.allocate_variables_without_gate(
+        //     &vars,
+        //     &[]
+        // )?;
 
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
 
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+        let mut gate_term = MainGateTerm::new();
+        let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
+        
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let coeffs = [E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3), minus_one];
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+
+        for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
+            local_coeffs[idx] = coef.clone();
+        }
+
+        let mg = CS::MainGate::default();
+
+        cs.new_gate_in_batch(
+            &mg,
+            &local_coeffs,
+            &local_vars,
+            &[]
+        )?;
+
         cs.end_gates_batch_for_step()?;
 
-        AllocatedNum::ternary_lc_eq(
-            cs,
-            &[E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3)],
-            &[lbb.clone(), hb.clone(), y.clone()],
-            &x,
-        )?;
+        // AllocatedNum::ternary_lc_eq(
+        //     cs,
+        //     &[E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3)],
+        //     &[lbb.clone(), hb.clone(), y.clone()],
+        //     &x,
+        // )?;
 
         Ok((y, hb, lbb))
     }
@@ -1310,14 +1354,14 @@ impl<E: Engine> Sha256GadgetParams<E> {
         input: NumWithTracker<E>, 
     ) -> Result<SparseChValue<E>> 
     {   
-        match input.overflow_tracker {
-            OverflowTracker::NoOverflow => println!(" no overflow"),
-            OverflowTracker::OneBitOverflow => println!("one bit"),
-            OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => println!("{} oveflow", n),
-        };
+        // match input.overflow_tracker {
+        //     OverflowTracker::NoOverflow => println!(" no overflow"),
+        //     OverflowTracker::OneBitOverflow => println!("one bit"),
+        //     OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => println!("{} oveflow", n),
+        // };
 
         if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
-            assert!(n <= 12);
+            assert!(n <= 17);
         };
         
         match input.num {
@@ -1370,7 +1414,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         // full normal = low + 2^11 * mid + 2^22 * high + 2^33 * overflow
                         // allocate overflow on the next row alongside with the range check
                         let of = self.allocate_converted_num(
-                            cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0
+                            cs, &var, RANGE_TABLE_WIDTH, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0
                         )?;
 
                         AllocatedNum::quartic_lc_eq(
@@ -1380,10 +1424,10 @@ impl<E: Engine> Sha256GadgetParams<E> {
                             &var,
                         )?;
 
-                        self.query_table2(cs, &self.sha256_base4_rot7_table, &of)?;
+                        self.query_table2(cs, &self.range_table, &of)?;
 
                         let full_normal = match input.overflow_tracker {
-                            OverflowTracker::SignificantOverflow(n) if (n == 11 || n == 12) => {
+                            OverflowTracker::SignificantOverflow(n) if n >= 15 => {
                                 of_flag_dropped = true;
                                 let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
                                 AllocatedNum::ternary_lc_eq(
@@ -1517,22 +1561,14 @@ impl<E: Engine> Sha256GadgetParams<E> {
         input: NumWithTracker<E>, 
     ) -> Result<SparseMajValue<E>> 
     {      
-        // let (var, new_tracker) = match (input.overflow_tracker, self.majority_strategy)  {
-        //     (OverflowTracker::SignificantOverflow, _) => unimplemented!(),
-        //     (OverflowTracker::SmallOverflow(_), _) | (OverflowTracker::OneBitOverflow, Strategy::NaivaApproach) => {
-        //         (self.extact_32_from_overflowed_num(cs, &input.num)?, OverflowTracker::NoOverflow)
-        //     },
-        //     (_, _) => (input.num, input.overflow_tracker),
+        // match input.overflow_tracker {
+        //     OverflowTracker::NoOverflow => println!(" no overflow"),
+        //     OverflowTracker::OneBitOverflow => println!("one bit"),
+        //     OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => println!("{} oveflow", n),
         // };
 
-        match input.overflow_tracker {
-            OverflowTracker::NoOverflow => println!(" no overflow"),
-            OverflowTracker::OneBitOverflow => println!("one bit"),
-            OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => println!("{} oveflow", n),
-        };
-
-         if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
-            assert!(n <= 12);
+        if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
+            assert!(n <= 16);
         };
 
         match input.num {
@@ -1562,22 +1598,21 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
                 let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
                 let high = self.allocate_converted_num(
-                    cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE
+                    cs, &var, SHA256_GADGET_CHUNK_SIZE - 1, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE
                 )?;
 
                 let (sparse_low, sparse_low_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &low)?;
                 let (sparse_mid, sparse_mid_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &mid)?;
-
                 //assert_eq!(self.majority_strategy, Strategy::UseCustomTable);
-                let high_chunk_table = match self.majority_strategy {
-                    Strategy::UseCustomTable => self.sha256_base4_rot2_extr10_table.as_ref().unwrap(),
-                    Strategy::NaivaApproach => &self.sha256_base4_rot2_table,
-                };
-                let (sparse_high, _sparse_high_rot2) = self.query_table2(cs, high_chunk_table, &high)?;
+                // let high_chunk_table = match self.majority_strategy {
+                //     Strategy::UseCustomTable => self.sha256_base4_rot2_extr10_table.as_ref().unwrap(),
+                //     Strategy::NaivaApproach => &self.sha256_base4_rot2_table,
+                // };
+                let (sparse_high, _) = self.query_table2(cs, &self.sha256_base4_widh10_table, &high)?;
 
                 let full_normal = match input.overflow_tracker 
                 {
-                    OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => {
+                    OverflowTracker::NoOverflow => {
                         // compose full normal = low + 2^11 * mid + 2^22 * high
                         AllocatedNum::ternary_lc_eq(
                             cs, 
@@ -1588,25 +1623,25 @@ impl<E: Engine> Sha256GadgetParams<E> {
                         var.clone()
                     }
                     _ => {
-                        // full normal = low + 2^11 * mid + 2^22 * high - 2^33 * overflow
+                        // full normal = low + 2^11 * mid + 2^22 * high - 2^32 * overflow
                         // allocate overflow on the next row alongside with the range check
                         let of = self.allocate_converted_num(
-                            cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0
+                            cs, &var, RANGE_TABLE_WIDTH, SHA256_REG_WIDTH, 0, 0, 0
                         )?;
 
                         AllocatedNum::quartic_lc_eq(
                             cs,
-                            &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 33)],
+                            &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 32)],
                             &[low.clone(), mid.clone(), high.clone(), of.clone()],
                             &var,
                         )?;
 
-                        self.query_table2(cs, &self.sha256_base4_rot7_table, &of)?;
+                        self.query_table2(cs, &self.range_table, &of)?;
 
                         let full_normal = match input.overflow_tracker {
-                            OverflowTracker::SignificantOverflow(n) if (n == 11 || n == 12) => {
+                            OverflowTracker::SignificantOverflow(n) if n >= 15 => {
                                 of_flag_dropped = true;
-                                let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
+                                let truncated = self.allocate_converted_num(cs, &var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
                                 AllocatedNum::ternary_lc_eq(
                                     cs,
                                     &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
@@ -1694,7 +1729,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     full_sparse_rot22
                 };
 
-                let new_tracker = if of_flag_dropped {OverflowTracker::OneBitOverflow} else {input.overflow_tracker};
+                let new_tracker = if of_flag_dropped {OverflowTracker::NoOverflow} else {input.overflow_tracker};
 
                 let res = SparseMajValue{
                     normal: NumWithTracker {
@@ -1902,12 +1937,12 @@ impl<E: Engine> Sha256GadgetParams<E> {
             // hence if h is overflowed, wo wan't catch this!
             
             let var_args = &[h.normal.num, ch.num, inputs[i].num.clone(), rc];
-            let mut of_tracker = cmp::max(cmp::max(h.normal.overflow_tracker, ch.overflow_tracker), inputs[i].overflow_tracker);
-            of_tracker = of_tracker + OverflowTracker::SmallOverflow(3);
-            
+            let of_vec = vec![
+                h.normal.overflow_tracker, ch.overflow_tracker, inputs[i].overflow_tracker, OverflowTracker::NoOverflow
+            ];
             let temp1 = NumWithTracker {
                 num: Num::sum(cs, var_args)?,
-                overflow_tracker: of_tracker
+                overflow_tracker: self.deduce_of(of_vec),
             }; 
             //let temp1 = self.extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
 
@@ -1941,13 +1976,17 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // computes sigma_0(x) = S_7(x) ^ S_18(x) ^ R_3(x)
     // S_i and R_j are defined in the comments related to "message_expansion" function
     // we assume that there is no oveflow in input argument num
-    fn sigma_0<CS: ConstraintSystem<E>>(&self, cs: &mut CS, num: &NumWithTracker<E>) -> Result<NumWithTracker<E>>
+    fn sigma_0<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: &NumWithTracker<E>) -> Result<Num<E>>
     {
-        match num {
+        if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
+            assert!(n <= 16);
+        };
+      
+        match &input.num {
             Num::Constant(x) => {
                 let repr = x.into_repr();
                 // NOTE : think, if it is safe for n to be overflowed
-                let n = repr.as_ref()[0] as usize;
+                let n = (repr.as_ref()[0] & ((1 << SHA256_REG_WIDTH) - 1)) as usize;
 
                 let s7 = rotate_extract(n, 7, 0);
                 let s18 = rotate_extract(n, 18, 0);
@@ -1961,21 +2000,38 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 // there will be three chunks (low, mid, high) for 32bit number
                 let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
                 let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
-                let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
+                let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE-1, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
 
                 let (sparse_low, sparse_low_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &low)?;
                 let (sparse_mid, sparse_mid_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
-                let (sparse_high, _sparse_high_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
+                let (sparse_high, _) = self.query_table2(cs, &self.sha256_base4_widh10_table, &high)?;
 
-                let _full_normal = {
-                    // compose full normal = low + 2^11 * mid + 2^22 * high
-                    let full_normal = AllocatedNum::ternary_lc_eq(
-                        cs, 
-                        &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
-                        &[low.clone(), mid, high],
-                        &var,
-                    )?;
-                    full_normal
+                match input.overflow_tracker 
+                {
+                    OverflowTracker::NoOverflow => {
+                        // compose full normal = low + 2^11 * mid + 2^22 * high
+                        AllocatedNum::ternary_lc_eq(
+                            cs, 
+                            &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
+                            &[low.clone(), mid.clone(), high.clone()],
+                            &var,
+                        )?;
+                    }
+                    _ => {
+                        // full normal = low + 2^11 * mid + 2^22 * high + 2^32 * overflow
+                        // allocate overflow on the next row alongside with the range check
+                        let of = self.allocate_converted_num(
+                            cs, &var, RANGE_TABLE_WIDTH, SHA256_REG_WIDTH, 0, 0, 0
+                        )?;
+
+                        AllocatedNum::quartic_lc_eq(
+                            cs,
+                            &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 32)],
+                            &[low.clone(), mid.clone(), high.clone(), of.clone()],
+                            &var,
+                        )?;
+                        self.query_table2(cs, &self.range_table, &of)?;
+                    }
                 };
 
                 let full_sparse_rot7 = {
@@ -2090,13 +2146,17 @@ impl<E: Engine> Sha256GadgetParams<E> {
     // in all previous functions we have split x in chunks of equal size (11), now we restrict the lowest chunk to be
     // 10 bits, so x = | 11 | 11 | 10 | is still 32 bits-length in total
     // such an unusual split will simplify R_10 in an obvious way
-    fn sigma_1<CS: ConstraintSystem<E>>(&self, cs: &mut CS, num: &Num<E>) -> Result<Num<E>>
+    fn sigma_1<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: &NumWithTracker<E>) -> Result<Num<E>>
     {
-        match num {
+        if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
+            assert!(n <= 16);
+        };
+        
+        match &input.num {
             Num::Constant(x) => {
                 let repr = x.into_repr();
                 // NOTE : think, if it is safe for n to be overflowed
-                let n = repr.as_ref()[0] as usize;
+                let n = (repr.as_ref()[0] & ((1 << SHA256_REG_WIDTH) - 1)) as usize;
 
                 let s17 = rotate_extract(n, 17, 0);
                 let s19 = rotate_extract(n, 19, 0);
@@ -2116,15 +2176,32 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 let (sparse_mid, sparse_mid_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &mid)?;
                 let (sparse_high, _sparse_high_rot7) = self.query_table2(cs, &self.sha256_base4_rot7_table, &high)?;
 
-                let _full_normal = {
-                    // compose full normal = low + 2^10 * mid + 2^21 * high
-                    let full_normal = AllocatedNum::ternary_lc_eq(
-                        cs, 
-                        &[E::Fr::one(), Self::u64_exp_to_ff(1 << 10, 0), Self::u64_exp_to_ff(1 << 21, 0)],
-                        &[low, mid.clone(), high],
-                        &var,
-                    )?;
-                    full_normal
+                match input.overflow_tracker 
+                {
+                    OverflowTracker::NoOverflow => {
+                        // compose full normal = low + 2^10 * mid + 2^21 * high
+                        AllocatedNum::ternary_lc_eq(
+                            cs, 
+                            &[E::Fr::one(), Self::u64_exp_to_ff(1 << 10, 0), Self::u64_exp_to_ff(1 << 21, 0)],
+                            &[low.clone(), mid.clone(), high.clone()],
+                            &var,
+                        )?;
+                    }
+                    _ => {
+                        // full normal = low + 2^10 * mid + 2^21 * high - 2^32 * overflow
+                        // allocate overflow on the next row alongside with the range check
+                        let of = self.allocate_converted_num(
+                            cs, &var, RANGE_TABLE_WIDTH, SHA256_REG_WIDTH, 0, 0, 0
+                        )?;
+
+                        AllocatedNum::quartic_lc_eq(
+                            cs,
+                            &[E::Fr::one(), Self::u64_to_ff(1 << 10), Self::u64_to_ff(1 << 21), Self::u64_to_ff(1 << 32)],
+                            &[low.clone(), mid.clone(), high.clone(), of.clone()],
+                            &var,
+                        )?;
+                        self.query_table2(cs, &self.range_table, &of)?;
+                    }
                 };
 
                 let full_sparse_rot17 = {
@@ -2265,7 +2342,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
     fn message_expansion<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<Vec<NumWithTracker<E>>>
     {
         assert_eq!(message.len(), 16);
-        let mut res : NumWithTracker<E> = Vec::with_capacity(64);
+        let mut res : Vec<NumWithTracker<E>> = Vec::with_capacity(64);
 
         for i in 0..16 {
             res.push(message[i].clone().into());
@@ -2275,12 +2352,229 @@ impl<E: Engine> Sha256GadgetParams<E> {
             let tmp1 = self.sigma_1(cs, &res[j - 2])?;
             let tmp2 = self.sigma_0(cs, &res[j - 15])?;
 
-            let mut tmp3 = NumWithTracker {
-                num: Num::sum(cs, &[tmp1, res[j-7].num.clone(), tmp2, res[j-16].num.clone()])?,
-                overflow_tracker: OverflowTracker::SmallOverflow(3)
-            };
+            let var_args = &[tmp1, res[j-7].num.clone(), tmp2, res[j-16].num.clone()];
+            let of_vec = vec![
+                OverflowTracker::NoOverflow, OverflowTracker::NoOverflow, res[j-7].overflow_tracker, res[j-16].overflow_tracker
+            ];
+            let tmp3 = NumWithTracker {
+                num: Num::sum(cs, var_args)?,
+                overflow_tracker: self.deduce_of(of_vec),
+            }; 
             res.push(tmp3);
         }
+
+        Ok(res)
+    }
+
+    fn optimized_extact_32_from_tracked_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: NumWithTracker<E>) -> Result<Num<E>> 
+    {
+        let res = match input.overflow_tracker {
+            OverflowTracker::NoOverflow => input.num,
+            _ => match &input.num {
+                Num::Constant(fr) => {
+                    let repr = fr.into_repr();
+                    let n = repr.as_ref()[0] & ((1 << 32) - 1); 
+                    Num::Constant(Self::u64_to_ff(n))
+                }
+                Num::Allocated(var) => {
+                    let low = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, 0, 0, 0, 0)?;
+                    let high = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, RANGE_TABLE_WIDTH, 0, 0, 0)?;
+                    let of = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, RANGE_TABLE_WIDTH * 2, 0, 0, 0)?;
+
+                    // we will have three rows: first row - range check for low, second for high, third for of
+                    // apart from range checks we will pack arithmetic
+                    // row1 : low, 0, 0, 0 - no additional constraints
+                    // row2: high, 0, low, extracted - low + 2^32 * high = extracted
+                    // row3: of, 0, extracted, input - extracted + of*2^32 = input
+                    
+                    let table = &self.range_table;
+                    let mut minus_one = E::Fr::one();
+                    minus_one.negate();
+                    let dummy = AllocatedNum::alloc_zero(cs)?;
+                    let extracted = AllocatedNum::alloc(cs, || {
+
+                    })?;
+
+                    _first_row = self.query_table2(cs, table, &low)?;
+
+                    // second row
+                    cs.begin_gates_batch_for_step()?;
+                    let vars = [high.get_variable(), low.get_variable(), lbb.get_variable(), x.get_variable()];
+            
+
+        
+            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+
+            let dummy = AllocatedNum::alloc_zero(cs)?;
+            let mut gate_term = MainGateTerm::new();
+            let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
+            
+            let mut minus_one = E::Fr::one();
+            minus_one.negate();
+            let coeffs = [E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3), minus_one];
+            let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+
+            for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
+                local_coeffs[idx] = coef.clone();
+            }
+
+            let mg = CS::MainGate::default();
+
+            cs.new_gate_in_batch(
+                &mg,
+                &local_coeffs,
+                &local_vars,
+                &[]
+            )?;
+
+            cs.end_gates_batch_for_step()?;
+                    }
+                }
+                    
+            let dummy = AllocatedNum::alloc_zero(cs)?;
+            let mut of  = dummy.clone();
+            let mut extracted = dummy.clone();
+            let dummy = dummy.get_variable();
+
+        match var.get_value() {
+            None => {
+                for _i in 0..num_of_chunks {
+                    let tmp = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+                    chunks.push(tmp);
+                }
+
+                of = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+                extracted = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+            },
+            Some(fr) => {
+                let f_repr = fr.into_repr();
+                let n = f_repr.as_ref()[0];
+
+                for i in 0..num_of_chunks {
+                    let mask = if i != num_of_chunks - 1 { chunk_bitlen} else { high_chunk_bitlen};
+                    let new_val = Self::u64_to_ff((n >> (i * chunk_bitlen)) & ((1 << mask) - 1));
+                    let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
+                    chunks.push(tmp);
+                }
+
+                let of_val = Self::u64_to_ff(n >> SHA256_REG_WIDTH);
+                of = AllocatedNum::alloc(cs, || Ok(of_val))?;
+
+                let extracted_val = Self::u64_to_ff(n & ((1 << SHA256_REG_WIDTH) - 1));
+                extracted = AllocatedNum::alloc(cs, || Ok(extracted_val))?;
+            },
+        };
+
+        // assume we have a range table which allows us to check if x is in [0; 2^chunk_bitlen - 1]
+        // (or in other words that binary representation of x is at most chunk_bitlen bits in length)
+        // assume than, that our task is to check that some value x is actually at most n bits in length (here n < chunk_bitlen)
+        // in order to do this we have in fact to query table twice:
+        // first time we check that value x is in range [0; 2^chunk_bitlen - 1]
+        // and secon time we check that x * 2^(chunk_bitlen - n) is in the same range
+        // note, that in our decomposition into chunks only the top_most chunk may be overflowed and requires such
+        // a more thorough check (this is what the parameter "strict used for")
+        // in this case both checks (that x is in range and that  x * 2^(chunk_bitlen - n) is in range)
+        // will occupy only two consecutive lines of trace  - 
+        // we leverage the fact, that there only two used columns (apart from sparse_rotate_tables) in range table
+        // and hence we may allocate first range check (for x) and arithmetic operation ( y =  x * 2^(chunk_bitlen - n))
+        // on the same line
+        // if we are do not have special range table in our disposal, we are going to use sha256-specific-tables in order to
+        // perform range checks, as most of them have the first column similar to that of range table! 
+        // moreover, we may actually do more and split our number as of|10|11|11| bits.
+        // note, that we also exploit the fact that out overflow can't be two large
+        // and in any case will fit into the range table
+        let range_table = self.global_table.as_ref().unwrap();
+
+        let mut range_check = |var: &AllocatedNum<E>, shift: usize| -> Result<()> {
+            if shift == 0 {
+                cs.begin_gates_batch_for_step()?; 
+                let vars = [var.get_variable(), dummy, dummy, dummy];
+
+                cs.allocate_variables_without_gate(
+                    &vars,
+                    &[]
+                )?;
+                
+                cs.apply_single_lookup_gate(&vars[..range_table.width()], range_table.clone())?;
+                cs.end_gates_batch_for_step()?;
+            }
+            else {
+                let new_val = match var.get_value() {
+                    None => None,
+                    Some(fr) => {
+                        let f_repr = fr.into_repr();
+                        let n = f_repr.as_ref()[0] << shift;
+                        Some(Self::u64_to_ff(n))
+                    },
+                };
+                let shifted_var = AllocatedNum::alloc(cs, || new_val.grab())?;
+                
+                let zero = E::Fr::zero();
+                let mut minus_one = E::Fr::one();
+                minus_one.negate();
+                let coef = Self::u64_to_ff(1 << shift);
+
+                cs.begin_gates_batch_for_step()?; 
+                
+                let first_trace_step = [var.get_variable(), dummy, dummy, shifted_var.get_variable()];
+
+                cs.new_gate_in_batch(
+                    &CS::MainGate::default(),
+                    &[coef, zero.clone(), zero.clone(), zero.clone(), minus_one, zero.clone(), zero],
+                    &first_trace_step[..],
+                    &[],
+                )?;
+
+                cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
+                cs.end_gates_batch_for_step()?;
+
+                cs.begin_gates_batch_for_step()?; 
+                let second_trace_step = [shifted_var.get_variable(), dummy, dummy, dummy];
+
+                cs.allocate_variables_without_gate(
+                    &second_trace_step,
+                    &[]
+                )?;
+                
+                cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
+                cs.end_gates_batch_for_step()?;
+            }
+
+            Ok(())
+        }; 
+
+        let mut chunks_iter = chunks.iter().peekable();
+        while let Some(chunk) = chunks_iter.next() {
+            if chunks_iter.peek().is_some() {
+                // this is not the top-most chunk: only one range check is required
+                range_check(chunk, 0);              
+            } else {
+                // this is the top-most chunk
+                // however, it is not strcitly neccessary that both range-checks are required 
+                // (for x and x * 2^(chunk_bitlen -n))
+                // if bitlen of topmost chunks is equal to the chunk_bitlen, than there is no possibility of overflow
+                // e.g, this is the case of range table of bitlength 16
+                range_check(chunk, chunk_bitlen - high_chunk_bitlen);  
+            }
+        }
+        range_check(&of, 0); 
+
+        let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
+        AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
+
+        // check that extracted + of * 32 = input
+        let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+        AllocatedNum::ternary_lc_eq(
+            cs, 
+            &[E::Fr::one(), full_reg_size, E::Fr::zero()],
+            &[extracted.clone(), of, dummy],
+            &var
+        )?;
+
+        Ok(extracted)
+            }
+        };
 
         Ok(res)
     }

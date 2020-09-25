@@ -497,7 +497,7 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         if last_row == false {
             let mut tmp = d_next_value.expect("must be able to get d_next");
             tmp.mul_assign(&q_d_next);
-
+            //print!("q_d: {}", q_d_next);
             total.add_assign(&tmp);
         } else {
             assert!(q_d_next.is_zero());
