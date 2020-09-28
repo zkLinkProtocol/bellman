@@ -122,6 +122,7 @@ impl<E: Engine> AllocatedNum<E> {
         let self_term = ArithmeticTerm::<E>::from_variable(var);
         let other_term = ArithmeticTerm::constant(fr.clone());
         let mut term = MainGateTerm::new();
+        term.add_assign(self_term);
         term.sub_assign(other_term);
 
         cs.allocate_main_gate(term)?;
@@ -861,8 +862,8 @@ impl<E: Engine> Num<E> {
 
         // okay, from now one we may be sure that we have at least one allocated term
         let mut constant_term = E::Fr::zero();
-        let mut vars = Vec::with_capacity(3);
-        let mut coeffs = Vec::with_capacity(3);
+        let mut vars = Vec::with_capacity(4);
+        let mut coeffs = Vec::with_capacity(5);
         let mut res_var = AllocatedNum::alloc_zero(cs)?;
 
         // Note: the whole thing may be a little more efficient with the use of custom gates

@@ -365,7 +365,7 @@ pub struct Width4MainGateWithDNext;
 
 impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
     fn name(&self) -> &'static str {
-        "main gate of width 4 with D_next"
+        "main gate of width 4 with D_next (2)"
     }
 
     fn degree(&self) -> usize {
@@ -394,6 +394,7 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
 
             PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(2), 1),
         ]
     }
 
@@ -408,6 +409,7 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             PolyIdentifier::GateSetupPolynomial(name, 4),
             PolyIdentifier::GateSetupPolynomial(name, 5),
             PolyIdentifier::GateSetupPolynomial(name, 6),
+            PolyIdentifier::GateSetupPolynomial(name, 7),
         ]
     }
 
@@ -435,6 +437,7 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
             PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)),
             PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 7)),
         ]
     }
 
@@ -463,6 +466,7 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let q_m = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 4), row);
         let q_const = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 5), row);
         let q_d_next = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 6), row);
+        let q_c_next = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 7), row);
 
         // println!("{}*A + {}*B + {}*C + {}*D + {} + {}*A*A + {}*D_next", q_a, q_b, q_c, q_d, q_const, q_m, q_d_next);
         let a_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(0), row);
@@ -471,6 +475,12 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let d_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row);
         let d_next_value = if last_row == false {
             Some(poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row+1))
+        } else {
+            None
+        }; 
+
+        let c_next_value = if last_row == false {
+            Some(poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(2), row+1))
         } else {
             None
         }; 
@@ -501,6 +511,15 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             total.add_assign(&tmp);
         } else {
             assert!(q_d_next.is_zero());
+        }
+
+        if last_row == false {
+            let mut tmp = c_next_value.expect("must be able to get c_next");
+            tmp.mul_assign(&q_c_next);
+            //print!("q_c: {}", q_c_next);
+            total.add_assign(&tmp);
+        } else {
+            assert!(q_c_next.is_zero());
         }
 
         total
@@ -566,7 +585,7 @@ impl<E: Engine> Gate<E> for Width4MainGateWithDNext {
 impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
     const NUM_LINEAR_TERMS: usize = 4;
     const NUM_VARIABLES: usize = 4;
-    const NUM_VARIABLES_ON_NEXT_STEP: usize = 1;
+    const NUM_VARIABLES_ON_NEXT_STEP: usize = 2;
 
     fn range_of_multiplicative_term() -> std::ops::Range<usize> {
         0..2
@@ -585,7 +604,7 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
     fn format_term(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
         let mut flattened_variables = vec![padding; 4];
-        let mut flattened_coefficients = vec![E::Fr::zero(); 7];
+        let mut flattened_coefficients = vec![E::Fr::zero(); 8];
         let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
@@ -678,7 +697,7 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
 
     fn format_linear_term_with_duplicates(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
         let mut flattened_variables = vec![padding; 4];
-        let mut flattened_coefficients = vec![E::Fr::zero(); 7];
+        let mut flattened_coefficients = vec![E::Fr::zero(); 8];
         let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
@@ -732,7 +751,7 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
     }
 
     fn empty_coefficients() -> Vec<E::Fr> {
-        vec![E::Fr::zero(); 7]
+        vec![E::Fr::zero(); 8]
     }
 
     fn contribute_into_quotient_for_public_inputs<'a, 'b>(
@@ -894,6 +913,21 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         drop(q_d_next_ref);
         drop(d_next_ref);
 
+        // Q_C_next * C_next
+        let q_c_next_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 7)),
+            ldes_storage
+        );
+        let c_next_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(2), 1),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_c_next_ref);
+        tmp.mul_assign(&worker, c_next_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_c_next_ref);
+        drop(c_next_ref);
+
         t_1.scale(&worker, challenges[0]);
 
         Ok(t_1)
@@ -921,6 +955,8 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         let d_value = *queried_values.get(&PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)))
         .ok_or(SynthesisError::AssignmentMissing)?;
         let d_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1))
+        .ok_or(SynthesisError::AssignmentMissing)?;
+        let c_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(2), 1))
         .ok_or(SynthesisError::AssignmentMissing)?;
 
         let name = <Self as GateInternal<E>>::name(&self);
@@ -955,10 +991,15 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 6));
         result.add_assign_scaled(&worker, poly_ref, &d_next_value);
 
+        // Q_dNext * D_next
+        let poly_ref = monomials_storage.get_poly(PolyIdentifier::GateSetupPolynomial(name, 7));
+        result.add_assign_scaled(&worker, poly_ref, &c_next_value);
+
         result.scale(&worker, challenges[0]);
 
         Ok(result)
     }
+
     fn add_inputs_into_quotient(
         &self, 
         domain_size: usize,
@@ -1008,6 +1049,8 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         .ok_or(SynthesisError::AssignmentMissing)?;
         let d_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1))
         .ok_or(SynthesisError::AssignmentMissing)?;
+        let c_next_value = *queried_values.get(&PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(2), 1))
+        .ok_or(SynthesisError::AssignmentMissing)?;
 
         let name = <Self as GateInternal<E>>::name(&self);
 
@@ -1045,6 +1088,11 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         // Q_dNext * D_next
         let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 6)).ok_or(SynthesisError::AssignmentMissing)?;
         let scaled = commitment.mul(d_next_value.into_repr());
+        aggregate.add_assign(&scaled);
+
+        // Q_dNext * D_next
+        let commitment = commitments_storage.get(&PolyIdentifier::GateSetupPolynomial(name, 7)).ok_or(SynthesisError::AssignmentMissing)?;
+        let scaled = commitment.mul(c_next_value.into_repr());
         aggregate.add_assign(&scaled);
 
         aggregate.mul_assign(challenges[0]);

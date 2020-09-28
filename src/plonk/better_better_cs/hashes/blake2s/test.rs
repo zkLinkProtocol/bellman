@@ -49,14 +49,14 @@ mod test {
 
             let supposed_output_vars = blake2s_gadget.digest(cs, &input_vars[..])?;
 
-            // for (a, b) in supposed_output_vars.iter().zip(actual_output_vars.into_iter()) {
-            //     let a = match a {
-            //         Num::Allocated(x) => x,
-            //         Num::Constant(_) => unreachable!(),
-            //     };
+            for (a, b) in supposed_output_vars.iter().zip(actual_output_vars.into_iter()) {
+                let a = match a {
+                    Num::Allocated(x) => x,
+                    Num::Constant(_) => unreachable!(),
+                };
 
-            //     //a.eq(cs, b)?;
-            // }
+                a.eq(cs, b)?;
+            }
 
             Ok(())
         }
@@ -65,24 +65,20 @@ mod test {
     fn slice_to_ff<Fr: PrimeField>(slice: &[u8]) -> Fr {
         assert_eq!(slice.len(), 4);
         let mut repr : <Fr as PrimeField>::Repr = Fr::zero().into_repr();
-        repr.as_mut()[0] = slice[3] as u64 + ((slice[2] as u64) << 8) + ((slice[1] as u64) << 16) + ((slice[0] as u64) << 24);
+        repr.as_mut()[0] = slice[0] as u64 + ((slice[1] as u64) << 8) + ((slice[2] as u64) << 16) + ((slice[3] as u64) << 24);
         Fr::from_repr(repr).expect("should parse")
     }
 
     #[test]
     fn blake2s_gadget_test() 
     {
-        // SHA256 Pre-processing (Padding):
-        // begin with the original message of length L bits
-        // append a single '1' bit
-        // append K '0' bits, where K is the minimum number >= 0 such that L + 1 + K + 64 is a multiple of 512
-        // append L as a 64-bit big-endian integer, making the total post-processed length a multiple of 512 bits
         let seed: &[_] = &[1, 2, 3, 4, 5];
         let mut rng: StdRng = SeedableRng::from_seed(seed);
 
         let mut input = [0u8; 64];
         for i in 0..55 {
             input[i] = rng.gen();
+            //input[i] = 0x20;
         }
 
         let mut hasher = Blake2s::new();
@@ -110,6 +106,6 @@ mod test {
         circuit.synthesize(&mut assembly).expect("must work");
         println!("Assembly contains {} gates", assembly.n());
         println!("Total length of all tables: {}", assembly.total_length_of_all_tables);
-        //assert!(assembly.is_satisfied());
+        assert!(assembly.is_satisfied());
     }
 }

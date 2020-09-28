@@ -21,24 +21,15 @@ use std::{ iter, mem };
 type Result<T> = std::result::Result<T, SynthesisError>;
 
 const CHUNK_SIZE : usize = 8; 
-const SHIFT : usize = 4;
-const SPLIT_POINT : usize = 7; 
+const SHIFT4 : usize = 4;
+const SHIFT7 : usize = 7; 
+const BLAKE2s_STATE_WIDTH : usize = 16;
 
-// returns n ^ exp if exp is not zero, n otherwise
-fn u64_exp_to_ff<Fr: PrimeField>(n: u64, exp: u64) -> Fr {
+
+fn u64_to_ff<Fr: PrimeField>(n: u64) -> Fr {
     let mut repr : <Fr as PrimeField>::Repr = Fr::zero().into_repr();
     repr.as_mut()[0] = n;
     let mut res = Fr::from_repr(repr).expect("should parse");
-
-    if exp != 0 {
-        res = res.pow(&[exp]);
-    }
-
-    res
-}
-
-fn u64_to_ff<Fr: PrimeField>(n: u64) -> Fr {
-    u64_exp_to_ff::<Fr>(n, 0)
 }
 
 
@@ -72,102 +63,36 @@ impl<I> Iterator for Iter<I> where I: Iterator {
 
 
 #[derive(Clone)]
-pub struct DecomposedRegister<E : Engine> {
-    pub arr : [Num<E>; 4]
+pub struct DecomposedNum<E : Engine> {
+    r0: Num<E>,
+    r1: Num<E>,
+    r2: Num<E>,
+    r3: Num<E>,
 }
 
-impl<E: Engine> Default for DecomposedRegister<E> {
+impl<E: Engine> Default for DecomposedNum<E> {
     fn default() -> Self {
-        DecomposedRegister {
-            arr: [Num::default(), Num::default(), Num::default(), Num::default()],
+        DecomposedNum {
+            r0: Num::default(), 
+            r1: Num::default(), 
+            r2: Num::default(), 
+            r3: Num::default(),
         }
     }
 }
 
 
-#[derive(Clone)]
-pub struct Register<E: Engine> {
-    full: (bool, Num<E>),
-    decomposed: (bool, DecomposedRegister<E>),
-}
-
-impl<E: Engine> Default for Register<E> {
-    fn default() -> Self {
-        Register {
-            full : (true, Num::default()),
-            decomposed: (true, DecomposedRegister::default()),
-        }
-    }
-}
-
-impl<E: Engine> Register<E> {
-    pub fn is_full_form_available(&self) -> bool {
-        self.full.0
-    }
-    
-    pub fn is_decomposed_form_available(&self) -> bool {
-        self.decomposed.0
-    }
-
-    pub fn is_const(&mut self) -> bool {
-        if self.is_full_form_available() && self.full.1.is_constant() {
-            return true;
-        }
-        else {
-            assert_eq!(self.is_decomposed_form_available(), true);
-            if self.decomposed.1.arr.iter().all(|x| x.is_constant()) {
-                self.full.0 = true;
-                let base = u64_to_ff(1 << 8);
-                
-                let mut sum = self.decomposed.1.arr[3].get_value().unwrap();
-                sum.mul_assign(&base);
-                sum.add_assign(&self.decomposed.1.arr[2].get_value().unwrap());
-                sum.mul_assign(&base);
-                sum.add_assign(&self.decomposed.1.arr[1].get_value().unwrap());
-                sum.mul_assign(&base);
-                sum.add_assign(&self.decomposed.1.arr[0].get_value().unwrap());
-
-                self.full.1 = Num::Constant(sum);
-                return true;
-            }
-        }
-        return false;
-    }
-}
-
-impl<E: Engine> From<Num<E>> for Register<E> 
-{
-    fn from(num: Num<E>) -> Self {
-        Register {
-            full: (true, num),
-            decomposed: (false, DecomposedRegister::default()),
-        }
-    }
-}
-
-impl<E: Engine> From<DecomposedRegister<E>> for Register<E> 
-{
-    fn from(decomposed: DecomposedRegister<E>) -> Self {
-        Register {
-            full: (false, Num::default()),
-            decomposed: (true, decomposed),
-        }
-    }
-}
+#[derive(Clone, Default)]
+pub struct HashState<E: Engine>([DecomposedNum<E>; BLAKE2s_STATE_WIDTH]);
 
 
-pub struct RegisterFile<E: Engine> {
-    regs : Vec<Register<E>>,
-}
-
-
-pub struct Blake2sGadget<E: Engine> {
+pub struct Blake2sOptimizedGadget<E: Engine> {
     xor_table: Arc<LookupTableApplication<E>>,
-    xor_rotate_table4: Arc<LookupTableApplication<E>>,
-    xor_rotate_table7: Arc<LookupTableApplication<E>>,
-    //split_table: Arc<LookupTableApplication<E>>,
-    iv: [Register<E>; 8],
-    twisted_iv_0: Register<E>,
+    compound_xor4_table: Arc<LookupTableApplication<E>>,
+    compound_xor7_table: Arc<LookupTableApplication<E>>,
+    
+    iv: [usize; 8],
+    iv0_twist: usize,
     sigmas : [[usize; 16]; 10],
 }
 

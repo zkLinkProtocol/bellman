@@ -2,4 +2,5 @@
 // into single abstract class
 pub mod tables;
 pub mod gadgets;
+pub mod optimized_gadgets;
 pub mod test;

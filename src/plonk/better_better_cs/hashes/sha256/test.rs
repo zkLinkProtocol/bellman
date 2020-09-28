@@ -187,7 +187,7 @@ mod test {
             // for now, the only testes versions are the following combinations
             // global_strategy: Use_8_1_2_split, majority_strategy: NaiveApproach
             // global_strategy: UseRangeTable(16), majority_strategy: NaiveApproach
-            global_strategy: GlobalStrategy::UseRangeCheckTable(16),
+            global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
             majority_strategy: Strategy::UseCustomTable,
 
             ch_base_num_of_chunks: None,

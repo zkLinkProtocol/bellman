@@ -1348,6 +1348,73 @@ impl<E: Engine> Sha256GadgetParams<E> {
         Ok(res)
     }
 
+    // the idea realized in this function is to combine accumulation of running sum with normalization
+    // assume we have representation of x as x = \sum x_i a^i, where each x_i is in [0, a-1] and we have
+    // highy nonlinear normalization funtion f: [0, a-1] -> [0, b-1], implemented via corresponding table
+    // the wanted result is y = \sum f(x_i) b^i
+    // we can conbine transformation of each chunk x_i and accumulation of resulting y_i via f on the same row:
+    // start with acc = 0
+    // for the row [x_i, f(x_i), acc_prev, acc_new], let acc_new = acc_prev * b^i + f(x_i)
+
+    // NB: if we are allowed to use two values fron the next row, then we may accumulate two running sums simultaneously
+    // (for x and y correspondingly)
+    // the row in this case would be [x_i, f(x_i), x_acc, y_acc]  
+    fn query_table_accumulate<CS: ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        table: &Arc<LookupTableApplication<E>>, 
+        key: &AllocatedNum<E>,
+        prev_acc: &AllocatedNum<E>,
+        base: &E::Fr,
+    ) -> Result<AllocatedNum<E>> 
+    {
+        let f_key = match key.get_value() {
+            None => AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
+            Some(val) => {
+                let new_val = table.query(&[val])?[0];
+                AllocatedNum::alloc(cs, || Ok(new_val))?
+            },     
+        };
+
+        let new_acc = AllocatedNum::alloc(cs, || {
+            let mut tmp = prev_acc.get_value().grab()?;
+            tmp.mul_assign(base);
+            tmp.add_assign(&(f_key.get_value().grab())?);
+            Ok(tmp)
+        })?;
+
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();  
+
+        // new_acc = prev_acc * base + f_key
+        let vars = [key.get_variable(), f_key.get_variable(), prev_acc.get_variable(), new_acc.get_variable()];
+        let coeffs = [E::Fr::zero(), E::Fr::one(), base.clone(), minus_one.clone()];
+
+        cs.begin_gates_batch_for_step()?;
+
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+    
+        let mut gate_term = MainGateTerm::new();
+        let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy)?;
+        for (idx, coef) in range_of_linear_terms.clone().zip(coeffs.iter()) {
+            local_coeffs[idx] = coef.clone();
+        }
+
+        let mg = CS::MainGate::default();
+        cs.new_gate_in_batch(
+            &mg,
+            &local_coeffs,
+            &vars,
+            &[]
+        )?;
+
+        cs.end_gates_batch_for_step()?;
+
+        Ok(new_acc)
+    }
+
     fn convert_into_sparse_chooser_form<CS : ConstraintSystem<E>>(
         &self, 
         cs: &mut CS, 
@@ -1799,7 +1866,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 // split and slice!
                 let num_slices = Self::round_up(SHA256_REG_WIDTH, num_chunks);
                 let mut input_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
-                let mut output_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
+                //let mut output_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
                 let input_slice_modulus = pow(base, num_chunks);
 
                 match x.get_value() {
@@ -1830,19 +1897,23 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     }
                 }
 
-                for i in 0..num_slices {
-                    let tmp = self.query_table1(cs, table, &input_slices[i])?;
-                    output_slices.push(tmp);
+                let mut output_acc = AllocatedNum::alloc_zero(cs)?;
+                let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
+                for input_chunk in input_slices.iter().rev() {
+                   output_acc = self.query_table_accumulate(cs, table, input_chunk, &output_acc, &output_base)?;
                 }
 
-                let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
+                // for i in 0..num_slices {
+                //     let tmp = self.query_table1(cs, table, &input_slices[i])?;
+                //     output_slices.push(tmp);
+                // }
+                // let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
+                // AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
+                
                 let input_base = Self::u64_to_ff(input_slice_modulus as u64);
-                let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
-
                 AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
-                AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
-
-                return Ok(Num::Allocated(output));
+                
+                return Ok(Num::Allocated(output_acc));
             }
         }
     }
@@ -2392,193 +2463,71 @@ impl<E: Engine> Sha256GadgetParams<E> {
                     minus_one.negate();
                     let dummy = AllocatedNum::alloc_zero(cs)?;
                     let extracted = AllocatedNum::alloc(cs, || {
-
+                        let low = low.get_value().grab()?;
+                        let high = high.get_value().grab()?;
+                        let mut tmp = Self::u64_to_ff(1 << 16);
+                        tmp.mul_assign(&high);
+                        tmp.add_assign(&low);
+                        Ok(tmp)
                     })?;
+                    let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
 
-                    _first_row = self.query_table2(cs, table, &low)?;
+                    let _first_row = self.query_table2(cs, table, &low)?;
 
                     // second row
                     cs.begin_gates_batch_for_step()?;
-                    let vars = [high.get_variable(), low.get_variable(), lbb.get_variable(), x.get_variable()];
-            
-
-        
-            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-
-            let dummy = AllocatedNum::alloc_zero(cs)?;
-            let mut gate_term = MainGateTerm::new();
-            let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
-            
-            let mut minus_one = E::Fr::one();
-            minus_one.negate();
-            let coeffs = [E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3), minus_one];
-            let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
-
-            for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
-                local_coeffs[idx] = coef.clone();
-            }
-
-            let mg = CS::MainGate::default();
-
-            cs.new_gate_in_batch(
-                &mg,
-                &local_coeffs,
-                &local_vars,
-                &[]
-            )?;
-
-            cs.end_gates_batch_for_step()?;
-                    }
-                }
+                    let vars = [high.get_variable(), dummy.get_variable(), low.get_variable(), extracted.get_variable()];
+                    let coeffs = [Self::u64_to_ff(1 << 16), E::Fr::zero(), E::Fr::one(), minus_one.clone()];
                     
-            let dummy = AllocatedNum::alloc_zero(cs)?;
-            let mut of  = dummy.clone();
-            let mut extracted = dummy.clone();
-            let dummy = dummy.get_variable();
+                    cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+                    
+                    let mut gate_term = MainGateTerm::new();
+                    let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
+                    for (idx, coef) in range_of_linear_terms.clone().zip(coeffs.iter()) {
+                        local_coeffs[idx] = coef.clone();
+                    }
 
-        match var.get_value() {
-            None => {
-                for _i in 0..num_of_chunks {
-                    let tmp = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-                    chunks.push(tmp);
+                    let mg = CS::MainGate::default();
+                    cs.new_gate_in_batch(
+                        &mg,
+                        &local_coeffs,
+                        &vars,
+                        &[]
+                    )?;
+
+                    cs.end_gates_batch_for_step()?;
+                    
+                    // third row 
+                    cs.begin_gates_batch_for_step()?;
+                    let vars = [of.get_variable(), dummy.get_variable(), extracted.get_variable(), var.get_variable()];
+                    let coeffs = [Self::u64_to_ff(1 << 32), E::Fr::zero(), E::Fr::one(), minus_one.clone()];
+                    
+                    cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+                    
+                    let mut gate_term = MainGateTerm::new();
+                    let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
+                    for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
+                        local_coeffs[idx] = coef.clone();
+                    }
+
+                    let mg = CS::MainGate::default();
+                    cs.new_gate_in_batch(
+                        &mg,
+                        &local_coeffs,
+                        &vars,
+                        &[]
+                    )?;
+
+                    cs.end_gates_batch_for_step()?;
+
+                    Num::Allocated(extracted)
                 }
-
-                of = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-                extracted = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-            },
-            Some(fr) => {
-                let f_repr = fr.into_repr();
-                let n = f_repr.as_ref()[0];
-
-                for i in 0..num_of_chunks {
-                    let mask = if i != num_of_chunks - 1 { chunk_bitlen} else { high_chunk_bitlen};
-                    let new_val = Self::u64_to_ff((n >> (i * chunk_bitlen)) & ((1 << mask) - 1));
-                    let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
-                    chunks.push(tmp);
-                }
-
-                let of_val = Self::u64_to_ff(n >> SHA256_REG_WIDTH);
-                of = AllocatedNum::alloc(cs, || Ok(of_val))?;
-
-                let extracted_val = Self::u64_to_ff(n & ((1 << SHA256_REG_WIDTH) - 1));
-                extracted = AllocatedNum::alloc(cs, || Ok(extracted_val))?;
-            },
-        };
-
-        // assume we have a range table which allows us to check if x is in [0; 2^chunk_bitlen - 1]
-        // (or in other words that binary representation of x is at most chunk_bitlen bits in length)
-        // assume than, that our task is to check that some value x is actually at most n bits in length (here n < chunk_bitlen)
-        // in order to do this we have in fact to query table twice:
-        // first time we check that value x is in range [0; 2^chunk_bitlen - 1]
-        // and secon time we check that x * 2^(chunk_bitlen - n) is in the same range
-        // note, that in our decomposition into chunks only the top_most chunk may be overflowed and requires such
-        // a more thorough check (this is what the parameter "strict used for")
-        // in this case both checks (that x is in range and that  x * 2^(chunk_bitlen - n) is in range)
-        // will occupy only two consecutive lines of trace  - 
-        // we leverage the fact, that there only two used columns (apart from sparse_rotate_tables) in range table
-        // and hence we may allocate first range check (for x) and arithmetic operation ( y =  x * 2^(chunk_bitlen - n))
-        // on the same line
-        // if we are do not have special range table in our disposal, we are going to use sha256-specific-tables in order to
-        // perform range checks, as most of them have the first column similar to that of range table! 
-        // moreover, we may actually do more and split our number as of|10|11|11| bits.
-        // note, that we also exploit the fact that out overflow can't be two large
-        // and in any case will fit into the range table
-        let range_table = self.global_table.as_ref().unwrap();
-
-        let mut range_check = |var: &AllocatedNum<E>, shift: usize| -> Result<()> {
-            if shift == 0 {
-                cs.begin_gates_batch_for_step()?; 
-                let vars = [var.get_variable(), dummy, dummy, dummy];
-
-                cs.allocate_variables_without_gate(
-                    &vars,
-                    &[]
-                )?;
-                
-                cs.apply_single_lookup_gate(&vars[..range_table.width()], range_table.clone())?;
-                cs.end_gates_batch_for_step()?;
-            }
-            else {
-                let new_val = match var.get_value() {
-                    None => None,
-                    Some(fr) => {
-                        let f_repr = fr.into_repr();
-                        let n = f_repr.as_ref()[0] << shift;
-                        Some(Self::u64_to_ff(n))
-                    },
-                };
-                let shifted_var = AllocatedNum::alloc(cs, || new_val.grab())?;
-                
-                let zero = E::Fr::zero();
-                let mut minus_one = E::Fr::one();
-                minus_one.negate();
-                let coef = Self::u64_to_ff(1 << shift);
-
-                cs.begin_gates_batch_for_step()?; 
-                
-                let first_trace_step = [var.get_variable(), dummy, dummy, shifted_var.get_variable()];
-
-                cs.new_gate_in_batch(
-                    &CS::MainGate::default(),
-                    &[coef, zero.clone(), zero.clone(), zero.clone(), minus_one, zero.clone(), zero],
-                    &first_trace_step[..],
-                    &[],
-                )?;
-
-                cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
-                cs.end_gates_batch_for_step()?;
-
-                cs.begin_gates_batch_for_step()?; 
-                let second_trace_step = [shifted_var.get_variable(), dummy, dummy, dummy];
-
-                cs.allocate_variables_without_gate(
-                    &second_trace_step,
-                    &[]
-                )?;
-                
-                cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
-                cs.end_gates_batch_for_step()?;
-            }
-
-            Ok(())
-        }; 
-
-        let mut chunks_iter = chunks.iter().peekable();
-        while let Some(chunk) = chunks_iter.next() {
-            if chunks_iter.peek().is_some() {
-                // this is not the top-most chunk: only one range check is required
-                range_check(chunk, 0);              
-            } else {
-                // this is the top-most chunk
-                // however, it is not strcitly neccessary that both range-checks are required 
-                // (for x and x * 2^(chunk_bitlen -n))
-                // if bitlen of topmost chunks is equal to the chunk_bitlen, than there is no possibility of overflow
-                // e.g, this is the case of range table of bitlength 16
-                range_check(chunk, chunk_bitlen - high_chunk_bitlen);  
-            }
-        }
-        range_check(&of, 0); 
-
-        let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
-        AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
-
-        // check that extracted + of * 32 = input
-        let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);
-        let dummy = AllocatedNum::alloc_zero(cs)?;
-        AllocatedNum::ternary_lc_eq(
-            cs, 
-            &[E::Fr::one(), full_reg_size, E::Fr::zero()],
-            &[extracted.clone(), of, dummy],
-            &var
-        )?;
-
-        Ok(extracted)
             }
         };
-
+        
         Ok(res)
     }
-
+                    
     // finally! the only one exported function
     pub fn sha256<CS: ConstraintSystem<E>>(&self, cs: &mut CS, message: &[Num<E>]) -> Result<[Num<E>; 8]>
     {    
@@ -2602,14 +2551,14 @@ impl<E: Engine> Sha256GadgetParams<E> {
         }
 
         let res = [
-            self.extact_32_from_tracked_num(cs, regs.a)?,
-            self.extact_32_from_tracked_num(cs, regs.b)?,
-            self.extact_32_from_tracked_num(cs, regs.c)?,
-            self.extact_32_from_tracked_num(cs, regs.d)?,
-            self.extact_32_from_tracked_num(cs, regs.e)?,
-            self.extact_32_from_tracked_num(cs, regs.f)?,
-            self.extact_32_from_tracked_num(cs, regs.g)?,
-            self.extact_32_from_tracked_num(cs, regs.h)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.a)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.b)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.c)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.d)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.e)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.f)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.g)?,
+            self.optimized_extact_32_from_tracked_num(cs, regs.h)?,
         ];
         Ok(res)
     }
