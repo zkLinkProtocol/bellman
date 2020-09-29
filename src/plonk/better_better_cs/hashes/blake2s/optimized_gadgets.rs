@@ -17,6 +17,8 @@ use crate::plonk::better_better_cs::gadgets::assignment::{
 use std::sync::Arc;
 use splitmut::SplitMut;
 use std::{ iter, mem };
+use std::collections::HashMap;
+use std::cell::Cell;
 
 type Result<T> = std::result::Result<T, SynthesisError>;
 
@@ -26,15 +28,9 @@ const SHIFT7 : usize = 7;
 const BLAKE2s_STATE_WIDTH : usize = 16;
 
 
-fn u64_to_ff<Fr: PrimeField>(n: u64) -> Fr {
-    let mut repr : <Fr as PrimeField>::Repr = Fr::zero().into_repr();
-    repr.as_mut()[0] = n;
-    let mut res = Fr::from_repr(repr).expect("should parse");
-}
-
-
 impl From<splitmut::SplitMutError> for SynthesisError {
     fn from(_splitmut_err: splitmut::SplitMutError) -> SynthesisError {
+        // TODO: create special error for this sort of things
         SynthesisError::UnexpectedIdentity
     }
 }
@@ -81,22 +77,92 @@ impl<E: Engine> Default for DecomposedNum<E> {
     }
 }
 
+#[derive(Clone)]
+pub struct Reg<E: Engine> {
+    full: Num<E>,
+    decomposed: DecomposedNum<E>,
+}
+
+impl<E: Engine> Default for Reg<E> {
+    fn default() -> Self {
+        Reg {
+            full : Num::default(),
+            decomposed: DecomposedNum::default(),
+        }
+    }
+}
+
 
 #[derive(Clone, Default)]
-pub struct HashState<E: Engine>([DecomposedNum<E>; BLAKE2s_STATE_WIDTH]);
+pub struct HashState<E: Engine>([Reg<E>; BLAKE2s_STATE_WIDTH]);
 
 
-pub struct Blake2sOptimizedGadget<E: Engine> {
+// the purpose of this (and the following) struct is explained in the comments of the main text
+// all linear variables are represented in the form (bool, coef, var)
+// where the boolean flag asserts that variable was actually assigned a value (for self-test and debugging assistance)
+#[derive(Clone)]
+pub struct GateVarHelper<E: Engine>{
+    assigned: bool,
+    coef: E::Fr,
+    val: AllocatedNum<E>,
+}
+
+impl<E: Engine> Default for GateVarHelper<E> {
+    fn default() -> Self {
+        GateVarHelper {
+            assigned: false,
+            coef: E::Fr::zero(),
+            val: AllocatedNum::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct GateAllocHelper<E: Engine> {
+    a: GateVarHelper<E>,
+    b: GateVarHelper<E>,
+    c: GateVarHelper<E>,
+    d: GateVarHelper<E>,
+
+    cnst_sel: E::Fr,
+    d_next_sel: E::Fr,     
+}
+
+impl<E: Engine> Default for GateAllocHelper<E> {
+    fn default() -> Self {
+        GateAllocHelper {
+            a: GateVarHelper::default(),
+            b: GateVarHelper::default(),
+            c: GateVarHelper::default(),
+            d: GateVarHelper::default(),
+
+            cnst_sel: E::Fr::zero(),
+            d_next_sel: E::Fr::zero(), 
+        }
+    }
+}
+
+
+pub struct OptimizedBlake2sGadget<E: Engine> {
     xor_table: Arc<LookupTableApplication<E>>,
     compound_xor4_table: Arc<LookupTableApplication<E>>,
     compound_xor7_table: Arc<LookupTableApplication<E>>,
     
-    iv: [usize; 8],
-    iv0_twist: usize,
+    iv: [u64; 8],
+    iv0_twist: u64,
     sigmas : [[usize; 16]; 10],
+
+    allocated_cnsts : Cell<HashMap<u64, AllocatedNum<E>>>,
 }
 
-impl<E: Engine> Blake2sGadget<E> {
+impl<E: Engine> OptimizedBlake2sGadget<E> {
+
+    fn u64_to_ff(&self, n: u64) -> E::Fr {
+        let mut repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
+        repr.as_mut()[0] = n;
+        let mut res = E::Fr::from_repr(repr).expect("should parse");
+        res
+    }
    
     pub fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
         let columns3 = vec![
@@ -113,18 +179,10 @@ impl<E: Engine> Blake2sGadget<E> {
             true
         );
 
-        // let name2 : &'static str = "compound_shift_table";
-        // let compound_shift_table = LookupTableApplication::new(
-        //     name2,
-        //     CompoundShiftTable::new(CHUNK_SIZE, SHIFT, name2),
-        //     columns3.clone(),
-        //     true
-        // );
-
         let name2 : &'static str = "xor_rotate_table4";
         let xor_rotate_table4 = LookupTableApplication::new(
             name2,
-            XorRotateTable::new(CHUNK_SIZE, 4, name2),
+            XorRotateTable::new(CHUNK_SIZE, SHIFT4, name2),
             columns3.clone(),
             true
         );
@@ -132,32 +190,20 @@ impl<E: Engine> Blake2sGadget<E> {
         let name3 : &'static str = "xor_rotate_table7";
         let xor_rotate_table7 = LookupTableApplication::new(
             name3,
-            XorRotateTable::new(CHUNK_SIZE, 7, name3),
+            XorRotateTable::new(CHUNK_SIZE, SHIFT7, name3),
             columns3.clone(),
             true
         );
 
-        // let name3 : &'static str = "split_table";
-        // let split_table = LookupTableApplication::new(
-        //     name3,
-        //     SplitTable::new(CHUNK_SIZE, SPLIT_POINT, name3),
-        //     columns3.clone(),
-        //     true
-        // );
-
         let xor_table = cs.add_table(xor_table)?;
-        //let compound_shift_table = cs.add_table(compound_shift_table)?;
         let xor_rotate_table4 = cs.add_table(xor_rotate_table4)?;
         let xor_rotate_table7 = cs.add_table(xor_rotate_table7)?;
-        //let split_table  = cs.add_table(split_table)?;
 
         let iv = [
-            Num::Constant(u64_to_ff(0x6A09E667)).into(), Num::Constant(u64_to_ff(0xBB67AE85)).into(), 
-            Num::Constant(u64_to_ff(0x3C6EF372)).into(), Num::Constant(u64_to_ff(0xA54FF53A)).into(),
-            Num::Constant(u64_to_ff(0x510E527F)).into(), Num::Constant(u64_to_ff(0x9B05688C)).into(), 
-            Num::Constant(u64_to_ff(0x1F83D9AB)).into(), Num::Constant(u64_to_ff(0x5BE0CD19)).into(),
+            0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+            0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
         ];
-        let twisted_iv_0 =  Num::Constant(u64_to_ff(0x6A09E667 ^ 0x01010000 ^ 32)).into();
+        let twisted_iv_0 =  0x6A09E667 ^ 0x01010000 ^ 32;
 
         let sigmas: [[usize; 16]; 10] = [
             [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ],
@@ -172,23 +218,28 @@ impl<E: Engine> Blake2sGadget<E> {
             [ 10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0 ]
         ];
 
+        let allocated_cnsts = Cell::new(HashMap::new());
+
         Ok(Blake2sGadget {
             xor_table,
             xor_rotate_table4,
             xor_rotate_table7,
-            //split_table,
+
             iv,
             twisted_iv_0,
             sigmas,
+
+            allocated_cnsts,
         })
     }
 
-    fn query_table_internal<CS: ConstraintSystem<E>>(
+    fn query_table<CS: ConstraintSystem<E>>(
         &self,
         cs: &mut CS, 
         table: &Arc<LookupTableApplication<E>>, 
         key1: &AllocatedNum<E>,
         key2: &AllocatedNum<E>,
+        ph: &AllocatedNum<E>, // placeholder placer in d register
     ) -> Result<AllocatedNum<E>> 
     {
         let res = match (key1.get_value(), key2.get_value()) {
@@ -199,7 +250,7 @@ impl<E: Engine> Blake2sGadget<E> {
             (_, _) => AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?        
         };
 
-        let vars = [key1.get_variable(), key2.get_variable(), res.get_variable(), key1.get_variable()];
+        let vars = [key1.get_variable(), key2.get_variable(), res.get_variable(), ph.get_variable()];
 
         cs.begin_gates_batch_for_step()?;
         cs.allocate_variables_without_gate(&vars, &[])?;
@@ -209,191 +260,56 @@ impl<E: Engine> Blake2sGadget<E> {
         Ok(res)
     }
 
-    fn query_table<CS: ConstraintSystem<E>>(
-        &self,
-        cs: &mut CS, 
-        table: &Arc<LookupTableApplication<E>>,
-        shift: usize, 
-        key1: &Num<E>,
-        key2: &Num<E>,
-    ) -> Result<Num<E>> 
+    // the trick, we are going to use is the following:
+    // we may handle two range checks (for overflow flags of0 and of1) simultaneously, using only one table access
+    // more precisely we form the row of variables: [of0, of1, of0 ^ of1, ph],
+    // where ph - is a placeholder variable, which is not used on current row, but may be connected to previous row
+    // via usage of d_next selector
+    fn range_check<CS>(&self, cs: &mut CS, of0: &AllocatedNum<E>, of1: &AllocatedNum<E>, ph: &AllocatedNum<E>) -> Result<()> 
+    where CS: ConstraintSystem<E>
     {
-        let res = match (key1, key2) {
-            (Num::Allocated(x), Num::Allocated(y)) => {
-                let new_var = self.query_table_internal(cs, table, &x, &y)?;
-                Num::Allocated(new_var)
-            },
-            (Num::Constant(x), Num::Constant(y)) => {
-                let f_repr = x.into_repr();
-                let left = f_repr.as_ref()[0]; 
-                let f_repr = y.into_repr();
-                let right = f_repr.as_ref()[0]; 
-
-                let mut n = left ^ right;
-                n = if shift > 0 {(n >> shift) + ((n << (32 - shift)) & 0xffffffff) } else {n};
-
-                let new_cnst = u64_to_ff(n);
-                Num::Constant(new_cnst)
-            },
-            (Num::Allocated(var), Num::Constant(cnst)) | (Num::Constant(cnst), Num::Allocated(var)) => {
-                let cnst_var = AllocatedNum::alloc_cnst(cs, *cnst)?;
-                let new_var = self.query_table_internal(cs, table, &var, &cnst_var)?;
-                Num::Allocated(new_var)
-            }
-        };
-
-        Ok(res)
-    }
-
-
-    fn range_check<CS: ConstraintSystem<E>>(&self, cs: &mut CS, var: &AllocatedNum<E>) -> Result<()> {
-        let dummy = AllocatedNum::alloc_zero(cs)?;
-        let _unused = self.query_table_internal(cs, &self.xor_table, var, &dummy)?;
+        let _unused = self.query_table(cs, &self.xor_table, of0, of1, ph)?;
         Ok(())
     }
 
-    fn get_full<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg: &mut Register<E>) -> Result<Num<E>> {
-        if !reg.is_full_form_available() {
-            reg.full.0 = true;
-            reg.full.1 = Num::long_weighted_sum(cs, &reg.decomposed.1.arr[..], &u64_to_ff(1 << 8))?;
-        };
+    // first step of G function is handling equations of the form :
+    // y = a + b + x (e.g. v[a] = v[a] + v[b] + x),
+    // where a, b are available in both full and decomposed forms (in other words, are of type Reg)
+    // and x is available only in full form (in other words, x is just a regular Num)
+    // we want the result y to be represented in both full and decomposed forms
 
-        Ok(reg.full.1.clone())
-    }
+    // there are special cases which we want to handle separately:
+    // 1) all of a, b, x - are constants: than there is actually nothing interesting,
+    // no constraints will be allocated, just return the new constant
 
-    fn get_decomposed<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg: &mut Register<E>) -> Result<DecomposedRegister<E>> {
-        if !reg.is_decomposed_form_available() {
-            reg.decomposed.0 = true;
-            match &reg.full.1 {
-                Num::Constant(fr) => {
-                    let f_repr = fr.into_repr();
-                    let n = f_repr.as_ref()[0];
+    // 2) all of a, b, x are variables: there will be 3 rows:
+    // [y0, y1, y2, y3] - decomposed parts of resulted y: y = y0 + 2^8 * y1 + 2^16 * y2 + 2^24 * y3: 
+    // [a, b, x, y] - where y = a + b + x - 2^32 * of (using of via d_next selector)
+    // [of, t, of ^ t, of] - range check for of and t
 
-                    for i in 0..4 {
-                        let m = (n >> (8 * i)) & ((1 << 8) - 1);
-                        reg.decomposed.1.arr[i] = Num::Constant(u64_to_ff(m));
-                    }
-                },
-                Num::Allocated(var) => {
-                    let mut temp_vars = Vec::with_capacity(4); 
-                    match var.get_value() {
-                        None => {
-                            for i in 0..4 {
-                                let new_var = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-                                temp_vars.push(new_var.clone());
-                                reg.decomposed.1.arr[i] = Num::Allocated(new_var);
-                            } 
-                        },
-                        Some(fr) => {
-                            let f_repr = fr.into_repr();
-                            let n = f_repr.as_ref()[0];
+    // 3) if we are in between these two corner cases we are going to use the sceme as in case (2), the only difference is that
+    // we are going to replace all instances of costant variables with dummy placeholders and push them instead into constant selector
+    // e.g: assume thta a - is variable (AllocatedVar) and b, x - are constants : than in any case y, of, y0, y1, y2, y3 -a re variables
+    // and the second row will be replaced by: 
+    // [a, dummy, dummy, y], and constant selector will contain the value of x + y
+    // this identical approach to handling constant and variables is hidden under the GateAllocHelper facade
+    
+    // NB: there is inversion in computation: we first precompute the value of y and split it into corresponding
+    // chunks y0, y1, y2, y3 BEFORE allocating contraint defining y itself! this inversion will be a recurring pattern 
+    // in our optimization
+    // also - there is a place for additional 8-bit variable t on the last row, so there is a possibility to multiplex two
+    // oveflow checks on the same row: for current of and (yet unknown) t
+    // and yes, we are going to explot the inversion trick again: we take t from overflow check of step 3!
 
-                            for i in 0..4 {
-                                let m = (n >> (8 * i)) & ((1 << 8) - 1);
-                                let new_var = AllocatedNum::alloc(cs, || Ok(u64_to_ff(m)))?;
-                                temp_vars.push(new_var.clone());
-                                reg.decomposed.1.arr[i] = Num::Allocated(new_var);
-                            }
-                        }
-                    }
-                    AllocatedNum::long_weighted_sum_eq(cs, &temp_vars[..], &u64_to_ff(1 << 8), var)?;
-                }
-            }
-        }
+    // due to such an extended use of inversion trick we have to split all equation generations it two phases: 
+    // setup - where we aforehead define all variables and compute their values
+    // and actual gate allocation
 
-        Ok(reg.decomposed.1.clone())
-    }
+    // setup of first step: given a, b, x - return [y, of] (in that order)
+    fn g_first_step_setup<CS: ConstraintSystem<E>>(&self, a: &Reg<E>, b: &Reg<E>)
 
-    fn add2<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg1: &mut Register<E>, reg2: &mut Register<E>) -> Result<Num<E>> {
-        // res + of * 2^32 = reg1 + reg2;
-        // check that of is small here
-        // range check for res will be later
-        let x = self.get_full(cs, reg1)?;
-        let y = self.get_full(cs, reg2)?;
 
-        let res = match (&x, &y) {
-            (Num::Constant(fr1), Num::Constant(fr2)) => {
-                let mut temp = fr1.clone();
-                temp.add_assign(&fr2);
-                let f_repr = temp.into_repr();
-                let n = f_repr.as_ref()[0] & 0xffffffff;
-                Num::Constant(u64_to_ff(n))
-            },
-            (_, _) => {
-                let fr1 = x.get_value();
-                let fr2 = y.get_value();
-                let of_val = match (fr1, fr2) {
-                    (Some(fr1), Some(fr2)) => {
-                        let mut temp = fr1.clone();
-                        temp.add_assign(&fr2);
-                        let f_repr = temp.into_repr();
-                        let n = f_repr.as_ref()[0] >> 32;
-                        Some(u64_to_ff(n))
-                    },
-                    (_, _) => None,
-                };
-
-                let of_var = AllocatedNum::alloc(cs, || of_val.grab())?;
-                self.range_check(cs, &of_var)?;
-                let of = Num::Allocated(of_var);
-                
-                let one = E::Fr::one();
-                let mut coef : E::Fr = u64_to_ff(1 << 32);
-                coef.negate();
-                let res = Num::lc(cs, &[one.clone(), one, coef], &[x, y, of])?;
-                
-                res
-            },
-        };
-        Ok(res)
-    }
-
-    fn add3<CS>(&self, cs: &mut CS, reg1: &mut Register<E>, reg2: &mut Register<E>, reg3: &mut Register<E>) -> Result<Num<E>> 
-    where CS: ConstraintSystem<E>
-    {
-        let x = self.get_full(cs, reg1)?;
-        let y = self.get_full(cs, reg2)?;
-        let z = self.get_full(cs, reg3)?;
-
-        let res = match (&x, &y, &z) {
-            (Num::Constant(fr1), Num::Constant(fr2), Num::Constant(fr3)) => {
-                let mut temp = fr1.clone();
-                temp.add_assign(&fr2);
-                temp.add_assign(&fr3);
-                let f_repr = temp.into_repr();
-                let n = f_repr.as_ref()[0] & 0xffffffff;
-                Num::Constant(u64_to_ff(n))
-            },
-            (_, _, _) => {
-                let fr1 = x.get_value();
-                let fr2 = y.get_value();
-                let fr3 = z.get_value();
-                let of_val = match (fr1, fr2, fr3) {
-                    (Some(fr1), Some(fr2), Some(fr3)) => {
-                        let mut temp = fr1.clone();
-                        temp.add_assign(&fr2);
-                        temp.add_assign(&fr3);
-                        let f_repr = temp.into_repr();
-                        let n = f_repr.as_ref()[0] >> 32;
-                        Some(u64_to_ff(n))
-                    },
-                    (_, _, _) => None,
-                };
-                
-                let of_var = AllocatedNum::alloc(cs, || of_val.grab())?;
-                self.range_check(cs, &of_var)?;
-                let of = Num::Allocated(of_var);
-                
-                let one = E::Fr::one();
-                let mut coef : E::Fr = u64_to_ff(1 << 32);
-                coef.negate();
-                let res = Num::lc(cs, &[one.clone(), one.clone(), one, coef], &[x, y, z, of])?;
-                res
-            },
-        };
-
-        Ok(res)
-    }
+    
 
     fn G<CS: ConstraintSystem<E>>(
         &self, 

@@ -15,6 +15,7 @@ use crate::{
 
 use crate::plonk::better_better_cs::cs::{
     Variable, 
+    Index,
     ConstraintSystem,
     ArithmeticTerm,
     MainGateTerm,
@@ -37,6 +38,15 @@ impl<E: Engine> Clone for AllocatedNum<E> {
         AllocatedNum {
             value: self.value,
             variable: self.variable
+        }
+    }
+}
+
+impl<E: Engine> Default for AllocatedNum<E> {
+    fn default() -> Self {
+        AllocatedNum  {
+            value: None,
+            variable: Variable(Index::Aux(0)),
         }
     }
 }
@@ -572,12 +582,13 @@ impl<E: Engine> AllocatedNum<E> {
     where CS: ConstraintSystem<E>
     {
         let mut acc_fr = E::Fr::one();
-        let mut coeffs = Vec::with_capacity(3);
-        let mut current_vars = Vec::with_capacity(3);
+        let mut coeffs = Vec::with_capacity(5);
+        let mut current_vars = Vec::with_capacity(4);
         let mut minus_one = E::Fr::one();
         minus_one.negate();
 
         for var in vars.iter() {
+            //println!("next iter");
             if current_vars.len() < 4 {
                 coeffs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
@@ -589,6 +600,7 @@ impl<E: Engine> AllocatedNum<E> {
                 let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
                 coeffs = vec![E::Fr::one(), acc_fr.clone()];
                 current_vars = vec![temp, var.clone()];
+                
                 acc_fr.mul_assign(&base);
             }
         }
@@ -897,6 +909,7 @@ impl<E: Engine> Num<E> {
         }
 
         if vars.len() == 4 {
+            //println!("OPTIMIZE2");
             coeffs.push(minus_one.clone());
             res_var = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
 

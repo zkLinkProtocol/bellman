@@ -50,6 +50,33 @@ impl OverflowTracker {
         };
         res
     }
+
+    fn get_template(&self) -> u64 {
+        let base_value : u64 = (1u64 << SHA256_REG_WIDTH) - 1;
+        let res = match self {
+            OverflowTracker::NoOverflow => base_value,
+            OverflowTracker::OneBitOverflow => base_value + (1 << SHA256_REG_WIDTH),
+            OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => {
+                base_value + (1 << (SHA256_REG_WIDTH + (*n as usize)))
+            },
+        };
+        res
+    }
+
+    fn num_bits(num: u64) -> u64 {
+        assert!(num > 0);
+
+        let mut pow = 0;
+        while (1 << pow) <= num {
+            pow += 1;
+        }
+        pow
+    }
+
+    fn new_from_template(template: u64) -> Self {
+        let val = Self::num_bits(template) - (SHA256_REG_WIDTH as u64);
+        val.into()
+    }
 }
 
 impl Ord for OverflowTracker {
@@ -945,12 +972,12 @@ impl<E: Engine> Sha256GadgetParams<E> {
     fn deduce_of(&self, mut of_trackers: Vec<OverflowTracker>) -> OverflowTracker
     {
         assert!(!of_trackers.is_empty());
-        of_trackers.sort();
-        let mut cur_of = of_trackers[0];
-        for of in of_trackers.into_iter().skip(1) {
-            cur_of = cmp::max(of, cur_of) + OverflowTracker::OneBitOverflow;
+
+        let mut total : u64 = 0;
+        for of in of_trackers {
+            total += of.get_template();
         }
-        cur_of
+        OverflowTracker::new_from_template(total)
     }
 
     // for given 11-bit number x (represented in sparse form), y|hb|lbb, where lbb - 2-bits, hb - 1bit and y 8-bit
@@ -1910,6 +1937,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 // let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
                 // AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
                 
+                // TODO: use negative dialation for A!
+                //println!("OPTIMIZE");
                 let input_base = Self::u64_to_ff(input_slice_modulus as u64);
                 AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
                 
@@ -2011,6 +2040,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
             let of_vec = vec![
                 h.normal.overflow_tracker, ch.overflow_tracker, inputs[i].overflow_tracker, OverflowTracker::NoOverflow
             ];
+            // TODO: use negative DIALATION for tmp2
+            //println!("QQQ");
             let temp1 = NumWithTracker {
                 num: Num::sum(cs, var_args)?,
                 overflow_tracker: self.deduce_of(of_vec),
@@ -2427,6 +2458,8 @@ impl<E: Engine> Sha256GadgetParams<E> {
             let of_vec = vec![
                 OverflowTracker::NoOverflow, OverflowTracker::NoOverflow, res[j-7].overflow_tracker, res[j-16].overflow_tracker
             ];
+            // TODO: use negative DIALATION for tmp2
+            //println!("RRR");
             let tmp3 = NumWithTracker {
                 num: Num::sum(cs, var_args)?,
                 overflow_tracker: self.deduce_of(of_vec),
