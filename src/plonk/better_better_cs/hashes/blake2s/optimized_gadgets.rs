@@ -49,6 +49,19 @@ impl<E: Engine> Default for DecomposedNum<E> {
     }
 }
 
+impl<E: Engine> DecomposedNum<E> {
+    pub fn get_var_by_idx(&self, idx: usize) -> &Num<E> {
+        let res = match idx {
+            0 => &self.r0,
+            1 => &self.r1,
+            2 => &self.r2,
+            3 => &self.r3,
+            _ => unreachable!(),
+        };
+        res
+    }
+}
+
 #[derive(Clone)]
 pub struct Reg<E: Engine> {
     full: Num<E>,
@@ -76,7 +89,7 @@ impl<E: Engine> Reg<E> {
 
 
 #[derive(Clone, Default)]
-pub struct HashState<E: Engine>([Reg<E>; BLAKE2s_STATE_WIDTH]);
+pub struct HashState<E: Engine>(Vec<Reg<E>>);
 
 
 #[derive(Copy, Clone)]
@@ -176,6 +189,18 @@ impl<E: Engine> GateAllocHelper<E> {
 }
 
 
+// for explanations have a llok in main text 
+// let the third column (results of corresponding xors be: q0, q1, q2, q3)
+// returns (z, [q0, q1, q2, q3], Option(w0, w1, w2))
+#[derive(Clone)]
+pub struct XorRotOutput<E: Engine> {
+    pub z: Reg<E>,
+    pub q_arr : Option<[Num<E>; 4]>,
+    pub w_arr: Option<[Num<E>; 3]>,
+    pub shifts: [usize; 4],
+}
+
+
 pub struct OptimizedBlake2sGadget<E: Engine> {
     xor_table: Arc<LookupTableApplication<E>>,
     xor_rotate4_table: Arc<LookupTableApplication<E>>,
@@ -185,7 +210,8 @@ pub struct OptimizedBlake2sGadget<E: Engine> {
     iv0_twist: u64,
     sigmas : [[usize; 16]; 10],
 
-    allocated_cnsts : Cell<HashMap<u64, AllocatedNum<E>>>,
+    declared_cnsts: Cell<HashMap<E::Fr, AllocatedNum<E>>>,
+    allocated_cnsts : Cell<HashMap<E::Fr, AllocatedNum<E>>>,
 }
 
 impl<E: Engine> OptimizedBlake2sGadget<E> {
@@ -300,6 +326,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             [ 10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0 ]
         ];
 
+        let declared_cnsts = Cell::new(HashMap::new());
         let allocated_cnsts = Cell::new(HashMap::new());
 
         Ok(OptimizedBlake2sGadget {
@@ -311,6 +338,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             iv0_twist,
             sigmas,
 
+            declared_cnsts,
             allocated_cnsts,
         })
     }
@@ -399,7 +427,8 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         Ok(())
     }
 
-    fn xor<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &AllocatedNum<E>, b: &AllocatedNum<E>) -> Result<AllocatedNum<E>>
+    fn xor_rot<CS>(&self, cs: &mut CS, a: &Num<E>, b: &Num<E>, rot: usize) -> Result<AllocatedNum<E>>
+    where CS: ConstraintSystem<E>
     {
         AllocatedNum::alloc(cs, || {
             let a = a.get_value().grab()?;
@@ -409,8 +438,65 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             let b_repr = b.into_repr();
             let a_int = a_repr.as_ref()[0];
             let b_int = b_repr.as_ref()[0];
-            Ok(self.u64_to_ff(a_int ^ b_int))
+            let a_xor_b = a_int ^ b_int;
+            let res = (a_xor_b >> rot) | ((a_xor_b << (REG_WIDTH - rot)) & ((1 << REG_WIDTH) - 1));
+            Ok(self.u64_to_ff(res))
         })
+    }
+
+    fn xor<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &Num<E>, b: &Num<E>) -> Result<AllocatedNum<E>>
+    {
+        self.xor_rot(cs, a, b, 0)
+    }
+
+    fn constraint_all_allocated_cnsts<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<()> {
+        let allocated_cnsts_dict = self.allocated_cnsts.get_mut(); 
+        for (fr, variable) in self.declared_cnsts.take().into_iter() {
+            let self_term = ArithmeticTerm::from_variable(variable.get_variable());
+            let other_term = ArithmeticTerm::constant(fr.clone());
+        
+            let mut term = MainGateTerm::new();
+            term.add_assign(self_term);
+            term.sub_assign(other_term);
+            cs.allocate_main_gate(term)?;
+
+            allocated_cnsts_dict.insert(fr, variable);
+        }
+
+        Ok(())
+    }
+
+    fn to_allocated<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: &Num<E>) -> Result<Num<E>> {
+        let res = match input {
+            Num::Allocated(_) => input.clone(),
+            Num::Constant(fr) => {
+                let allocated_map = self.allocated_cnsts.get_mut();
+                let declared_map = self.declared_cnsts.get_mut();
+
+                let var = match allocated_map.get(&fr) {
+                    Some(entry) => entry.clone(),
+                    None => {
+                        let var = declared_map.entry(*fr).or_insert_with(|| { 
+                            AllocatedNum::alloc(cs, || Ok(*fr)).expect("should allocate")
+                        });
+                        var.clone()
+                    },
+                };
+                Num::Allocated(var)
+            },
+        };
+
+        Ok(res)
+    }
+
+    fn choose_table_by_rot(&self, rot: usize) -> Arc<LookupTableApplication<E>> {
+        let table = match rot {
+            8 | 16 => self.xor_table.clone(),
+            12 => self.xor_rotate4_table.clone(),
+            7 => self.xor_rotate7_table.clone(),
+        };
+
+        table
     }
 
     // first step of G function is handling equations of the form :
@@ -530,9 +616,8 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
                 assert!(fr.is_zero());
                 (Num::Allocated(AllocatedNum::alloc_zero(cs)?), of.clone())
             }
-            Num::Allocated(tt) => {
-                let of_var = self.unwrap_allocated(of);
-                let tmp = self.xor(cs, &of_var, tt)?;
+            Num::Allocated(_) => {
+                let tmp = self.xor(cs, &of, t)?;
                 (t.clone(), Num::Allocated(tmp))
             }
         };
@@ -633,90 +718,222 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
     // z[0], z[1], z[2], z[3]
     // the boolean flag needs_recomposition is responsible for this
 
-    // returns (z, Option(w0, w1, w2))
-    fn g_xor_rot_setup<CS>(&self, cs: &mut CS, a: &Reg<E>, b: Reg<E>, rot: usize) -> Result<(Reg<E>, Option<[Num<E>; 3]>)>
+    // let the third column (results of corresponding xors be: q0, q1, q2, q3)
+    // returns (z, [q0, q1, q2, q3], Option(w0, w1, w2))
+    fn g_xor_rot_setup<CS>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>, rot: usize) -> Result<XorRotOutput<E>>
     where CS: ConstraintSystem<E>
     {
         let res = match (&a.full, &b.full) {
             (Num::Constant(fr1), Num::Constant(fr2)) => {
                 let n = fr1.into_repr().as_ref()[0];
-                let m = fr1.into_repr().as_ref()[0];
+                let m = fr2.into_repr().as_ref()[0];
                 let n_xor_m = n ^ m;
-                let tmp = (n_xor_m >> rot) | (((n_xor_m) << (REG_WIDTH - rot)) && ((1 << REG_WIDTH) - 1));
-                (self.u64_to_reg(tmp), None)
+                let tmp = (n_xor_m >> rot) | (((n_xor_m) << (REG_WIDTH - rot)) & ((1 << REG_WIDTH) - 1));
+                
+                XorRotOutput {
+                    z: self.u64_to_reg(tmp),
+                    q_arr: None,
+                    w_arr: None,
+                    shifts: [0, 0, 0, 0],
+                }
             },
             (_, _) => {
+                let q0 = Num::Allocated(self.xor_rot(cs, &a.decomposed.r0, &b.decomposed.r0, rot)?);
+                let q1 = Num::Allocated(self.xor_rot(cs, &a.decomposed.r1, &b.decomposed.r1, rot)?);
+                let q2 = Num::Allocated(self.xor_rot(cs, &a.decomposed.r2, &b.decomposed.r2, rot)?);
+                let q3 = Num::Allocated(self.xor_rot(cs, &a.decomposed.r3, &b.decomposed.r3, rot)?);               
+
                 let fr1 = a.get_value();
                 let fr2 = b.get_value();
-                let (y_val, of_val) = match (fr1, fr2) {
+                let y_val = match (fr1, fr2) {
                     (Some(fr1), Some(fr2)) => {
-                        let mut temp = fr1.clone();
-                        temp.add_assign(&fr2);
-                        let f_repr = temp.into_repr();
-                        let y = f_repr.as_ref()[0] & ((1 << REG_WIDTH) - 1);
-                        let of = f_repr.as_ref()[0] >> REG_WIDTH;
-                        (Some(y), Some(of))
+                        let n = fr1.into_repr().as_ref()[0];
+                        let m = fr2.into_repr().as_ref()[0];
+                        let n_xor_m = n ^ m;
+                        let res = (n_xor_m >> rot) | (((n_xor_m) << (REG_WIDTH - rot)) & ((1 << REG_WIDTH) - 1));
+                        Some(res)
                     },
-                    (_, _) => (None, None)
+                    (_, _) => None,
                 };
-                
-                let y = self.alloc_reg_from_u64(cs, y_val)?;
-                let of = self.alloc_num_from_u64(cs, of_val)?;
-                (y, of)
+
+                let (y, shifts) = match rot {
+                    7 => (self.alloc_reg_from_u64(cs, y_val)?, [0, 1, 9, 17]),
+                    12 => (self.alloc_reg_from_u64(cs, y_val)?, [20, 0, 4, 12]),
+                    8 => {
+                        let full = self.alloc_num_from_u64(cs, y_val)?;
+                        let reg = Reg {
+                            full,
+                            decomposed : DecomposedNum { r0: q1.clone(), r1: q2.clone(), r2: q3.clone(), r3: q0.clone() }
+                        };
+                        (reg, [24, 0, 8, 16])
+                    },
+                    16 => {
+                        let full = self.alloc_num_from_u64(cs, y_val)?;
+                        let reg = Reg {
+                            full,
+                            decomposed : DecomposedNum { r0: q2.clone(), r1: q3.clone(), r2: q0.clone(), r3: q1.clone() }
+                        };
+                        (reg, [16, 24, 0, 8])
+                    },
+                    _ => unreachable!(),
+                };
+
+                let mut w_arr = <[Num<E>; 3]>::default();
+                let q_arr = [q0, q1, q2, q3];
+                let mut cur = &y.full;
+                for ((w, q), shift) in w_arr.iter_mut().zip(q_arr.iter()).zip(shifts.iter()) {
+                    // w = cur - (1 << shift) * q
+                    let new_var = AllocatedNum::alloc(cs, || {
+                        let mut cur_val = cur.get_value().grab()?;
+                        let coef = self.u64_to_ff(1 << shift);
+                        let mut q_val = q.get_value().grab()?;
+                        q_val.mul_assign(&coef);
+                        cur_val.sub_assign(&q_val);
+                        
+                        Ok(cur_val)
+                    })?;
+                    
+                    *w = Num::Allocated(new_var);
+                    cur = w;
+                }
+                 
+                XorRotOutput {
+                    z: y,
+                    q_arr: Some(q_arr),
+                    w_arr: Some(w_arr),
+                    shifts
+                }
             },
         };
-        Ok((y, of))
+
+        Ok(res)
     }
 
-    fn g_xor_rot_process<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, x: &Reg<E>, y: &Reg<E>, z: &Reg<E>, w_arr: Option<[Num<E>; 3]>, rot: usize,
-    ) -> Result<()>
+    fn g_xor_rot_process<CS>(&self, cs: &mut CS, x: &Reg<E>, y: &Reg<E>, xor_rot_data: XorRotOutput<E>, rot: usize) -> Result<()>
+    where CS: ConstraintSystem<E>
     {
         if x.is_const() && y.is_const() {
             return Ok(())
         }
 
-        let needs_decomposition : bool = (rot % CHUNK_SIZE != 0);
+        let zero = E::Fr::zero();
+        let one = E::Fr::one();
+        let mut minus_one = one.clone();
+        minus_one.negate();
+
+        let z = xor_rot_data.z;
+
+        let needs_decomposition : bool = (rot % CHUNK_SIZE) != 0;
         if needs_decomposition {
             // [y0, y1, y2, y3]
             let mut row = GateAllocHelper::default();
-        first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true)?;
-        first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true)?;
-        first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true)?;
-        first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true)?;
-        first_row.link_with_next_row(minus_one.clone());
+            row.set_var(0, one.clone(), z.decomposed.r0, true)?;
+            row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), z.decomposed.r1, true)?;
+            row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), z.decomposed.r2, true)?;
+            row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), z.decomposed.r3, true)?;
+            row.link_with_next_row(minus_one.clone());
 
-        self.allocate_gate(cs, row)?;
+            self.allocate_gate(cs, row)?;
         }
+
+        // x[0], y[0], z[idx_0], z,
+        // [x[1], y[1], z[idx_1], z - z[idx_0] * 8^[idx_0] = w0
+        // x[2], y[2], z[idx_2], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1] = w1
+
+        // equation for the first 3 rows: d - coef * c = d_next => d_next + coef * c - d = 0;        
+        // equation of the last row is somehow different : c* coef - d = 0;
+        // x[3], y[3], z[idx_3], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1] - z[idx_2] * 8^[idx_2] = w2
+
+        for i in 0..4 {
+            let a = self.to_allocated(cs, x.decomposed.get_var_by_idx(i))?;
+            let b = self.to_allocated(cs, y.decomposed.get_var_by_idx(i))?;
+            let c = xor_rot_data.q_arr.unwrap()[i];
+            let d = if i == 0 { z.full } else { xor_rot_data.w_arr.unwrap()[i-1] };
+            let coef = self.u64_to_ff(1 << xor_rot_data.shifts[i]);
+
+            let mut row = GateAllocHelper::default();
+            row.set_var(0, zero.clone(), a, true)?;
+            row.set_var(1, zero.clone(), b, true)?;
+            row.set_var(2, coef, c, true)?;
+            row.set_var(3, minus_one.clone(), d, true)?;
+            
+            if i != 3 {
+                row.link_with_next_row(one.clone());
+            }
+            row.set_table(self.choose_table_by_rot(rot));
+
+            self.allocate_gate(cs, row)?;
+        }
+
+        Ok(())
     }
 
-    // fn g_simple_rotate_process>(
-    //     &self, cs: &mut CS, 
-    //     , 
-    //     w0: &Num<E>, w1: &Num<E>, w2: Num<E>,
-    //     index_arr: [usize; 4],
-    //     needs_recomposition: bool,
-    // ) -> Result<()>
+    fn G<CS>(&self, cs: &mut CS, v: &mut HashState<E>, idx_arr: [usize; 4], x: &Num<E>, y: &Num<E>) -> Result<()>
+    where CS: ConstraintSystem<E>
+    {
+        let mut regs = v.0.get_muts();
+        let a = regs.at(idx_arr[0])?;
+        let b = regs.at(idx_arr[1])?;
+        let c = regs.at(idx_arr[2])?;
+        let d = regs.at(idx_arr[3])?;
+
+        // first half of g function - setup
+        let (temp_a, of1) = self.g_ternary_additon_setup(cs, a, b, x)?;
+        let xor_rot_data1 = self.g_xor_rot_setup(cs, &temp_a, d, 16)?;
+        let temp_d = xor_rot_data1.z;
+        let (temp_c, of2) = self.g_binary_addition_setup(cs, c, &temp_d)?;
+        let xor_rot_data2 = self.g_xor_rot_setup(cs, b, &temp_c, 12)?;
+        let temp_b = xor_rot_data2.z; 
+
+        // first half of g function - burn preallocated variables to protoboard
+        self.g_ternary_addition_process(cs, a, b, x, &temp_a, &of1, &of2)?;
+        self.g_xor_rot_process(cs, &temp_a, d, xor_rot_data1, 16)?;
+        self.g_binary_addition_process(cs, c, &temp_d, &temp_c, &of2)?;
+        self.g_xor_rot_process(cs, b, &temp_c, xor_rot_data2, 12)?;
+        
+        // second half of g function - setup
+        let (new_a, of1) = self.g_ternary_additon_setup(cs, &temp_a, &temp_b, y)?;
+        let xor_rot_data1 = self.g_xor_rot_setup(cs, &new_a, &temp_d, 8)?;
+        let new_d = xor_rot_data1.z;
+        let (new_c, of2) = self.g_binary_addition_setup(cs, &temp_c, &new_d)?;
+        let xor_rot_data2 = self.g_xor_rot_setup(cs, &temp_b, &new_c, 7)?;
+        let new_b = xor_rot_data2.z; 
+
+        // second half of g function - burn preallocated variables to protoboard
+        self.g_ternary_addition_process(cs, &temp_a, &temp_b, y, &new_a, &of1, &of2)?;
+        self.g_xor_rot_process(cs, &new_a, &temp_d, xor_rot_data1, 8)?;
+        self.g_binary_addition_process(cs, &temp_c, &new_d, &new_c, &of2)?;
+        self.g_xor_rot_process(cs, &temp_b, &new_c, xor_rot_data2, 7)?;
+        
+        *a = new_a;
+        *b = new_b;
+        *c = new_c;
+        *d = new_d;
+
+        Ok(())
+    }
+
+    // fn apply_xor_with_const<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg: &mut Register<E>, cnst: u64) -> Result<()>
     // {
-    //     if a.is_const() && b.is_const() && x.is_constant() {
-    //         assert!(t.is_constant());
-    //         return Ok(())
+    //     if reg.is_const() {
+    //         let temp = reg.full.1.get_value().unwrap();
+    //         let f_repr = temp.into_repr();
+    //         let n = f_repr.as_ref()[0];
+    //         let new_val = u64_to_ff(n ^ cnst);
+    //         *reg = Num::Constant(new_val).into();
+    //     }
+    //     else {
+    //         let mut x = self.get_decomposed(cs, reg)?;
+    //         for i in 0..4 {
+    //             let byte_val = (cnst >> 8 * i) & 0xff;
+    //             if byte_val != 0 {
+    //                 let cnst_var = AllocatedNum::alloc_cnst(cs, u64_to_ff(byte_val))?;
+    //                 x.arr[i] = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &Num::Allocated(cnst_var))?;
+    //             }
+    //         }
+    //         *reg = x.into();
     //     }
 
-    //     let zero = E::Fr::zero();
-    //     let one = E::Fr::one();
-    //     let mut minus_one = one.clone();
-    //     minus_one.negate();
-
-    //     // [y0, y1, y2, y3] - decomposed parts of resulted y: y = y0 + 2^8 * y1 + 2^16 * y2 + 2^24 * y3: 
-    //     // [a, b, x, y] - where y = a + b + x - 2^32 * of (using of via d_next selector)
-    //     // [of, t, of ^ t, of] - range check for of and t
-
-    //     let mut first_row = GateAllocHelper::default();
-    //     first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true);
-    //     first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true);
-    //     first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true);
-    //     first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true);
-    //     first_row.link_with_next_row(minus_one.clone());
+    //     Ok(())
     // }
 }
