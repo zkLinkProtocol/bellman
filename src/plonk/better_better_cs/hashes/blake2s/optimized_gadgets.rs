@@ -166,8 +166,12 @@ impl<E: Engine> GateAllocHelper<E> {
         return true;
     }
 
-    pub fn link_with_next_row(&self, coef: E::Fr) {
+    pub fn link_with_next_row(&mut self, coef: E::Fr) {
         self.d_next_sel = coef;
+    }
+
+    pub fn new() -> Self {
+        GateAllocHelper::default()
     }
 }
 
@@ -233,6 +237,13 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             decomposed: DecomposedNum { r0, r1, r2, r3}
         };
         Ok(res)
+    }
+
+    fn unwrap_allocated(&self, num: &Num<E>) -> AllocatedNum<E> {
+        match num {
+            Num::Allocated(var) => var.clone(),
+            _ => panic!("should be allocated"),
+        }
     }
    
     pub fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
@@ -391,8 +402,8 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
     fn xor<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &AllocatedNum<E>, b: &AllocatedNum<E>) -> Result<AllocatedNum<E>>
     {
         AllocatedNum::alloc(cs, || {
-            a = a.get_value()?;
-            b = b.get_value()?;
+            let a = a.get_value().grab()?;
+            let b = b.get_value().grab()?;
 
             let a_repr = a.into_repr();
             let b_repr = b.into_repr();
@@ -436,7 +447,8 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
     // and actual gate allocation
 
     // setup of first step: given a, b, x - return [y, of] (in that order)
-    fn g_ternary_setup<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>, x: &Num<E>) -> Result<(Reg<E>, Num<E>)> 
+    fn g_ternary_additon_setup<CS>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>, x: &Num<E>) -> Result<(Reg<E>, Num<E>)>
+    where CS: ConstraintSystem<E> 
     {
         let (y, of) = match (&a.full, &b.full, &x) {
             (Num::Constant(fr1), Num::Constant(fr2), Num::Constant(fr3)) => {
@@ -483,6 +495,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             return Ok(())
         }
 
+        let zero = E::Fr::zero();
         let one = E::Fr::one();
         let mut minus_one = one.clone();
         minus_one.negate();
@@ -492,35 +505,218 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         // [of, t, of ^ t, of] - range check for of and t
 
         let mut first_row = GateAllocHelper::default();
-        first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true);
-        first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true);
-        first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true);
-        first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true);
+        first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true)?;
+        first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true)?;
+        first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true)?;
+        first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true)?;
         first_row.link_with_next_row(minus_one.clone());
 
         let mut second_row = GateAllocHelper::default();
-        second_row.set_var(0, one.clone(), a.full.clone(), false);
-        second_row.set_var(1, one.clone(), b.full.clone(), false);
-        second_row.set_var(2, one.clone(), x.clone(), false);
-        second_row.set_var(3, minus_one.clone(), y.full.clone(), true);
+        second_row.set_var(0, one.clone(), a.full.clone(), false)?;
+        second_row.set_var(1, one.clone(), b.full.clone(), false)?;
+        second_row.set_var(2, one.clone(), x.clone(), false)?;
+        second_row.set_var(3, minus_one.clone(), y.full.clone(), true)?;
         let mut coef = self.u64_to_ff(1 << REG_WIDTH);
         coef.negate();
         second_row.link_with_next_row(coef);
 
         let mut third_row = GateAllocHelper::default();
-        
+        third_row.set_var(0, zero.clone(), of.clone(), true)?;
+
         // NB: t is always a variable even when it is actually a constant!
         // in this case t is simply a constant zero: map in into dummy variable instead!
+        let (b, c) = match t {
+            Num::Constant(fr) => {
+                assert!(fr.is_zero());
+                (Num::Allocated(AllocatedNum::alloc_zero(cs)?), of.clone())
+            }
+            Num::Allocated(tt) => {
+                let of_var = self.unwrap_allocated(of);
+                let tmp = self.xor(cs, &of_var, tt)?;
+                (t.clone(), Num::Allocated(tmp))
+            }
+        };
+
+        third_row.set_var(1, zero.clone(), b, true)?;
+        third_row.set_var(2, zero.clone(), c, true)?;
+        third_row.set_var(3, zero.clone(), of.clone(), true)?;
+        third_row.set_table(self.xor_table.clone());
+
+        self.allocate_gate(cs, first_row)?;
+        self.allocate_gate(cs, second_row)?;
+        self.allocate_gate(cs, third_row)?;
+
+        Ok(())
     }
 
-    // simple rotate step is of the form: z = (x ^ y) >>> R, and R here is a multiple of CHUNK_LEN = 8 ( R is 8 or 16)
-    // we will always have 4 rows (in case any of (x, y) is actually a variable)
+    // third of G function is handling equations of the form :
+    // y = a + b (e.g. v[c] = v[c] + v[d]),
+    // where a, b are available in both full and decomposed forms (in other words, are of type Reg)
+    // we want the result y to be represented in both full and decomposed forms
+
+    // when a, b are varibles we have only one equation of the form:
+    // [y, a, b, of], y = a + b - 2^32 * of
+    // and range check of of is multiplexed with range check for ternary addition (here where t there comes from!)
+    fn g_binary_addition_setup<CS>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>) -> Result<(Reg<E>, Num<E>)> 
+    where CS: ConstraintSystem<E>
+    {
+        let (y, of) = match (&a.full, &b.full) {
+            (Num::Constant(fr1), Num::Constant(fr2)) => {
+                let mut temp = fr1.clone();
+                temp.add_assign(&fr2);
+                let f_repr = temp.into_repr();
+                let y = f_repr.as_ref()[0] & ((1 << REG_WIDTH) - 1);
+                (self.u64_to_reg(y), Num::default())
+            },
+            (_, _) => {
+                let fr1 = a.get_value();
+                let fr2 = b.get_value();
+                let (y_val, of_val) = match (fr1, fr2) {
+                    (Some(fr1), Some(fr2)) => {
+                        let mut temp = fr1.clone();
+                        temp.add_assign(&fr2);
+                        let f_repr = temp.into_repr();
+                        let y = f_repr.as_ref()[0] & ((1 << REG_WIDTH) - 1);
+                        let of = f_repr.as_ref()[0] >> REG_WIDTH;
+                        (Some(y), Some(of))
+                    },
+                    (_, _) => (None, None)
+                };
+                
+                let y = self.alloc_reg_from_u64(cs, y_val)?;
+                let of = self.alloc_num_from_u64(cs, of_val)?;
+                (y, of)
+            },
+        };
+        Ok((y, of))
+    }
+
+    fn g_binary_addition_process<CS>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>, y: &Reg<E>, of: &Num<E>) -> Result<()>
+    where CS: ConstraintSystem<E>
+    {
+        if a.is_const() && b.is_const() {
+            return Ok(())
+        }
+
+        // [y, a, b, of], y = a + b - 2^32 * of
+        // y + 2^32 * of - a - b = 0;
+
+        let one = E::Fr::one();
+        let mut minus_one = one.clone();
+        minus_one.negate();
+
+        let mut row = GateAllocHelper::default();
+        row.set_var(0, one.clone(), y.full.clone(), true)?;
+        row.set_var(1, minus_one.clone(), a.full.clone(), false)?;
+        row.set_var(2, minus_one.clone(), b.full.clone(), false)?;
+        row.set_var(3, self.u64_to_ff(1 << REG_WIDTH), of.clone(), true)?;
+        
+        self.allocate_gate(cs, row)?;
+        Ok(())
+    }  
+
+    // rotate step is of the form: z = (x ^ y) >>> R
+    // we will always have the following 4 rows (in case any of (x, y) is actually a variable)
     // z = /sum z[idx_k] * 8^[idx_k] ([idx_k] is permuted array of [0, 1, 2, 3])
     // x[0], y[0], z[idx_0], z,
-    // [x[1], y[1], z[idx_1], z - z[idx_0] * 8^[idx_0]
-    // x[2], y[2], z[idx_2], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1]
-    // x[3], y[3], z[idx_3], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1] - z[idx_2] * 8^[idx_2]
-
+    // [x[1], y[1], z[idx_1], z - z[idx_0] * 8^[idx_0] = w0
+    // x[2], y[2], z[idx_2], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1] = w1
+    // x[3], y[3], z[idx_3], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1] - z[idx_2] * 8^[idx_2] = w2
+    
     // on the first 3 rows we have the link to the next row via d_next
     // on the last row we need only to check that c * 8^[idx_3] = d
+
+    // when R is a multiple of CHUNK_LEN = 8 ( R is 8 or 16) z is already decomposed into chunks 
+    // (just take [z_idx] in the right order), so no additional decomposition constraints are needed
+    // in other case we prepend previous constraints with decomposition of z into z[0], z[1], z[2], z[3]
+    // so that the first row will be: 
+    // z[0], z[1], z[2], z[3]
+    // the boolean flag needs_recomposition is responsible for this
+
+    // returns (z, Option(w0, w1, w2))
+    fn g_xor_rot_setup<CS>(&self, cs: &mut CS, a: &Reg<E>, b: Reg<E>, rot: usize) -> Result<(Reg<E>, Option<[Num<E>; 3]>)>
+    where CS: ConstraintSystem<E>
+    {
+        let res = match (&a.full, &b.full) {
+            (Num::Constant(fr1), Num::Constant(fr2)) => {
+                let n = fr1.into_repr().as_ref()[0];
+                let m = fr1.into_repr().as_ref()[0];
+                let n_xor_m = n ^ m;
+                let tmp = (n_xor_m >> rot) | (((n_xor_m) << (REG_WIDTH - rot)) && ((1 << REG_WIDTH) - 1));
+                (self.u64_to_reg(tmp), None)
+            },
+            (_, _) => {
+                let fr1 = a.get_value();
+                let fr2 = b.get_value();
+                let (y_val, of_val) = match (fr1, fr2) {
+                    (Some(fr1), Some(fr2)) => {
+                        let mut temp = fr1.clone();
+                        temp.add_assign(&fr2);
+                        let f_repr = temp.into_repr();
+                        let y = f_repr.as_ref()[0] & ((1 << REG_WIDTH) - 1);
+                        let of = f_repr.as_ref()[0] >> REG_WIDTH;
+                        (Some(y), Some(of))
+                    },
+                    (_, _) => (None, None)
+                };
+                
+                let y = self.alloc_reg_from_u64(cs, y_val)?;
+                let of = self.alloc_num_from_u64(cs, of_val)?;
+                (y, of)
+            },
+        };
+        Ok((y, of))
+    }
+
+    fn g_xor_rot_process<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, x: &Reg<E>, y: &Reg<E>, z: &Reg<E>, w_arr: Option<[Num<E>; 3]>, rot: usize,
+    ) -> Result<()>
+    {
+        if x.is_const() && y.is_const() {
+            return Ok(())
+        }
+
+        let needs_decomposition : bool = (rot % CHUNK_SIZE != 0);
+        if needs_decomposition {
+            // [y0, y1, y2, y3]
+            let mut row = GateAllocHelper::default();
+        first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true)?;
+        first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true)?;
+        first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true)?;
+        first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true)?;
+        first_row.link_with_next_row(minus_one.clone());
+
+        self.allocate_gate(cs, row)?;
+        }
+    }
+
+    // fn g_simple_rotate_process>(
+    //     &self, cs: &mut CS, 
+    //     , 
+    //     w0: &Num<E>, w1: &Num<E>, w2: Num<E>,
+    //     index_arr: [usize; 4],
+    //     needs_recomposition: bool,
+    // ) -> Result<()>
+    // {
+    //     if a.is_const() && b.is_const() && x.is_constant() {
+    //         assert!(t.is_constant());
+    //         return Ok(())
+    //     }
+
+    //     let zero = E::Fr::zero();
+    //     let one = E::Fr::one();
+    //     let mut minus_one = one.clone();
+    //     minus_one.negate();
+
+    //     // [y0, y1, y2, y3] - decomposed parts of resulted y: y = y0 + 2^8 * y1 + 2^16 * y2 + 2^24 * y3: 
+    //     // [a, b, x, y] - where y = a + b + x - 2^32 * of (using of via d_next selector)
+    //     // [of, t, of ^ t, of] - range check for of and t
+
+    //     let mut first_row = GateAllocHelper::default();
+    //     first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true);
+    //     first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true);
+    //     first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true);
+    //     first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true);
+    //     first_row.link_with_next_row(minus_one.clone());
+    // }
 }
