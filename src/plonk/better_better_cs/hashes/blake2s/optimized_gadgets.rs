@@ -23,47 +23,19 @@ use std::cell::Cell;
 type Result<T> = std::result::Result<T, SynthesisError>;
 
 const CHUNK_SIZE : usize = 8; 
+const REG_WIDTH : usize = 32;
 const SHIFT4 : usize = 4;
 const SHIFT7 : usize = 7; 
 const BLAKE2s_STATE_WIDTH : usize = 16;
-
-
-impl From<splitmut::SplitMutError> for SynthesisError {
-    fn from(_splitmut_err: splitmut::SplitMutError) -> SynthesisError {
-        // TODO: create special error for this sort of things
-        SynthesisError::UnexpectedIdentity
-    }
-}
-
-
-pub trait IdentifyFirstLast: Iterator + Sized {
-    fn identify_first_last(self) -> Iter<Self>;
-}
-
-impl<I> IdentifyFirstLast for I where I: Iterator {
-    fn identify_first_last(self) -> Iter<Self> {
-        Iter(true, self.peekable())
-    }
-}
-
-pub struct Iter<I>(bool, iter::Peekable<I>) where I: Iterator;
-
-impl<I> Iterator for Iter<I> where I: Iterator {
-    type Item = (bool, bool, I::Item);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let first = mem::replace(&mut self.0, false);
-        self.1.next().map(|e| (first, self.1.peek().is_none(), e))
-    }
-}
+const CS_WIDTH : usize = 4;
 
 
 #[derive(Clone)]
 pub struct DecomposedNum<E : Engine> {
-    r0: Num<E>,
-    r1: Num<E>,
-    r2: Num<E>,
-    r3: Num<E>,
+    pub r0: Num<E>,
+    pub r1: Num<E>,
+    pub r2: Num<E>,
+    pub r3: Num<E>,
 }
 
 impl<E: Engine> Default for DecomposedNum<E> {
@@ -92,17 +64,34 @@ impl<E: Engine> Default for Reg<E> {
     }
 }
 
+impl<E: Engine> Reg<E> {
+    pub fn is_const(&self) -> bool {
+        self.full.is_constant()
+    }
+
+    pub fn get_value(&self) -> Option<E::Fr> {
+        self.full.get_value()
+    }
+}
+
 
 #[derive(Clone, Default)]
 pub struct HashState<E: Engine>([Reg<E>; BLAKE2s_STATE_WIDTH]);
 
+
+#[derive(Copy, Clone)]
+pub enum VarTracker {
+    NotAssigned,
+    Variable,
+    Constant,
+}
 
 // the purpose of this (and the following) struct is explained in the comments of the main text
 // all linear variables are represented in the form (bool, coef, var)
 // where the boolean flag asserts that variable was actually assigned a value (for self-test and debugging assistance)
 #[derive(Clone)]
 pub struct GateVarHelper<E: Engine>{
-    assigned: bool,
+    assigned: VarTracker,
     coef: E::Fr,
     val: AllocatedNum<E>,
 }
@@ -110,7 +99,7 @@ pub struct GateVarHelper<E: Engine>{
 impl<E: Engine> Default for GateVarHelper<E> {
     fn default() -> Self {
         GateVarHelper {
-            assigned: false,
+            assigned: VarTracker::NotAssigned,
             coef: E::Fr::zero(),
             val: AllocatedNum::default(),
         }
@@ -119,34 +108,74 @@ impl<E: Engine> Default for GateVarHelper<E> {
 
 #[derive(Clone)]
 pub struct GateAllocHelper<E: Engine> {
-    a: GateVarHelper<E>,
-    b: GateVarHelper<E>,
-    c: GateVarHelper<E>,
-    d: GateVarHelper<E>,
+    // [a, b, c, d]
+    vars: [GateVarHelper<E>; CS_WIDTH],
 
     cnst_sel: E::Fr,
-    d_next_sel: E::Fr,     
+    d_next_sel: E::Fr,
+    table: Option<Arc<LookupTableApplication<E>>>  
 }
 
 impl<E: Engine> Default for GateAllocHelper<E> {
     fn default() -> Self {
         GateAllocHelper {
-            a: GateVarHelper::default(),
-            b: GateVarHelper::default(),
-            c: GateVarHelper::default(),
-            d: GateVarHelper::default(),
-
+            vars: <[GateVarHelper<E>; CS_WIDTH]>::default(),
             cnst_sel: E::Fr::zero(),
-            d_next_sel: E::Fr::zero(), 
+            d_next_sel: E::Fr::zero(),
+            table: None, 
         }
+    }
+}
+
+impl<E: Engine> GateAllocHelper<E> {
+    // force variable - checks that the variable is indeed AllocatedVar and not constant
+    pub fn set_var(&mut self, idx: usize, coef: E::Fr, input: Num<E>, force_allocated: bool) -> Result<()>
+    {
+        assert!(idx < CS_WIDTH);
+        if force_allocated && input.is_constant() {
+            return Err(SynthesisError::UnexpectedIdentity);
+        }
+
+        match input {
+            Num::Constant(fr) => {
+                self.vars[idx].assigned = VarTracker::Constant;
+                let mut tmp = fr;
+                tmp.mul_assign(&coef);
+                self.cnst_sel.add_assign(&tmp);
+            }
+            Num::Allocated(var) => {
+                self.vars[idx].assigned = VarTracker::Variable;
+                self.vars[idx].coef = coef;
+                self.vars[idx].val = var;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn set_table(&mut self, table: Arc<LookupTableApplication<E>>) {
+        self.table = Some(table)
+    }
+
+    pub fn is_prepared(&self) -> bool {
+        for i in 0..CS_WIDTH {
+            if let VarTracker::NotAssigned = self.vars[i].assigned {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    pub fn link_with_next_row(&self, coef: E::Fr) {
+        self.d_next_sel = coef;
     }
 }
 
 
 pub struct OptimizedBlake2sGadget<E: Engine> {
     xor_table: Arc<LookupTableApplication<E>>,
-    compound_xor4_table: Arc<LookupTableApplication<E>>,
-    compound_xor7_table: Arc<LookupTableApplication<E>>,
+    xor_rotate4_table: Arc<LookupTableApplication<E>>,
+    xor_rotate7_table: Arc<LookupTableApplication<E>>,
     
     iv: [u64; 8],
     iv0_twist: u64,
@@ -162,6 +191,48 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         repr.as_mut()[0] = n;
         let mut res = E::Fr::from_repr(repr).expect("should parse");
         res
+    }
+
+    fn u64_to_reg(&self, n: u64) -> Reg<E> {
+        let full = Num::Constant(self.u64_to_ff(n));
+        let r0 = Num::Constant(self.u64_to_ff(n & 0xff));
+        let r1 = Num::Constant(self.u64_to_ff((n >> CHUNK_SIZE) & 0xff));
+        let r2 = Num::Constant(self.u64_to_ff((n >> (2 * CHUNK_SIZE)) & 0xff));
+        let r3 = Num::Constant(self.u64_to_ff((n >> (3 * CHUNK_SIZE)) & 0xff));
+
+        Reg {
+            full, 
+            decomposed: DecomposedNum { r0, r1, r2, r3}
+        }
+    }
+
+    fn alloc_num_from_u64<CS: ConstraintSystem<E>>(&self, cs: &mut CS, n: Option<u64>) -> Result<Num<E>> {
+        let val = n.map(|num| { self.u64_to_ff(num) });
+        let new_var = AllocatedNum::alloc(cs, || {val.grab()})?;
+        Ok(Num::Allocated(new_var))
+    }
+
+    fn alloc_reg_from_u64<CS: ConstraintSystem<E>>(&self, cs: &mut CS, n: Option<u64>) -> Result<Reg<E>> {
+        let full_val = n.map(|num| { self.u64_to_ff(num) });
+        let full = Num::Allocated(AllocatedNum::alloc(cs, || {full_val.grab()})?);
+        
+        let r0_val = n.map(|num| { self.u64_to_ff(num & 0xff) });
+        let r0 = Num::Allocated(AllocatedNum::alloc(cs, || {r0_val.grab()})?);
+
+        let r1_val = n.map(|num| { self.u64_to_ff((num >> CHUNK_SIZE) & 0xff) });
+        let r1 = Num::Allocated(AllocatedNum::alloc(cs, || {r1_val.grab()})?);
+
+        let r2_val = n.map(|num| { self.u64_to_ff((num >> (2 * CHUNK_SIZE)) & 0xff) });
+        let r2 = Num::Allocated(AllocatedNum::alloc(cs, || {r2_val.grab()})?);
+
+        let r3_val = n.map(|num| { self.u64_to_ff((num >> (3 * CHUNK_SIZE)) & 0xff) });
+        let r3 = Num::Allocated(AllocatedNum::alloc(cs, || {r3_val.grab()})?);
+
+        let res = Reg {
+            full, 
+            decomposed: DecomposedNum { r0, r1, r2, r3}
+        };
+        Ok(res)
     }
    
     pub fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
@@ -179,16 +250,16 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             true
         );
 
-        let name2 : &'static str = "xor_rotate_table4";
-        let xor_rotate_table4 = LookupTableApplication::new(
+        let name2 : &'static str = "xor_rotate4_table";
+        let xor_rotate4_table = LookupTableApplication::new(
             name2,
             XorRotateTable::new(CHUNK_SIZE, SHIFT4, name2),
             columns3.clone(),
             true
         );
 
-        let name3 : &'static str = "xor_rotate_table7";
-        let xor_rotate_table7 = LookupTableApplication::new(
+        let name3 : &'static str = "xor_rotate7_table";
+        let xor_rotate7_table = LookupTableApplication::new(
             name3,
             XorRotateTable::new(CHUNK_SIZE, SHIFT7, name3),
             columns3.clone(),
@@ -196,14 +267,14 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         );
 
         let xor_table = cs.add_table(xor_table)?;
-        let xor_rotate_table4 = cs.add_table(xor_rotate_table4)?;
-        let xor_rotate_table7 = cs.add_table(xor_rotate_table7)?;
+        let xor_rotate4_table = cs.add_table(xor_rotate4_table)?;
+        let xor_rotate7_table = cs.add_table(xor_rotate7_table)?;
 
         let iv = [
             0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
             0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
         ];
-        let twisted_iv_0 =  0x6A09E667 ^ 0x01010000 ^ 32;
+        let iv0_twist =  0x6A09E667 ^ 0x01010000 ^ 32;
 
         let sigmas: [[usize; 16]; 10] = [
             [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ],
@@ -220,13 +291,13 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
 
         let allocated_cnsts = Cell::new(HashMap::new());
 
-        Ok(Blake2sGadget {
+        Ok(OptimizedBlake2sGadget {
             xor_table,
-            xor_rotate_table4,
-            xor_rotate_table7,
+            xor_rotate4_table,
+            xor_rotate7_table,
 
             iv,
-            twisted_iv_0,
+            iv0_twist,
             sigmas,
 
             allocated_cnsts,
@@ -272,6 +343,65 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         Ok(())
     }
 
+    fn allocate_gate<CS: ConstraintSystem<E>>(&self, cs: &mut CS, gate_alloc_helper: GateAllocHelper<E>) -> Result<()> {
+        // first check if all variables are actually allocated
+        assert!(gate_alloc_helper.is_prepared());
+
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+        let mut gate_term = MainGateTerm::new();
+        let (mut vars, mut coefs) = CS::MainGate::format_term(gate_term, dummy)?;
+
+        // plug-in all linear terms
+        for idx in 0..CS_WIDTH {
+            if let VarTracker::Variable = gate_alloc_helper.vars[idx].assigned {
+                vars[idx] = gate_alloc_helper.vars[idx].val.get_variable();
+                coefs[idx] = gate_alloc_helper.vars[idx].coef;
+            }
+        }
+
+        // plug-in constant term if necessary
+        if !gate_alloc_helper.cnst_sel.is_zero() {
+            let cnst_index = CS::MainGate::index_for_constant_term();
+            coefs[cnst_index] = gate_alloc_helper.cnst_sel;
+        }
+
+        // plug-in d_next if required
+        if !gate_alloc_helper.d_next_sel.is_zero() {
+            let range_of_next_step_linear_terms = CS::MainGate::range_of_next_step_linear_terms();
+            let idx_of_last_linear_term = range_of_next_step_linear_terms.last().expect("must have an index");
+            coefs[idx_of_last_linear_term] = gate_alloc_helper.d_next_sel;
+        }
+
+        cs.begin_gates_batch_for_step()?;
+        
+        // apply table lookup if we have one
+        if let Some(table) = gate_alloc_helper.table { 
+            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+        }
+
+        // apply main gate        
+        let mg = CS::MainGate::default();
+        cs.new_gate_in_batch(&mg, &coefs, &vars, &[])?;
+        cs.end_gates_batch_for_step()?;
+        
+        Ok(())
+    }
+
+    fn xor<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &AllocatedNum<E>, b: &AllocatedNum<E>) -> Result<AllocatedNum<E>>
+    {
+        AllocatedNum::alloc(cs, || {
+            a = a.get_value()?;
+            b = b.get_value()?;
+
+            let a_repr = a.into_repr();
+            let b_repr = b.into_repr();
+            let a_int = a_repr.as_ref()[0];
+            let b_int = b_repr.as_ref()[0];
+            Ok(self.u64_to_ff(a_int ^ b_int))
+        })
+    }
+
     // first step of G function is handling equations of the form :
     // y = a + b + x (e.g. v[a] = v[a] + v[b] + x),
     // where a, b are available in both full and decomposed forms (in other words, are of type Reg)
@@ -280,7 +410,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
 
     // there are special cases which we want to handle separately:
     // 1) all of a, b, x - are constants: than there is actually nothing interesting,
-    // no constraints will be allocated, just return the new constant
+    // no constraints will be allocated, just return the new constant (NB: what if t will be a variable)
 
     // 2) all of a, b, x are variables: there will be 3 rows:
     // [y0, y1, y2, y3] - decomposed parts of resulted y: y = y0 + 2^8 * y1 + 2^16 * y2 + 2^24 * y3: 
@@ -306,238 +436,91 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
     // and actual gate allocation
 
     // setup of first step: given a, b, x - return [y, of] (in that order)
-    fn g_first_step_setup<CS: ConstraintSystem<E>>(&self, a: &Reg<E>, b: &Reg<E>)
+    fn g_ternary_setup<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>, x: &Num<E>) -> Result<(Reg<E>, Num<E>)> 
+    {
+        let (y, of) = match (&a.full, &b.full, &x) {
+            (Num::Constant(fr1), Num::Constant(fr2), Num::Constant(fr3)) => {
+                let mut temp = fr1.clone();
+                temp.add_assign(&fr2);
+                temp.add_assign(&fr3);
+                let f_repr = temp.into_repr();
+                let y = f_repr.as_ref()[0] & ((1 << REG_WIDTH) - 1);
+                (self.u64_to_reg(y), Num::default())
+            },
+            (_, _, _) => {
+                let fr1 = a.get_value();
+                let fr2 = b.get_value();
+                let fr3 = x.get_value();
+                let (y_val, of_val) = match (fr1, fr2, fr3) {
+                    (Some(fr1), Some(fr2), Some(fr3)) => {
+                        let mut temp = fr1.clone();
+                        temp.add_assign(&fr2);
+                        temp.add_assign(&fr3);
+                        let f_repr = temp.into_repr();
+                        let y = f_repr.as_ref()[0] & ((1 << REG_WIDTH) - 1);
+                        let of = f_repr.as_ref()[0] >> REG_WIDTH;
+                        (Some(y), Some(of))
+                    },
+                    (_, _, _) => (None, None)
+                };
+                
+                let y = self.alloc_reg_from_u64(cs, y_val)?;
+                let of = self.alloc_num_from_u64(cs, of_val)?;
+                (y, of)
+            },
+        };
+        Ok((y, of))
+    }
 
-
-    
-
-    fn G<CS: ConstraintSystem<E>>(
-        &self, 
-        cs: &mut CS, 
-        v: &mut RegisterFile<E>, 
-        a: usize, b: usize, c: usize, d: usize,
-        t0: &Num<E>, t1: &Num<E>, 
+    fn g_ternary_addition_process<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, 
+        a: &Reg<E>, b: &Reg<E>, x: &Num<E>, // known in advance 
+        y: &Reg<E>, of: &Num<E>, t: &Num<E>, // generated during setup phase
     ) -> Result<()>
     {
-        let mut temp_arr = <[Num<E>; 4]>::default();
-        let mut z = v.regs.get_muts();
-        let a = z.at(a)?;
-        let b = z.at(b)?;
-        let c = z.at(c)?;
-        let d = z.at(d)?;
-
-        let mut t0 : Register<E> = t0.clone().into();
-        let mut t1 : Register<E> = t1.clone().into();
-        
-        // v[a] := (v[a] + v[b] + x) mod 2**w
-        *a = self.add3(cs, a, b, &mut t0)?.into();
-        //println!("a val1: {}", a.full.1.get_value().unwrap());
-
-        // v[d] := (v[d] ^ v[a]) >>> 16
-        let x = self.get_decomposed(cs, a)?;
-        let y = self.get_decomposed(cs, d)?;
-        
-        for i in 0..4 {
-            temp_arr[i] = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &y.arr[i])?;
+        if a.is_const() && b.is_const() && x.is_constant() {
+            assert!(t.is_constant());
+            return Ok(())
         }
-        
-        let new_val = DecomposedRegister { 
-            arr: [temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone(), temp_arr[1].clone()]
-        };
-        *d = new_val.into();
-        //println!("d val1: {}", self.get_full(cs, d)?.get_value().unwrap());
 
-        // v[c] := (v[c] + v[d]) mod 2**w
-        *c = self.add2(cs, c, d)?.into();
-        //println!("c val1: {}", self.get_full(cs, c)?.get_value().unwrap());
-        
-        // v[b] := (v[b] ^ v[c]) >>> 12
-        let x = self.get_decomposed(cs, b)?;
-        let y = self.get_decomposed(cs, c)?;
-        
-        temp_arr[1] = self.query_table(cs, &self.xor_rotate_table4, 4, &x.arr[1], &y.arr[1])?;
-        temp_arr[0] = self.query_table(cs, &self.xor_table, 0, &x.arr[0], &y.arr[0])?;
-        temp_arr[2] = self.query_table(cs, &self.xor_table, 0, &x.arr[2], &y.arr[2])?;
-        temp_arr[3] = self.query_table(cs, &self.xor_table, 0, &x.arr[3], &y.arr[3])?;
+        let one = E::Fr::one();
+        let mut minus_one = one.clone();
+        minus_one.negate();
 
-        let new_val = Num::lc(
-            cs, 
-            &[E::Fr::one(), u64_to_ff(1 << 4), u64_to_ff(1 << 12), u64_to_ff(1 << 20)], 
-            &[temp_arr[1].clone(), temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone()],
-        )?;
-        *b = new_val.into();
-        //println!("b val1: {}", self.get_full(cs, b)?.get_value().unwrap());
+        // [y0, y1, y2, y3] - decomposed parts of resulted y: y = y0 + 2^8 * y1 + 2^16 * y2 + 2^24 * y3: 
+        // [a, b, x, y] - where y = a + b + x - 2^32 * of (using of via d_next selector)
+        // [of, t, of ^ t, of] - range check for of and t
 
-        // v[a] := (v[a] + v[b] + y) mod 2**w
-        //println!("t1: {}", self.get_full(cs, &mut t1)?.get_value().unwrap());
-        *a = self.add3(cs, a, b, &mut t1)?.into();
-        //println!("a val2: {}", self.get_full(cs, a)?.get_value().unwrap());
-        
-        
-        // v[d] := (v[d] ^ v[a]) >>> 8
-        let x = self.get_decomposed(cs, a)?;
-        let y = self.get_decomposed(cs, d)?;
-        for i in 0..4 {
-            temp_arr[i] = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &y.arr[i])?;
-        }
-        let new_val = DecomposedRegister { 
-            arr: [temp_arr[1].clone(), temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone()]
-        };
-        *d = new_val.into();
-        //println!("d val2: {}", self.get_full(cs, d)?.get_value().unwrap());
-        
-        // v[c] := (v[c] + v[d]) mod 2**w
-        *c = self.add2(cs, c, d)?.into();
-        //println!("c val2: {}", self.get_full(cs, c)?.get_value().unwrap());
-        
+        let mut first_row = GateAllocHelper::default();
+        first_row.set_var(0, one.clone(), y.decomposed.r0.clone(), true);
+        first_row.set_var(1, self.u64_to_ff(1 << CHUNK_SIZE), y.decomposed.r1.clone(), true);
+        first_row.set_var(2, self.u64_to_ff(1 << (2 * CHUNK_SIZE)), y.decomposed.r2.clone(), true);
+        first_row.set_var(3, self.u64_to_ff(1 << (3 * CHUNK_SIZE)), y.decomposed.r3.clone(), true);
+        first_row.link_with_next_row(minus_one.clone());
 
-        // v[b] := (v[b] ^ v[c]) >>> 7
-        let x = self.get_decomposed(cs, b)?;
-        let y = self.get_decomposed(cs, c)?;
-        temp_arr[0] = self.query_table(cs, &self.xor_rotate_table7, 7, &x.arr[0], &y.arr[0])?;
-        for i in 1..4 {
-            temp_arr[i] = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &y.arr[i])?;
-        }
-        let new_val = Num::lc(
-            cs, 
-            &[E::Fr::one(), u64_to_ff(1 << 1), u64_to_ff(1 << 9), u64_to_ff(1 << 17)], 
-            &temp_arr[..],
-        )?;
-        *b = new_val.into();
-        //println!("b val2: {}", self.get_full(cs, b)?.get_value().unwrap());
+        let mut second_row = GateAllocHelper::default();
+        second_row.set_var(0, one.clone(), a.full.clone(), false);
+        second_row.set_var(1, one.clone(), b.full.clone(), false);
+        second_row.set_var(2, one.clone(), x.clone(), false);
+        second_row.set_var(3, minus_one.clone(), y.full.clone(), true);
+        let mut coef = self.u64_to_ff(1 << REG_WIDTH);
+        coef.negate();
+        second_row.link_with_next_row(coef);
 
-        Ok(())
+        let mut third_row = GateAllocHelper::default();
+        
+        // NB: t is always a variable even when it is actually a constant!
+        // in this case t is simply a constant zero: map in into dummy variable instead!
     }
 
-    fn apply_xor_with_const<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg: &mut Register<E>, cnst: u64) -> Result<()>
-    {
-        if reg.is_const() {
-            let temp = reg.full.1.get_value().unwrap();
-            let f_repr = temp.into_repr();
-            let n = f_repr.as_ref()[0];
-            let new_val = u64_to_ff(n ^ cnst);
-            *reg = Num::Constant(new_val).into();
-        }
-        else {
-            let mut x = self.get_decomposed(cs, reg)?;
-            for i in 0..4 {
-                let byte_val = (cnst >> 8 * i) & 0xff;
-                if byte_val != 0 {
-                    let cnst_var = AllocatedNum::alloc_cnst(cs, u64_to_ff(byte_val))?;
-                    x.arr[i] = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &Num::Allocated(cnst_var))?;
-                }
-            }
-            *reg = x.into();
-        }
+    // simple rotate step is of the form: z = (x ^ y) >>> R, and R here is a multiple of CHUNK_LEN = 8 ( R is 8 or 16)
+    // we will always have 4 rows (in case any of (x, y) is actually a variable)
+    // z = /sum z[idx_k] * 8^[idx_k] ([idx_k] is permuted array of [0, 1, 2, 3])
+    // x[0], y[0], z[idx_0], z,
+    // [x[1], y[1], z[idx_1], z - z[idx_0] * 8^[idx_0]
+    // x[2], y[2], z[idx_2], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1]
+    // x[3], y[3], z[idx_3], z - z[idx_0] * 8^[idx_0] - z[idx_1] * 8^[idx_1] - z[idx_2] * 8^[idx_2]
 
-        Ok(())
-    }
-
-    fn F<CS>(
-        &self, cs: &mut CS, mut hash_state: RegisterFile<E>, m: &[Num<E>], total_len: u64, last_block: bool,
-    ) -> Result<RegisterFile<E>>
-    where CS: ConstraintSystem<E>
-    {
-        // Initialize local work vector v[0..15]
-        let mut v = RegisterFile { regs: Vec::with_capacity(16) };
-        // First half from state.
-        for i in 0..8 {
-            v.regs.push(hash_state.regs[i].clone());
-        }
-        // Second half from IV.
-        for i in 0..8 {
-            v.regs.push(self.iv[i].clone());
-        }
-
-        self.apply_xor_with_const(cs, &mut v.regs[12], total_len & 0xffffffff)?; // Low word of the offset.
-        self.apply_xor_with_const(cs, &mut v.regs[13], total_len >> 32)?; // High word.
-
-        if last_block {
-            self.apply_xor_with_const(cs, &mut v.regs[14], 0xffffffff)?; // Invert all bits.
-        }
-
-        for i in 0..16 {
-            println!("regs: {}", self.get_full(cs, &mut v.regs[i])?.get_value().unwrap());
-        }
-      
-        // Cryptographic mixing: ten rounds
-        for i in 0..10 {
-            // Message word selection permutation for this round.
-            let s = &self.sigmas[i];
-
-            self.G(cs, &mut v, 0, 4, 8, 12, &m[s[0]], &m[s[1]])?;
-            //println!("olo");
-            self.G(cs, &mut v, 1, 5, 9, 13, &m[s[2]], &m[s[3]])?;
-            //println!("olot");
-            self.G(cs, &mut v, 2, 6, 10, 14, &m[s[4]], &m[s[5]])?;
-            //println!("olot1");
-            self.G(cs, &mut v, 3, 7, 11, 15, &m[s[6]], &m[s[7]])?;
-            //println!("olot2");
-            self.G(cs, &mut v, 0, 5, 10, 15, &m[s[8]], &m[s[9]])?;
-            //println!("olot3");
-            self.G(cs, &mut v, 1, 6, 11, 12, &m[s[10]], &m[s[11]])?;
-            //println!("olot4");
-            self.G(cs, &mut v, 2, 7, 8, 13, &m[s[12]], &m[s[13]])?;
-            //println!("olot5");
-            self.G(cs, &mut v, 3, 4, 9, 14, &m[s[14]], &m[s[15]])?;
-            //println!("olot6");
-        }
-        //println!("olotr");
-
-        // XOR the two halves.
-        let mut res = RegisterFile { regs: Vec::with_capacity(8) };
-        let mut h = hash_state.regs.get_muts();
-        let mut v = v.regs.get_muts();
-
-        for i in 0..8 {
-            // h[i] := h[i] ^ v[i] ^ v[i + 8]
-            let x = self.get_decomposed(cs, h.at(i)?)?;
-            let y = self.get_decomposed(cs, v.at(i)?)?;
-            let z = self.get_decomposed(cs, v.at(i+8)?)?;
-            let mut new_state = DecomposedRegister::default();
-            
-            for i in 0..4 {
-                let tmp = self.query_table(cs, &self.xor_table, 0, &x.arr[i], &y.arr[i])?;
-                new_state.arr[i] = self.query_table(cs, &self.xor_table, 0, &tmp, &z.arr[i])?;
-            }
-
-            res.regs.push(new_state.into());
-        }
-
-        Ok(res)
-    }
-
-    pub fn digest<CS: ConstraintSystem<E>>(&self, cs: &mut CS, data: &[Num<E>]) -> Result<Vec<Num<E>>> 
-    {
-        // h[0..7] := IV[0..7] // Initialization Vector.
-        let mut total_len : u64 = 0;
-        let mut hash_state = RegisterFile { regs: Vec::with_capacity(8) };
-        for i in 0..8 {
-            if i == 0 {
-                hash_state.regs.push(self.twisted_iv_0.clone()); 
-            }
-            else {
-                hash_state.regs.push(self.iv[i].clone());
-            }
-        }
-
-        for (_is_first, is_last, block) in data.chunks(16).identify_first_last() 
-        {
-            assert_eq!(block.len(), 16);
-            //println!("is last: {}", is_last);
-            total_len += 64;
-            hash_state = self.F(cs, hash_state, &block[..], total_len, is_last)?;
-        }
-
-        let mut res = Vec::with_capacity(8);
-        for i in 0..8 {
-            res.push(self.get_full(cs, &mut hash_state.regs[i])?);
-        }
-
-        for i in 0..8 {
-            println!("res: {}", res[i].get_value().unwrap());
-        }
-
-        Ok(res)
-    }
+    // on the first 3 rows we have the link to the next row via d_next
+    // on the last row we need only to check that c * 8^[idx_3] = d
 }
