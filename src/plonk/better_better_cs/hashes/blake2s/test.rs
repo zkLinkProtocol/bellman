@@ -12,15 +12,17 @@ mod test {
     use crate::pairing::bn256::{Bn256, Fr};
 
     use super::super::gadgets::*;
+    use super::super::utils::*;
     use rand::{Rng, SeedableRng, StdRng};
 
 
-    struct TestBlake2sCircuit<E:Engine>{
+    struct TestBlake2sCircuit<E:Engine, G: Blake2sGadget<E>>{
         input: Vec<E::Fr>,
         output: [E::Fr; 8],
+        _gadget_marker: std::marker::PhantomData<G>,
     }
 
-    impl<E: Engine> Circuit<E> for TestBlake2sCircuit<E> {
+    impl<E: Engine, G: Blake2sGadget<E>> Circuit<E> for TestBlake2sCircuit<E, G> {
         type MainGate = Width4MainGateWithDNext;
 
         fn declare_used_gates() -> Result<Vec<Box<dyn GateInternal<E>>>, SynthesisError> {
@@ -45,7 +47,7 @@ mod test {
                 actual_output_vars.push(new_var);
             }
 
-            let blake2s_gadget = Blake2sGadget::new(cs)?;
+            let blake2s_gadget = G::new(cs)?;
 
             let supposed_output_vars = blake2s_gadget.digest(cs, &input_vars[..])?;
 
@@ -69,23 +71,22 @@ mod test {
         Fr::from_repr(repr).expect("should parse")
     }
 
-    #[test]
-    fn blake2s_gadget_test() 
+    fn blake2s_gadget_test_impl<G: Blake2sGadget<Bn256>>() 
     {
+        const NUM_OF_BLOCKS: usize = 3;
         let seed: &[_] = &[1, 2, 3, 4, 5];
         let mut rng: StdRng = SeedableRng::from_seed(seed);
 
-        let mut input = [0u8; 64];
-        for i in 0..55 {
+        let mut input = [0u8; 64 * NUM_OF_BLOCKS];
+        for i in 0..(64 * NUM_OF_BLOCKS) {
             input[i] = rng.gen();
-            //input[i] = 0x20;
         }
 
         let mut hasher = Blake2s::new();
         hasher.update(&input[..]);
         let output = hasher.finalize();
 
-        let mut input_fr_arr = Vec::with_capacity(16);
+        let mut input_fr_arr = Vec::with_capacity(16 * NUM_OF_BLOCKS);
         let mut output_fr_arr = [Fr::zero(); 8];
 
         for (i, block) in input.chunks(4).enumerate() {
@@ -96,7 +97,7 @@ mod test {
             output_fr_arr[i] = slice_to_ff::<Fr>(block);
         }
         
-        let circuit = TestBlake2sCircuit::<Bn256>{
+        let circuit = TestBlake2sCircuit::<Bn256, G>{
             input: input_fr_arr,
             output: output_fr_arr,
         };
@@ -108,4 +109,14 @@ mod test {
         println!("Total length of all tables: {}", assembly.total_length_of_all_tables);
         assert!(assembly.is_satisfied());
     }
+
+    #[test]
+    fn naive_blake2s_gadget_test<>() {
+        blake2s_gadget_test_impl::<NaiveBlake2sGadget>()
+    }
+
+    #[test]
+    // fn optimized_blake2s_gadget_test<>() {
+    //     blake2s_gadget_test_impl::<NaiveBlake2sGadget>()
+    // }  
 }

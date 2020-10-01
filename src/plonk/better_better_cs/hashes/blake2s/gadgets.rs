@@ -132,7 +132,7 @@ pub struct RegisterFile<E: Engine> {
 }
 
 
-pub struct Blake2sGadget<E: Engine> {
+pub struct NaiveBlake2sGadget<E: Engine> {
     xor_table: Arc<LookupTableApplication<E>>,
     xor_rotate_table4: Arc<LookupTableApplication<E>>,
     xor_rotate_table7: Arc<LookupTableApplication<E>>,
@@ -142,7 +142,7 @@ pub struct Blake2sGadget<E: Engine> {
     sigmas : [[usize; 16]; 10],
 }
 
-impl<E: Engine> Blake2sGadget<E> {
+impl<E: Engine> NaiveBlake2sGadget<E> {
    
     pub fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
         let columns3 = vec![
@@ -158,15 +158,6 @@ impl<E: Engine> Blake2sGadget<E> {
             columns3.clone(),
             true
         );
-
-        // let name2 : &'static str = "compound_shift_table";
-        // let compound_shift_table = LookupTableApplication::new(
-        //     name2,
-        //     CompoundShiftTable::new(CHUNK_SIZE, SHIFT, name2),
-        //     columns3.clone(),
-        //     true
-        // );
-
         let name2 : &'static str = "xor_rotate_table4";
         let xor_rotate_table4 = LookupTableApplication::new(
             name2,
@@ -182,14 +173,6 @@ impl<E: Engine> Blake2sGadget<E> {
             columns3.clone(),
             true
         );
-
-        // let name3 : &'static str = "split_table";
-        // let split_table = LookupTableApplication::new(
-        //     name3,
-        //     SplitTable::new(CHUNK_SIZE, SPLIT_POINT, name3),
-        //     columns3.clone(),
-        //     true
-        // );
 
         let xor_table = cs.add_table(xor_table)?;
         //let compound_shift_table = cs.add_table(compound_shift_table)?;
@@ -218,11 +201,11 @@ impl<E: Engine> Blake2sGadget<E> {
             [ 10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0 ]
         ];
 
-        Ok(Blake2sGadget {
+        Ok(NaiveBlake2sGadget {
             xor_table,
             xor_rotate_table4,
             xor_rotate_table7,
-            //split_table,
+
             iv,
             twisted_iv_0,
             sigmas,
@@ -461,7 +444,6 @@ impl<E: Engine> Blake2sGadget<E> {
         
         // v[a] := (v[a] + v[b] + x) mod 2**w
         *a = self.add3(cs, a, b, &mut t0)?.into();
-        //println!("a val1: {}", a.full.1.get_value().unwrap());
 
         // v[d] := (v[d] ^ v[a]) >>> 16
         let x = self.get_decomposed(cs, a)?;
@@ -475,11 +457,9 @@ impl<E: Engine> Blake2sGadget<E> {
             arr: [temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone(), temp_arr[1].clone()]
         };
         *d = new_val.into();
-        //println!("d val1: {}", self.get_full(cs, d)?.get_value().unwrap());
 
         // v[c] := (v[c] + v[d]) mod 2**w
         *c = self.add2(cs, c, d)?.into();
-        //println!("c val1: {}", self.get_full(cs, c)?.get_value().unwrap());
         
         // v[b] := (v[b] ^ v[c]) >>> 12
         let x = self.get_decomposed(cs, b)?;
@@ -496,13 +476,9 @@ impl<E: Engine> Blake2sGadget<E> {
             &[temp_arr[1].clone(), temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone()],
         )?;
         *b = new_val.into();
-        //println!("b val1: {}", self.get_full(cs, b)?.get_value().unwrap());
 
         // v[a] := (v[a] + v[b] + y) mod 2**w
-        //println!("t1: {}", self.get_full(cs, &mut t1)?.get_value().unwrap());
         *a = self.add3(cs, a, b, &mut t1)?.into();
-        //println!("a val2: {}", self.get_full(cs, a)?.get_value().unwrap());
-        
         
         // v[d] := (v[d] ^ v[a]) >>> 8
         let x = self.get_decomposed(cs, a)?;
@@ -514,13 +490,10 @@ impl<E: Engine> Blake2sGadget<E> {
             arr: [temp_arr[1].clone(), temp_arr[2].clone(), temp_arr[3].clone(), temp_arr[0].clone()]
         };
         *d = new_val.into();
-        //println!("d val2: {}", self.get_full(cs, d)?.get_value().unwrap());
         
         // v[c] := (v[c] + v[d]) mod 2**w
         *c = self.add2(cs, c, d)?.into();
-        //println!("c val2: {}", self.get_full(cs, c)?.get_value().unwrap());
         
-
         // v[b] := (v[b] ^ v[c]) >>> 7
         let x = self.get_decomposed(cs, b)?;
         let y = self.get_decomposed(cs, c)?;
@@ -534,7 +507,6 @@ impl<E: Engine> Blake2sGadget<E> {
             &temp_arr[..],
         )?;
         *b = new_val.into();
-        //println!("b val2: {}", self.get_full(cs, b)?.get_value().unwrap());
 
         Ok(())
     }
@@ -586,33 +558,20 @@ impl<E: Engine> Blake2sGadget<E> {
             self.apply_xor_with_const(cs, &mut v.regs[14], 0xffffffff)?; // Invert all bits.
         }
 
-        for i in 0..16 {
-            println!("regs: {}", self.get_full(cs, &mut v.regs[i])?.get_value().unwrap());
-        }
-      
         // Cryptographic mixing: ten rounds
         for i in 0..10 {
             // Message word selection permutation for this round.
             let s = &self.sigmas[i];
 
             self.G(cs, &mut v, 0, 4, 8, 12, &m[s[0]], &m[s[1]])?;
-            //println!("olo");
             self.G(cs, &mut v, 1, 5, 9, 13, &m[s[2]], &m[s[3]])?;
-            //println!("olot");
             self.G(cs, &mut v, 2, 6, 10, 14, &m[s[4]], &m[s[5]])?;
-            //println!("olot1");
             self.G(cs, &mut v, 3, 7, 11, 15, &m[s[6]], &m[s[7]])?;
-            //println!("olot2");
             self.G(cs, &mut v, 0, 5, 10, 15, &m[s[8]], &m[s[9]])?;
-            //println!("olot3");
             self.G(cs, &mut v, 1, 6, 11, 12, &m[s[10]], &m[s[11]])?;
-            //println!("olot4");
             self.G(cs, &mut v, 2, 7, 8, 13, &m[s[12]], &m[s[13]])?;
-            //println!("olot5");
             self.G(cs, &mut v, 3, 4, 9, 14, &m[s[14]], &m[s[15]])?;
-            //println!("olot6");
         }
-        //println!("olotr");
 
         // XOR the two halves.
         let mut res = RegisterFile { regs: Vec::with_capacity(8) };
@@ -663,11 +622,15 @@ impl<E: Engine> Blake2sGadget<E> {
         for i in 0..8 {
             res.push(self.get_full(cs, &mut hash_state.regs[i])?);
         }
-
-        for i in 0..8 {
-            println!("res: {}", res[i].get_value().unwrap());
-        }
-
         Ok(res)
+    }
+}
+
+impl<E: Engine> Blake2sGadget<E> for NaiveBlake2sGadget<E> {
+    fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
+        NaiveBlake2sGadget::new(cs);
+    }
+    fn digest<CS: ConstraintSystem<E>>(&self, cs: &mut CS, data: &[Num<E>]) -> Result<Vec<Num<E>>> {
+        self.digest(cs, data)
     }
 }
