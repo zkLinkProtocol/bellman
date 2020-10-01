@@ -74,7 +74,7 @@ mod test {
 
     fn blake2s_gadget_test_impl<G: Blake2sGadget<Bn256>>() 
     {
-        const NUM_OF_BLOCKS: usize = 3;
+        const NUM_OF_BLOCKS: usize = 1;
         let seed: &[_] = &[1, 2, 3, 4, 5];
         let mut rng: StdRng = SeedableRng::from_seed(seed);
 
@@ -90,7 +90,7 @@ mod test {
         let mut input_fr_arr = Vec::with_capacity(16 * NUM_OF_BLOCKS);
         let mut output_fr_arr = [Fr::zero(); 8];
 
-        for (i, block) in input.chunks(4).enumerate() {
+        for block in input.chunks(4) {
             input_fr_arr.push(slice_to_ff::<Fr>(block));
         }
 
@@ -101,6 +101,7 @@ mod test {
         let circuit = TestBlake2sCircuit::<Bn256, G>{
             input: input_fr_arr,
             output: output_fr_arr,
+            _gadget_marker : std::marker::PhantomData::<G>,
         };
 
         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
@@ -112,12 +113,12 @@ mod test {
     }
 
     #[test]
-    fn naive_blake2s_gadget_test<>() {
-        blake2s_gadget_test_impl::<NaiveBlake2sGadget>()
+    fn naive_blake2s_gadget_test() {
+        blake2s_gadget_test_impl::<NaiveBlake2sGadget<Bn256>>()
     }
 
     #[test]
-    fn optimized_blake2s_gadget_test<>() {
-        blake2s_gadget_test_impl::<OptimizedBlake2sGadget>()
+    fn optimized_blake2s_gadget_test() {
+        blake2s_gadget_test_impl::<OptimizedBlake2sGadget<Bn256>>()
     }  
 }
