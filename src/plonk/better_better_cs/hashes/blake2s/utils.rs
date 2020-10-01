@@ -35,7 +35,7 @@ impl<I> Iterator for Iter<I> where I: Iterator {
     }
 }
 
-pub trait Blake2sGadget<E: Engine> + Sized {
+pub trait Blake2sGadget<E: Engine> : Sized {
     fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self, SynthesisError>;
     fn digest<CS: ConstraintSystem<E>>(&self, cs: &mut CS, data: &[Num<E>]) -> Result<Vec<Num<E>>, SynthesisError>; 
 }

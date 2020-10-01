@@ -186,6 +186,10 @@ impl<E: Engine> GateAllocHelper<E> {
     pub fn new() -> Self {
         GateAllocHelper::default()
     }
+
+    pub fn set_cnst_sel(&mut self, fr: E::Fr) {
+        self.cnst_sel = fr;
+    }
 }
 
 
@@ -343,45 +347,11 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         })
     }
 
-    fn query_table<CS: ConstraintSystem<E>>(
-        &self,
-        cs: &mut CS, 
-        table: &Arc<LookupTableApplication<E>>, 
-        key1: &AllocatedNum<E>,
-        key2: &AllocatedNum<E>,
-        ph: &AllocatedNum<E>, // placeholder placer in d register
-    ) -> Result<AllocatedNum<E>> 
-    {
-        let res = match (key1.get_value(), key2.get_value()) {
-            (Some(val1), Some(val2)) => {
-                let new_val = table.query(&[val1, val2])?;
-                AllocatedNum::alloc(cs, || Ok(new_val[0]))?
-            },
-            (_, _) => AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?        
-        };
-
-        let vars = [key1.get_variable(), key2.get_variable(), res.get_variable(), ph.get_variable()];
-
-        cs.begin_gates_batch_for_step()?;
-        cs.allocate_variables_without_gate(&vars, &[])?;
-        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-        cs.end_gates_batch_for_step()?;
-        
-        Ok(res)
-    }
-
     // the trick, we are going to use is the following:
     // we may handle two range checks (for overflow flags of0 and of1) simultaneously, using only one table access
     // more precisely we form the row of variables: [of0, of1, of0 ^ of1, ph],
     // where ph - is a placeholder variable, which is not used on current row, but may be connected to previous row
     // via usage of d_next selector
-    fn range_check<CS>(&self, cs: &mut CS, of0: &AllocatedNum<E>, of1: &AllocatedNum<E>, ph: &AllocatedNum<E>) -> Result<()> 
-    where CS: ConstraintSystem<E>
-    {
-        let _unused = self.query_table(cs, &self.xor_table, of0, of1, ph)?;
-        Ok(())
-    }
-
     fn allocate_gate<CS: ConstraintSystem<E>>(&self, cs: &mut CS, gate_alloc_helper: GateAllocHelper<E>) -> Result<()> {
         // first check if all variables are actually allocated
         assert!(gate_alloc_helper.is_prepared());
@@ -922,23 +892,6 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         Ok(())
     }
 
-    // handle ternary xor: y := a ^ b ^ c and return y in both full and decomposed form
-    // we use the following optimizations: all constants are multiplexed into one
-    // if all a, b, c are variables, there will be two rows steps:
-    // first we calculate temp = a ^ b (only in decomposed form: temp[0], temp[1], temp[2], temp[3])
-    // then as usual do:
-    // temp[0], c[0], y[0], y_full
-    // temp[1], c[1], y[1], y_full - y[0] * 2^8
-    // temp[2], c[2], y[2], y_full - y[0] * 2^8 - y[1] * 2^16
-    // temp[3], c[3], y[3], y_full - y[0] * 2^8 - y[1] * 2^16 - y[2] * 2^24
-    fn apply_ternary_xor<CS: ConstraintSystem<E>>(&self, cs: &mut CS, )
-
-    // note that during calculation of temp_decomposed, no main gate is used (only application of xor table)
-    // as well as d register remains vacant
-    // we nay exploit the fact multiplexing xor-table-check with constant allocation!
-    // more precisely: if there are any constant cnst0 waiting to be allocated, we may burn the following row:
-    // a[i], b[i], temp[i], cnst, with the main gate equation d = const_cel = cnst! 
-
     // x ^ cnst = y
     // the trick used : assume that the constant is non-zero only for the 2-nd and 3-rd chunk
     // then the first row will be :
@@ -948,33 +901,297 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
 
     // if there are n -rows (and 1 <= n <= 3) modifed there will be n+1 constraints
     // if all rows are modified (n = 4) there will be 4 constraints
-    fn apply_xor_with_const<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg: &Reg<E>, cnst: u64) -> Result<Num<E>>
+    fn var_xor_const<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: &DecomposedNum<E>, cnst: u64) -> Result<Reg<E>>
+    {
+        assert_ne!(cnst, 0);
+        let zero = E::Fr::zero();
+        let one = E::Fr::one();
+        let minus_one = one.clone();
+        minus_one.negate();
+
+        let full_var = AllocatedNum::alloc(cs, || {
+            let r0 = input.r0.get_value().grab()?.to_repr().as_ref()[0];
+            let r1 = input.r1.get_value().grab()?.to_repr().as_ref()[0];
+            let r2 = input.r2.get_value().grab()?.to_repr().as_ref()[0];
+            let r3 = input.r3.get_value().grab()?.to_repr().as_ref()[0];
+
+            let n = (r0 + (r1 << 8) + (r2 << 16) + (r3 << 24)) ^ cnst;
+            Ok(self.u64_to_ff(n))
+        })?;
+        let full = Num::Allocated(full_var);
+        
+        let mut idx_used = [false, false, false, false];
+        let mut res_chunks = [input.r0.clone(), input.r1.clone(), input.r2.clone(), input.r3.clone()];
+        let mut d = full.clone();
+
+        for i in 0..4 {
+            let byte_val = (cnst >> 8 * i) & ((1 << CHUNK_SIZE) - 1);
+            if byte_val != 0 {
+                idx_used[i] = true;
+                let a = input.get_var_by_idx(i).clone();
+
+                let num = Num::Constant(self.u64_to_ff(byte_val));
+                let b = self.to_allocated(cs, &num)?;
+                
+                let c = Num::Allocated(self.xor(cs, &a, &b)?);
+                res_chunks[i] = c.clone();
+
+                let mut row = GateAllocHelper::default();
+                row.set_var(0, zero.clone(), a, true)?;
+                row.set_var(1, zero.clone(), b, true)?;
+                row.set_var(2, self.u64_to_ff(1 << (CHUNK_SIZE * 8)), c, true)?;
+                row.set_var(3, minus_one.clone(), d, true)?;
+            
+                if i != 3 || idx_used.iter().any(|flag| !flag)  {
+                    row.link_with_next_row(one.clone());
+                }
+                row.set_table(self.xor_table.clone());
+                self.allocate_gate(cs, row)?;
+
+                let w = AllocatedNum::alloc(cs || {
+                    let mut d_val = d.get_value().grab()?;
+                    let coef = self.u64_to_ff(1 << (CHUNK_SIZE * 8));
+                    let mut c_val = c.get_value().grab()?;
+                    c_val.mul_assign(&coef);
+                    d_val.sub_assign(&c_val);
+                        
+                    Ok(d_val)
+                })?;
+                d = Num::Allocated(w)
+            }
+        }
+
+        // TODO: there is still room for optimizations when 3 out of 4 chunks are modified
+        // then the constraint for the last row will be completely redundant!
+        // and hence the last row may be multiplexed with constant allocation
+        if idx_used.iter().any(|flag| !flag) {
+            // for all unused chunks allocate with initial values:
+            // equation of the form a * coef_a + b * coef_b + c * coef_d - d = 0;
+            let mut idx_iter = idx_used.iter().enumerate();
+            let dummy = Num::Allocated(AllocatedNum::alloc_zero(cs)?);
+            let mut row = GateAllocHelper::default();
+
+            for i in 0..3 {    
+                idx_iter().skip_while(|(pos, x)| **x); // need two *s!
+                let var = match idx_iter.next() {
+                    None => dummy.clone(),
+                    Some((pos, x)) => input.get_var_by_idx(pos).clone(),
+                };
+                row.set_var(i, self.u64_to_ff(1 << (8 * CHUNK_SIZE)), var, true)?;
+            }
+
+            assert_eq!(idx_iter.next(), None);
+            row.set_var(4, minus_one, d, true)?;
+            self.allocate_gate(cs, row)?;
+        }
+
+        let reg = Reg {
+            full,
+            decomposed : DecomposedNum {
+                r0: res_chunks[0], r1 : res_chunks[1], r2: res_chunks[2], r3: res_chunks[3],
+            },
+        };
+        Ok((reg))
+    }
+
+    fn var_xor_var<CS: ConstraintSystem<E>>(&self, cs: &mut CS, x: &DecomposedNum<E>, y: &DecomposedNum<E>) -> Result<Reg<E>>
+    {
+        let zero = E::Fr::zero();
+        let one = E::Fr::one();
+        let minus_one = one.clone();
+        minus_one.negate();
+
+        let full_var = AllocatedNum::alloc(cs, || {
+            let x0 = input.r0.get_value().grab()?.to_repr().as_ref()[0];
+            let x1 = input.r1.get_value().grab()?.to_repr().as_ref()[0];
+            let x2 = input.r2.get_value().grab()?.to_repr().as_ref()[0];
+            let x3 = input.r3.get_value().grab()?.to_repr().as_ref()[0];
+            let n = r0 + (r1 << 8) + (r2 << 16) + (r3 << 24);
+
+
+            Ok(self.u64_to_ff(n))
+        })?;
+        let full = Num::Allocated(full_var);
+        
+        let mut idx_used = [false, false, false, false];
+        let mut res_chunks = [input.r0.clone(), input.r1.clone(), input.r2.clone(), input.r3.clone()];
+        let mut d = full.clone();
+
+        for i in 0..4 {
+            let byte_val = (cnst >> 8 * i) & ((1 << CHUNK_SIZE) - 1);
+            if byte_val != 0 {
+                idx_used[i] = true;
+                let a = input.get_var_by_idx(i).clone();
+
+                let num = Num::Constant(self.u64_to_ff(byte_val));
+                let b = self.to_allocated(cs, &num)?;
+                
+                let c = Num::Allocated(self.xor(cs, &a, &b)?);
+                res_chunks[i] = c.clone();
+
+                let mut row = GateAllocHelper::default();
+                row.set_var(0, zero.clone(), a, true)?;
+                row.set_var(1, zero.clone(), b, true)?;
+                row.set_var(2, self.u64_to_ff(1 << (CHUNK_SIZE * 8)), c, true)?;
+                row.set_var(3, minus_one.clone(), d, true)?;
+            
+                if i != 3 || idx_used.iter().any(|flag| !flag)  {
+                    row.link_with_next_row(one.clone());
+                }
+                row.set_table(self.xor_table.clone());
+                self.allocate_gate(cs, row)?;
+
+                let w = AllocatedNum::alloc(cs || {
+                    let mut d_val = d.get_value().grab()?;
+                    let coef = self.u64_to_ff(1 << (CHUNK_SIZE * 8));
+                    let mut c_val = c.get_value().grab()?;
+                    c_val.mul_assign(&coef);
+                    d_val.sub_assign(&c_val);
+                        
+                    Ok(d_val)
+                })?;
+                d = Num::Allocated(w)
+            }
+        }
+
+        // TODO: there is still room for optimizations when 3 out of 4 chunks are modified
+        // then the constraint for the last row will be completely redundant!
+        // and hence the last row may be multiplexed with constant allocation
+        if idx_used.iter().any(|flag| !flag) {
+            // for all unused chunks allocate with initial values:
+            // equation of the form a * coef_a + b * coef_b + c * coef_d - d = 0;
+            let mut idx_iter = idx_used.iter().enumerate();
+            let dummy = Num::Allocated(AllocatedNum::alloc_zero(cs)?);
+            let mut row = GateAllocHelper::default();
+
+            for i in 0..3 {    
+                idx_iter().skip_while(|(pos, x)| **x); // need two *s!
+                let var = match idx_iter.next() {
+                    None => dummy.clone(),
+                    Some((pos, x)) => input.get_var_by_idx(pos).clone(),
+                };
+                row.set_var(i, self.u64_to_ff(1 << (8 * CHUNK_SIZE)), var, true)?;
+            }
+
+            assert_eq!(idx_iter.next(), None);
+            row.set_var(4, minus_one, d, true)?;
+            self.allocate_gate(cs, row)?;
+        }
+
+        let reg = Reg {
+            full,
+            decomposed : DecomposedNum {
+                r0: res_chunks[0], r1 : res_chunks[1], r2: res_chunks[2], r3: res_chunks[3],
+            },
+        };
+        Ok((reg))
+    }
+
+    // for description look comments preceeding "apply ternary xor"
+    fn var_xor_var_with_multiplexing<CS>(&self, cs: &mut CS, x: &DecomposedNum<E>, y: &DecomposedNum<E>) -> Result<DecomposedNum<E>>
+    where CS: ConstraintSystem<E>
+    {
+        let mut temp_chunks = <[Num<E>; 4]>::default(); 
+        let zero = E::Fr::zero();
+        let one = E::Fr::one();
+
+        // calculate temp (in decomposed form) multiplexing the calculation with constant allocation
+        for i in 0..4 {
+            let a = x.get_var_by_idx(i).clone();
+            let b = y.get_var_by_idx(i).clone();
+            let c = Num::Allocated(self.xor(cs, &a, &b)?);
+            temp_chunks[i] = c.clone();
+
+            let (d, cnst_sel) = match self.declared_cnsts.borrow().is_empty() {
+                true => (Num::Allocated(AllocatedNum::alloc_zero(cs)?), E::Fr::zero()),
+                false => {
+                    let mut input_dict = self.declared_cnsts.borrow_mut();
+                    let mut output_dict = self.allocated_cnsts.borrow_mut();
+                    let (key, val) = input_dict.iter().next().unwrap();
+                    
+                    let d = Num::Allocated(val);
+                    let mut cnst_sel = key;
+                    cnst_sel.negate();
+
+                    input_dict.remove(&key);
+                    output_dict.insert(key, val);
+                    (d, cnst_sel)
+                }
+            };
+
+            let mut row = GateAllocHelper::default();
+            row.set_var(0, zero.clone(), a, true)?;
+            row.set_var(1, zero.clone(), b, true)?;
+            row.set_var(2, zero.clone(), c, true)?;
+            row.set_var(3, one.clone(), d, true)?;
+            row.set_cnst_sel(cnst_sel);
+            row.set_table(self.xor_table.clone());
+    
+            self.allocate_gate(cs, row)?;
+        }
+
+        Ok(DecomposedNum { r0 : temp_chunks[0], r1: temp_chunks[1], r2: temp_chunks[2], r3: temp_chunks[3] })
+    }
+
+    // handle ternary xor: y := a ^ b ^ c and return y in both full and decomposed form
+    // we use the following optimizations: all constants are multiplexed into one
+    // if all a, b, c are variables, there will be two rows steps:
+    // first we calculate temp = a ^ b (only in decomposed form: temp[0], temp[1], temp[2], temp[3])
+    // then as usual do:
+    // temp[0], c[0], y[0], y_full
+    // temp[1], c[1], y[1], y_full - y[0] * 2^8
+    // temp[2], c[2], y[2], y_full - y[0] * 2^8 - y[1] * 2^16
+    // temp[3], c[3], y[3], y_full - y[0] * 2^8 - y[1] * 2^16 - y[2] * 2^24
+
+    // note that during calculation of temp_decomposed, no main gate is used (only application of xor table)
+    // as well as d register remains vacant
+    // we nay exploit the fact multiplexing xor-table-check with constant allocation!
+    // more precisely: if there are any constant cnst0 waiting to be allocated, we may burn the following row:
+    // a[i], b[i], temp[i], cnst, with the main gate equation d = const_cel = cnst! 
+    fn apply_ternary_xor<CS: ConstraintSystem<E>>(&self, cs: &mut CS, a: &Reg<E>, b: &Reg<E>, c: &Reg<E>) -> Result<Reg<E>> {
+        let res = match ((a.is_const(), a), (b.is_const(), b), (c.is_const(), c)) {
+            // all are constants
+            ((true, cnst_reg0), (true, cnst_reg1), (true, cnst_reg2)) => {
+                let n0 = cnst_reg0.full.get_value().unwrap().into_repr().as_ref()[0];
+                let n1 = cnst_reg1.full.get_value().unwrap().into_repr().as_ref()[0];
+                let n2 = cnst_reg2.full.get_value().unwrap().into_repr().as_ref()[0];
+                self.u64_to_reg(n0 ^ n1 ^ n2)
+            },
+            // one variable and two are constants
+            ((false, var_reg), (true, cnst_reg0), (true, cnst_reg1)) | ((true, cnst_reg0), (false, var_reg), (true, cnst_reg1)) |
+            ((true, cnst_reg0), (true, cnst_reg1), (false, var_reg)) => {
+                let n0 = cnst_reg0.full.get_value().unwrap().into_repr().as_ref()[0];
+                let n1 = cnst_reg1.full.get_value().unwrap().into_repr().as_ref()[0];
+                self.var_xor_const(cs, var_reg, n0 ^ n1)
+            },
+            // two are variables and one is constant
+            ((false, var_reg0), (true, cnst_reg), (false, var_reg1)) | ((true, cnst_reg), (false, var_reg0), (false, var_reg1)) |
+            ((false, var_reg0), (false, var_reg1), (true, cnst_reg)) => {
+                let tmp = self.var_xor_var_with_multiplexing(cs, &var_reg0.decomposed, &var_reg1.decomposed)?;
+                let n = cnst_reg.get_value().unwrap().to_repr().as_ref()[0];
+                self.var_xor_const(cs, &tmp, n)?
+            }
+            // all three are variables
+            _ => {
+                let tmp = self.var_xor_var_with_multiplexing(cs, &var_reg0.decomposed, &var_reg1.decomposed)?;
+                let n = cnst_reg.get_value().unwrap().to_repr().as_ref()[0];
+                self.var_xor_var(cs, &tmp, n)?
+            }
+
+            
+        }
+        Ok(res) 
+    }
+
+    fn apply_xor_with_const<CS: ConstraintSystem<E>>(&self, cs: &mut CS, reg: &Reg<E>, cnst: u64) -> Result<Reg<E>>
     {
         if reg.is_const() {
             let temp = reg.full.get_value().unwrap();
             let f_repr = temp.into_repr();
             let n = f_repr.as_ref()[0];
-            self.u64_to_reg(n ^ cnst)
+            return Ok(self.u64_to_reg(n ^ cnst))
         }
-        else {
-            let mut idx_used = [false, false, false, false];
-            for i in 0..4 {
-                let byte_val = (cnst >> 8 * i) & ((1 << CHUNK_SIZE) - 1);
-                if byte_val != 0 {
-                    idx_used[i] = true;
-
-                    let a = reg.decomposed.get_var_by_idx(i).clone();
-
-                    let num = Num::Constant(self.u64_to_ff(byte_val));
-                    let b = self.to_allocated(cs, &num)?;
-                    
-                    let c = Num::Allocated(self.xor(cs, &a, &b)?);
-                }
-            }
-            *reg = x.into();
-        }
-
-        Ok(())
+        self.var_xor_const(cs, reg, cnst)
     }
 
     fn F<CS>(&self, cs: &mut CS, mut hash_state: HashState<E>, m: &[Num<E>], total_len: u64, last_block: bool) -> Result<HashState<E>>
@@ -1041,10 +1258,22 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
             hash_state = self.F(cs, hash_state, &block[..], total_len, is_last)?;
         }
 
+        // allocate all remaining consts
+        self.constraint_all_allocated_cnsts(cs)?;
+
         let mut res = Vec::with_capacity(BLAKE2s_STATE_WIDTH / 2);
         for elem in hash_state.drain(0..(BLAKE2s_STATE_WIDTH / 2)) {
             res.push(elem.full);
         }
         Ok(res)
+    }
+}
+
+impl<E: Engine> Blake2sGadget<E> for OptimizedBlake2sGadget<E> {
+    fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
+        OptimizedBlake2sGadget::new(cs)
+    }
+    fn digest<CS: ConstraintSystem<E>>(&self, cs: &mut CS, data: &[Num<E>]) -> Result<Vec<Num<E>>> {
+        self.digest(cs, data)
     }
 }

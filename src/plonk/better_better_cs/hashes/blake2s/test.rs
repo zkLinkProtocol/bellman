@@ -12,6 +12,7 @@ mod test {
     use crate::pairing::bn256::{Bn256, Fr};
 
     use super::super::gadgets::*;
+    use super::super::optimized_gadgets::*;
     use super::super::utils::*;
     use rand::{Rng, SeedableRng, StdRng};
 
@@ -116,7 +117,7 @@ mod test {
     }
 
     #[test]
-    // fn optimized_blake2s_gadget_test<>() {
-    //     blake2s_gadget_test_impl::<NaiveBlake2sGadget>()
-    // }  
+    fn optimized_blake2s_gadget_test<>() {
+        blake2s_gadget_test_impl::<OptimizedBlake2sGadget>()
+    }  
 }

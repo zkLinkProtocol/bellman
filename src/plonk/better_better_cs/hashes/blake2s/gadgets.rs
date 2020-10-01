@@ -628,7 +628,7 @@ impl<E: Engine> NaiveBlake2sGadget<E> {
 
 impl<E: Engine> Blake2sGadget<E> for NaiveBlake2sGadget<E> {
     fn new<CS: ConstraintSystem<E>>(cs: &mut CS) -> Result<Self> {
-        NaiveBlake2sGadget::new(cs);
+        NaiveBlake2sGadget::new(cs)
     }
     fn digest<CS: ConstraintSystem<E>>(&self, cs: &mut CS, data: &[Num<E>]) -> Result<Vec<Num<E>>> {
         self.digest(cs, data)
