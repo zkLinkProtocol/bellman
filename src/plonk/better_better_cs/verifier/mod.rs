@@ -23,6 +23,26 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     proof: &Proof<E, C>,
     transcript_params: Option<T::InitializationParameters>,
 ) -> Result<bool, SynthesisError> {
+    let ((pair_with_generator, pair_with_x), success) = aggregate::<_, _, T>(vk, proof, transcript_params)?;
+    if !success {
+        return Ok(false)
+    }
+
+    let valid = E::final_exponentiation(
+        &E::miller_loop(&[
+            (&pair_with_generator.prepare(), &vk.g2_elements[0].prepare()),
+            (&pair_with_x.prepare(), &vk.g2_elements[1].prepare())
+        ])
+    ).ok_or(SynthesisError::Unsatisfiable)? == E::Fqk::one();
+
+    Ok(valid)
+}
+
+pub fn aggregate<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
+    vk: &VerificationKey<E, C>, 
+    proof: &Proof<E, C>,
+    transcript_params: Option<T::InitializationParameters>,
+) -> Result<((E::G1Affine, E::G1Affine), bool), SynthesisError> {
     let mut transcript = if let Some(params) = transcript_params {
         T::new_from_params(params)
     } else {
@@ -476,7 +496,7 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
                 beta_plus_one.add_assign(&E::Fr::one());
                 let mut gamma_beta = gamma_for_lookup_permutation;
                 gamma_beta.mul_assign(&beta_plus_one);
-        
+
                 let expected = gamma_beta.pow([(required_domain_size-1) as u64]);
 
                 // in a linearization we've taken terms:
@@ -526,7 +546,7 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
         let rhs = t_num_on_full_domain;
 
         if lhs != rhs {
-            return Ok(false);
+            return Ok(((E::G1Affine::zero(), E::G1Affine::zero()), false));
         }
     }
 
@@ -893,6 +913,7 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
 
         let scaled = commitment.mul(aggregation_challenge.into_repr());
         aggregated_commitment_at_z.add_assign(&scaled);
+        // dbg!(aggregated_commitment_at_z.into_affine());
 
         let mut tmp = value;
         tmp.mul_assign(&aggregation_challenge);
@@ -950,7 +971,6 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     pair_with_generator.sub_assign(&tmp);
 
     // +z * q(x)
-
     let mut tmp = proof.opening_proof_at_z.mul(z.into_repr());
 
     let mut t0 = z_omega;
@@ -967,13 +987,6 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     pair_with_x.negate();
 
     let pair_with_generator = pair_with_generator.into_affine();
-
-    let valid = E::final_exponentiation(
-        &E::miller_loop(&[
-            (&pair_with_generator.prepare(), &vk.g2_elements[0].prepare()),
-            (&pair_with_x.prepare(), &vk.g2_elements[1].prepare())
-        ])
-    ).ok_or(SynthesisError::Unsatisfiable)? == E::Fqk::one();
-
-    Ok(valid)
+    
+    Ok(((pair_with_generator, pair_with_x), true))
 }

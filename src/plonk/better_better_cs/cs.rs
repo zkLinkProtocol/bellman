@@ -2330,6 +2330,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(map)
     }
 
+    #[track_caller]
     pub fn create_setup<C: Circuit<E>>(
         &self,
         worker: &Worker
