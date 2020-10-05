@@ -359,7 +359,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
 
         let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
         let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
-        let mut gate_term = MainGateTerm::new();
+        let gate_term = MainGateTerm::new();
         let (mut vars, mut coefs) = CS::MainGate::format_term(gate_term, dummy)?;
 
         // plug-in all linear terms
@@ -386,7 +386,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         cs.begin_gates_batch_for_step()?;
         
         // apply table lookup if we have one
-        if let Some(table) = gate_alloc_helper.table { 
+        if let Some(table) = gate_alloc_helper.table {
             cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
         }
 
@@ -866,8 +866,11 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         let temp_b = xor_rot_data2.z.clone(); 
 
         // first half of g function - burn preallocated variables to protoboard
+        println!("1");
         self.g_ternary_addition_process(cs, a, b, x, &temp_a, &of1, &of2)?;
+        println!("2");
         self.g_xor_rot_process(cs, &temp_a, d, xor_rot_data1, 16)?;
+        println!("3");
         self.g_binary_addition_process(cs, c, &temp_d, &temp_c, &of2)?;
         self.g_xor_rot_process(cs, b, &temp_c, xor_rot_data2, 12)?;
         
@@ -1186,6 +1189,7 @@ impl<E: Engine> OptimizedBlake2sGadget<E> {
         v.0[12] = self.apply_xor_with_const(cs, &mut v.0[12], total_len & ((1 << REG_WIDTH) - 1))?; // Low word of the offset.
         v.0[13] = self.apply_xor_with_const(cs, &mut v.0[13], total_len >> REG_WIDTH)?; // High word.
         if last_block {
+            // NB: xor with very special constant: x + y = 0xffffffff?
             v.0[14] = self.apply_xor_with_const(cs, &mut v.0[14], 0xffffffff)?; // Invert all bits.
         }
 
