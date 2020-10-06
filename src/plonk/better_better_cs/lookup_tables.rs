@@ -56,12 +56,23 @@ impl<E: Engine> PartialEq for dyn LookupTableInternal<E> {
 impl<E: Engine> Eq for dyn LookupTableInternal<E> {}
 
 /// Applies a single lookup table to a specific set of columns
-#[derive(Debug)]
 pub struct LookupTableApplication<E: Engine> {
     name: &'static str,
     apply_over: Vec<PolyIdentifier>,
     table_to_apply: Box<dyn LookupTableInternal<E>>,
+    name_generator: Option<Box<dyn (Fn() -> String) + 'static + Send + Sync>>,
     can_be_combined: bool
+}
+
+impl<E: Engine> std::fmt::Debug for LookupTableApplication<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LookupTableApplication")
+            .field("name", &self.name)
+            .field("apply_over", &self.apply_over)
+            .field("table_to_apply", &self.table_to_apply)
+            .field("can_be_combined", &self.can_be_combined)
+            .finish()
+    }
 }
 
 impl<E: Engine> PartialEq for LookupTableApplication<E> {
@@ -80,12 +91,14 @@ impl<E: Engine> LookupTableApplication<E> {
         name: &'static str,
         table: L,
         apply_over: Vec<PolyIdentifier>,
+        name_generator: Option<Box<dyn (Fn() -> String) + 'static + Send + Sync>>,
         can_be_combined: bool
     ) -> Self {
         Self {
             name,
             apply_over,
             table_to_apply: Box::from(table) as Box<dyn LookupTableInternal<E>>,
+            name_generator,
             can_be_combined
         }
     }
@@ -93,12 +106,13 @@ impl<E: Engine> LookupTableApplication<E> {
     pub fn new_range_table_of_width_3(width: usize, over: Vec<PolyIdentifier>) -> Result<Self, SynthesisError> {
         let table = RangeCheckTableOverOneColumnOfWidth3::new(width);
 
-        let name = "Range check table";
+        let name = "Range check table for a single column";
 
         Ok(Self {
             name: name,
             apply_over: over,
             table_to_apply: table.box_clone(),
+            name_generator: None,
             can_be_combined: true
         })
     }
@@ -122,12 +136,18 @@ impl<E: Engine> LookupTableApplication<E> {
             name: name,
             apply_over: over,
             table_to_apply: table.box_clone(),
+            name_generator: None,
             can_be_combined: true
         })
     }
 
     pub fn functional_name(&self) -> String {
-        format!("{} over {:?}", self.table_to_apply.name(), self.apply_over)
+        if let Some(gen) = self.name_generator.as_ref() {
+            gen()
+        } else {
+            self.name.to_string()
+            // format!("{} over {:?}", self.table_to_apply.name(), self.apply_over)
+        }
     }
 
     pub fn applies_over(&self) -> &[PolyIdentifier] {
@@ -138,6 +158,7 @@ impl<E: Engine> LookupTableApplication<E> {
         self.can_be_combined && self.table_to_apply.allows_combining()
     }
 
+    #[track_caller]
     pub fn is_valid_entry(&self, values: &[E::Fr]) -> bool {
         let num_keys = self.table_to_apply.num_keys();
         let num_values = self.table_to_apply.num_values();
@@ -389,7 +410,8 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverOneColumnOfWidth3<
         assert!(keys.len() == 3);
         assert!(values.len() == 0);
 
-        let mut valid = self.table_entries.contains(&keys[0]);
+        let repr = keys[0].into_repr().as_ref()[0];
+        let mut valid = repr < (1 << self.bits);
         valid = valid & keys[1].is_zero();
         valid = valid & keys[2].is_zero();
 

@@ -359,6 +359,25 @@ impl<E: Engine> MainGateTerm<E> {
         debug_assert!(self.num_constant_terms <= 1, "must duplicate constants");        
     }
 
+    pub fn add_assign_allowing_duplicates(&mut self, other: ArithmeticTerm<E>) {
+        match other {
+            ArithmeticTerm::Product(_, _) => {
+                self.num_multiplicative_terms += 1;
+                self.terms.push(other);
+            },
+            ArithmeticTerm::SingleVariable(_, _) => {
+                // we just push and don't even count this variable as duplicatable
+                self.terms.push(other);
+            },
+            ArithmeticTerm::Constant(_) => {
+                self.num_constant_terms += 1;
+                self.terms.push(other);
+            },
+        }
+        
+        debug_assert!(self.num_constant_terms <= 1, "must duplicate constants");        
+    }
+
     pub fn sub_assign(&mut self, mut other: ArithmeticTerm<E>) {
         match &mut other {
             ArithmeticTerm::Product(_, ref mut coeff) => {
@@ -373,6 +392,24 @@ impl<E: Engine> MainGateTerm<E> {
         }
 
         self.add_assign(other);
+
+        debug_assert!(self.num_constant_terms <= 1, "must not duplicate constants");        
+    }
+
+    pub fn sub_assign_allowing_duplicates(&mut self, mut other: ArithmeticTerm<E>) {
+        match &mut other {
+            ArithmeticTerm::Product(_, ref mut coeff) => {
+                coeff.negate();
+            },
+            ArithmeticTerm::SingleVariable(_, ref mut coeff) => {
+                coeff.negate();
+            },
+            ArithmeticTerm::Constant(ref mut coeff) => {
+                coeff.negate(); 
+            },
+        }
+
+        self.add_assign_allowing_duplicates(other);
 
         debug_assert!(self.num_constant_terms <= 1, "must not duplicate constants");        
     }
@@ -1796,6 +1833,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Err(SynthesisError::AssignmentMissing)
     }
 
+    #[track_caller]
     fn apply_single_lookup_gate(&mut self, variables: &[Variable], table: Arc<LookupTableApplication<E>>) -> Result<(), SynthesisError> {
         let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
         // make zero-enumerated index
@@ -1840,7 +1878,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
             assert_eq!(variables.len(), table.applies_over().len());
 
-            assert!(table.is_valid_entry(&table_entries[..keys_and_values_len]));
+            let valid_entries = table.is_valid_entry(&table_entries[..keys_and_values_len]);
+            assert!(valid_entries);
+
+            if !valid_entries {
+                return Err(SynthesisError::Unsatisfiable);
+            }
 
             entries.push(table_entries);
         }
@@ -1850,6 +1893,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(())
     }
     
+    #[track_caller]
     fn apply_multi_lookup_gate(&mut self, variables: &[Variable], table: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError> {
         let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
         // make zero-enumerated index
