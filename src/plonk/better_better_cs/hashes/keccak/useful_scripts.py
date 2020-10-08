@@ -28,3 +28,25 @@ for it in product(xrange(1, 4), repeat=4):
         print it
         
 print "final"
+
+offsets = [
+    [0, 36, 3, 210, 105], 
+    [1, 300, 10, 45, 66],
+    [190, 6, 171, 15, 253],
+    [28, 55, 153, 21, 120], 
+    [91, 276, 231, 136, 78],
+]
+
+offsets = [ [64 - (elem % 64) for elem in arr]  for arr in offsets]
+offsets[0][0] = 0
+print offsets
+rems = [ [(elem - 1) % 4 for elem in arr] for arr in offsets]
+print rems
+
+# group: [2, 3, 2, 2]
+# we may group [1, 1, 1] - checking that there sum is 3 if won't even require table access
+# group [3, 3, 2], group [3, 3, 2], group [3, 3, 2], group [1, 1, 1]
+# [3, 2, 2, 2] - split into two:
+#[3, 2, dummy] и [2, 2, dummy] с условием a * b = 4
+
+# all 1-s idxes' : [0, 2]

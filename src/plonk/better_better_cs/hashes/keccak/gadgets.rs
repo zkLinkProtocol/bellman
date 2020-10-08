@@ -160,17 +160,17 @@ impl<E: Engine> KeccakGadget<E> {
     }
 
     fn theta<CS: ConstraintSystem<E>>(&self, cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
-        let mut c_arr = [Num<E>; KECCAK_LANE_WIDTH]::default(); 
+        let mut C = <[Num<E>; KECCAK_LANE_WIDTH as usize]>::default(); 
         // calculate C[x] for each column:
         for i in 0..KECCAK_LANE_WIDTH {
-            c_arr[i] = Num::sum(cs, &state[i])?;
+            C[i] = Num::sum(cs, &state.0[i])?;
         }
 
         // recalculate state
         let coeffs = [E::Fr::one(), E::Fr::one(), u64_to_ff(KECCAK_FIRST_SPARSE_BASE)];
         let mut new_state = KeccakState::default();
         for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
-            new_state[i][j] = Num::lc(cs, &coeffs, &[state[i][j], c_arr[(i-1) % 5], c_arr[(i+1) % 5])?;
+            new_state[i][j] = Num::lc(cs, &coeffs, &[state[i][j], C[(i-1) % KECCAK_LANE_WIDTH], C[(i+1) % KECCAK_LANE_WIDTH])?;
         }
         Ok(new_state)   
     }
@@ -178,10 +178,11 @@ impl<E: Engine> KeccakGadget<E> {
     fn pi<CS: ConstraintSystem<E>>(&self, _cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
         let mut new_state = KeccakState::default();
         for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
-            A′[x, y, z]=A[(x + 3y) mod 5, x, z]
+            new_state[i][j] = state[(i + 3*j) % KECCAK_LANE_WIDTH][i]
         }
         Ok(new_state)
     }
 
     // we unite /rho (rotate) and conversion (FIRST_SPARSE_BASE -> SECOND_SPARSE_BASE) in one function
+
 }
