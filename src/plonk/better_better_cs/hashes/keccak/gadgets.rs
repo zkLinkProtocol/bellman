@@ -33,9 +33,15 @@ const BINARY_BASE: u64 = 2;
 // keccak state has 5 x 5 x 64 - bits, 
 // each row of 64 bits is a lane.
 const KECCAK_STATE_WIDTH : usize = 5;
-const KECCAK_LANE_WIDTH: usize = 64;
+const KECCAK_LANE_WIDTH: u64 = 64;
 #[derive(Clone)]
 pub struct KeccakState<E: Engine>([[Num<E>; KECCAK_STATE_WIDTH]; KECCAK_STATE_WIDTH]);
+
+impl<E: Engine> Default for KeccakState<E> {
+    fn default() -> Self {
+        KeccakState(<[[Num<E>; KECCAK_STATE_WIDTH]; KECCAK_STATE_WIDTH]>::default())
+    }
+}
 
 pub struct KeccakGadget<E: Engine> {
     // table used to convert binary register into first_sparse_base
@@ -56,10 +62,6 @@ pub struct KeccakGadget<E: Engine> {
     second_base_num_of_chunks: usize,
 
     allocated_cnsts : RefCell<HashMap<E::Fr, AllocatedNum<E>>>,
-    
-    // constants 
-
-    _marker: std::marker::PhantomData<E>,
 }
 
 impl<E: Engine> KeccakGadget<E> {
@@ -113,59 +115,73 @@ impl<E: Engine> KeccakGadget<E> {
         );
 
         let name4 : &'static str = "ternary_range_table";
+        let f = |x| { keccak_u64_second_converter(x)};
         let ternary_range_table = LookupTableApplication::new(
             name4,
-            Sha256SparseRotateTable::new(SHA256_GADGET_CHUNK_SIZE, 2, SHA256_GADGET_CHUNK_SIZE-1, SHA256_MAJORITY_BASE, name4),
+            TinyRangeTable::new(range_table_lower_bound, range_table_upper_bound, name4),
             columns3.clone(),
             true
         );
         
-
         let name5 : &'static str = "from_second_base_converter_table";
-        let sha256_ch_normalization_table = LookupTableApplication::new(
+        let from_second_base_converter_table = LookupTableApplication::new(
             name5,
-            Sha256ChooseTable::new(ch_base_num_of_chunks, name5),
+            MultiBaseConverterTable::new(
+                second_base_num_of_chunks, KECCAK_SECOND_SPARSE_BASE, KECCAK_FIRST_SPARSE_BASE, BINARY_BASE, f, name5
+            ),
             columns3.clone(),
             true
         );
 
-        let sha256_base7_rot6_table = cs.add_table(sha256_base7_rot6_table)?;
-        let sha256_base7_rot3_extr10_table = cs.add_table(sha256_base7_rot3_extr10_table)?;
-        let sha256_base4_rot2_table  = cs.add_table(sha256_base4_rot2_table)?;
+        let binary_to_first_base_converter_table = cs.add_table(binary_to_first_base_converter_table)?;
+        let first_to_second_base_converter_table = cs.add_table(first_to_second_base_converter_table)?;
+        let of_first_to_second_base_converter_table = cs.add_table(of_first_to_second_base_converter_table)?;
+        let ternary_range_table = cs.add_table(ternary_range_table)?;
+        let from_second_base_converter_table = cs.add_table(from_second_base_converter_table)?;
 
-        // do constabts
+        let allocated_cnsts = RefCell::new(HashMap::new());
 
-        Ok(Sha256GadgetParams {
-            global_strategy,
-            global_table,
-            majority_strategy,
+        Ok(KeccakGadget {
+            binary_to_first_base_converter_table,
+            first_to_second_base_converter_table,
+            of_first_to_second_base_converter_table,
+            ternary_range_table,
+            from_second_base_converter_table,
+    
+            binary_base_num_of_chunks,
+            first_base_num_of_chunks,
+            of_first_base_num_of_chunks,
+            range_table_lower_bound,
+            range_table_upper_bound,
+            second_base_num_of_chunks,
 
-            ch_base_num_of_chunks,
-            maj_base_num_of_chunks,
-            sheduler_base_num_of_chunks,
-
-            sha256_base7_rot6_table,
-            sha256_base7_rot3_extr10_table,
-            sha256_ch_normalization_table,
-            sha256_ch_xor_table,
-
-            sha256_base4_rot2_table,
-            sha256_base4_rot2_extr10_table,
-            sha256_maj_normalization_table,
-            sha256_maj_xor_table,
-
-            sha256_base4_rot7_table,
-            sha256_base4_widh10_table,
-            sha256_base4_shift3_table,
-            sha256_base4_rot9_table,
-            sha256_sheduler_xor_table,
-
-            range_table,
-
-            iv,
-            round_constants,
-
-            _marker : std::marker::PhantomData,
+            allocated_cnsts,
         })
     }
+
+    fn theta<CS: ConstraintSystem<E>>(&self, cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
+        let mut c_arr = [Num<E>; KECCAK_LANE_WIDTH]::default(); 
+        // calculate C[x] for each column:
+        for i in 0..KECCAK_LANE_WIDTH {
+            c_arr[i] = Num::sum(cs, &state[i])?;
+        }
+
+        // recalculate state
+        let coeffs = [E::Fr::one(), E::Fr::one(), u64_to_ff(KECCAK_FIRST_SPARSE_BASE)];
+        let mut new_state = KeccakState::default();
+        for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
+            new_state[i][j] = Num::lc(cs, &coeffs, &[state[i][j], c_arr[(i-1) % 5], c_arr[(i+1) % 5])?;
+        }
+        Ok(new_state)   
+    }
+
+    fn pi<CS: ConstraintSystem<E>>(&self, _cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
+        let mut new_state = KeccakState::default();
+        for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
+            A′[x, y, z]=A[(x + 3y) mod 5, x, z]
+        }
+        Ok(new_state)
+    }
+
+    // we unite /rho (rotate) and conversion (FIRST_SPARSE_BASE -> SECOND_SPARSE_BASE) in one function
 }

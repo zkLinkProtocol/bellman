@@ -255,8 +255,8 @@ pub struct MultiBaseConverterTable<E: Engine> {
 }
 
 impl<E: Engine> MultiBaseConverterTable<E> {
-    pub fn new<F, G>(num_ch: usize, input_base: u64, output_base1: u64, output_base2: u64, f1: F, f2: G, name: &'static str) -> Self 
-    where F : Fn(u64) -> u64, G: Fn(u64) -> u64
+    pub fn new<F>(num_ch: usize, input_base: u64, output_base1: u64, output_base2: u64, transform_f: F, name: &'static str) -> Self 
+    where F : Fn(u64) -> u64
     {
         let table_size = pow(input_base as usize, num_ch);
         let mut keys_vec = Vec::with_capacity(table_size);
@@ -280,14 +280,14 @@ impl<E: Engine> MultiBaseConverterTable<E> {
             let value1 = coefs.iter().fold(zero_fr.clone(), |acc, x| {
                 let mut tmp = acc;
                 tmp.mul_assign(&first_output_base_fr);
-                tmp.add_assign(&u64_to_ff(f1(*x)));
+                tmp.add_assign(&u64_to_ff(transform_f(*x)));
                 tmp
             });
 
             let value2 = coefs.iter().fold(zero_fr.clone(), |acc, x| {
                 let mut tmp = acc;
                 tmp.mul_assign(&second_output_base_fr);
-                tmp.add_assign(&u64_to_ff(f2(*x)));
+                tmp.add_assign(&u64_to_ff(transform_f(*x)));
                 tmp
             });
 
