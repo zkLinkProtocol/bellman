@@ -24,6 +24,7 @@ use std::ops::{Index, IndexMut};
 use crate::num_bigint::BigUint;
 use crate::num_traits::cast::ToPrimitive;
 use crate::num_traits::{Zero, One};
+use itertools::Itertools;
 
 type Result<T> = std::result::Result<T, SynthesisError>;
 
@@ -220,6 +221,94 @@ impl<E: Engine> KeccakGadget<E> {
         })
     }
 
+    // returns closets upper integer to a / b
+    fn round_up(a: usize, b : usize) -> usize {
+        let additional_chunks : usize = if a % b > 0 {1} else {0};
+        a/b + additional_chunks
+    }
+
+    // for row of the form [x, f(x), g(x), acc] do:
+    // table query x => f(x), g(x)
+    // running sum for input: acc_next = acc - coef * x
+    // if is_final is set, simply check: acc = coef * x
+    // returns (f(x), g(x), acc_next)
+    fn query_table_accumulate<CS: ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        table: &Arc<LookupTableApplication<E>>, 
+        key: &AllocatedNum<E>,
+        prev_acc: &AllocatedNum<E>,
+        coef: &E::Fr,
+        is_final: bool,
+    ) -> Result<AllocatedNum<E>> 
+    {
+        let (f_key, g_key) = match key.get_value() {
+            None => {
+                (
+                    AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?, 
+                    AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
+                ),
+            }
+            Some(val) => {
+                let vals = table.query(&[val])?;
+                (AllocatedNum::alloc(cs, || Ok(vals[0]))?, AllocatedNum::alloc(cs, || Ok(vals[1]))?),
+            },     
+        };
+
+        let new_acc = if !is_final {
+            AllocatedNum::alloc(cs, || {
+                let mut res = prev_acc.get_value().grab()?;
+                let mut tmp = key.get_value().grab()?;
+                tmp.mul_assign(coef);
+                res.sub_assign(&(f_key.get_value().grab())?);
+                Ok(tmp)
+            })?;
+        }
+        else {
+            AllocatedNum::alloc_zero(cs)?;
+        };
+
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        let range_of_next_step_linear_terms = CS::MainGate::range_of_next_step_linear_terms();
+        let idx_of_last_linear_term = range_of_next_step_linear_terms.last().expect("must have an index");
+
+        // new_acc = prev_acc - base * key
+        // or: base * key + new_acc - prev_acc = 0;
+        let vars = [key.get_variable(), f_key.get_variable(), g_key.get_variable(), new_acc.get_variable()];
+        let coeffs = [coef.clone(), E::Fr::zero(), E::Fr::zero(), minus_one];
+
+        cs.begin_gates_batch_for_step()?;
+
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+    
+        let mut gate_term = MainGateTerm::new();
+        let (_, mut gate_coefs) = CS::MainGate::format_term(gate_term, dummy)?;
+
+        for (idx, coef) in range_of_linear_terms.zip(coeffs.into_iter()) {
+            gate_coefs[idx] = coef;
+        }
+
+        if !is_final {
+            gate_coefs[idx_of_last_linear_term] = E::Fr::one();
+        }
+
+        let mg = CS::MainGate::default();
+        cs.new_gate_in_batch(
+            &mg,
+            &gate_coefs,
+            &vars,
+            &[]
+        )?;
+
+        cs.end_gates_batch_for_step()?;
+
+        Ok((f_key, g_key, new_acc))
+    }
+
     fn theta<CS: ConstraintSystem<E>>(&self, cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
         let mut C = Vec::with_capacity(KECCAK_LANE_WIDTH);
         // calculate C[x] for each column:
@@ -230,7 +319,7 @@ impl<E: Engine> KeccakGadget<E> {
         // recalculate state
         let coeffs = [E::Fr::one(), E::Fr::one(), u64_to_ff(KECCAK_FIRST_SPARSE_BASE)];
         let mut new_state = KeccakState::default();
-        for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
+        for (i, j) in (0..KECCAK_LANE_WIDTH).cartesian_product(0..KECCAK_LANE_WIDTH) {
             let inputs = [state[(i, j)].clone(), C[(i-1) % KECCAK_LANE_WIDTH].clone(), C[(i+1) % KECCAK_LANE_WIDTH].clone()];
             new_state[(i, j)] = Num::lc(cs, &coeffs, &inputs[..])?;
         }
@@ -239,44 +328,128 @@ impl<E: Engine> KeccakGadget<E> {
 
     fn pi<CS: ConstraintSystem<E>>(&self, _cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
         let mut new_state = KeccakState::default();
-        for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
+        for (i, j) in (0..KECCAK_LANE_WIDTH).cartesian_product(0..KECCAK_LANE_WIDTH) {
             new_state[(i, j)] = state[((i + 3*j) % KECCAK_LANE_WIDTH, i)].clone();
         }
         Ok(new_state)
     }
 
-    fn xi_i<CS>(&self, state: KeccakState<E>, round: usize, squeeze: u64, is_final: bool) -> Result<(KeccakState<E>, Vec<Num<E>>)> 
-    where CS: ConstraintSystem<E>
+    fn xi_i<CS: ConstraintSystem<E>(
+        &self, cs: &mut CS state: KeccakState<E>, round: usize, elems_to_squeeze: u64, is_final: bool,
+    ) -> Result<(KeccakState<E>, Vec<Num<E>>)> 
     {
         let mut new_state = KeccakState::default();
         let mut iter_count = 0;
         let coeffs = [u64_to_ff(2), E::Fr::one(), u64_to_ff(3), E::Fr::one()];
+        let mut squeezed = Vec::with_capacity();
+        
+        let num_of_chunks = self.second_base_num_of_chunks;
+        let num_slices = Self::round_up(KECCAK_LANE_WIDTH, num_of_chunks);
+                    
+        let input_slice_modulus = pow(KECCAK_SECOND_SPARSE_BASE, num_of_chunks);
+        let output1_slice_modulus = pow(KECCAK_FIRST_SPARSE_BASE, num_of_chunks);
+        let output2_slice_modulus = pow(BINARY_BASE, num_of_chunks);
 
-        for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
+        let input_slice_modulus_fr = u64_exp_to_ff(KECCAK_SECOND_SPARSE_BASE, num_of_chunks);
+        let output1_slice_modulus_fr = u64_exp_to_ff(KECCAK_FIRST_SPARSE_BASE, num_of_chunks);
+        let output2_slice_modulus_fr = u64_exp_to_ff(KECCAK_SECOND_SPARSE_BASE, num_of_chunks);
+
+        for (j, i) in (0..KECCAK_LANE_WIDTH).cartesian_product(0..KECCAK_LANE_WIDTH) {
             // A′[x, y,z] = A[x, y,z] ⊕ ((A[(x+1) mod 5, y, z] ⊕ 1) ⋅ A[(x+2) mod 5, y, z]).
             // the corresponding algebraic transform is y = 2a + b + 3c +2d
             // d is always constant and nonzero only for lane[0][0]
             let d = if i == 0  && j == 0 { self.round_cnsts } else { Num::default() };
-            let inputs = [state[(i, j)].clone(), state[((i+1 % KECCAK_STATE_WIDTH), y)], state[((i+2 % KECCAK_STATE_WIDTH), y)], d];
+            let inputs = [state[(i, j)].clone(), state[((i+1 % KECCAK_STATE_WIDTH), j)], state[((i+2 % KECCAK_STATE_WIDTH), j)], d];
             let lc = Num::lc(cs, &coeffs, &inputs)?;
 
             match lc {
-                Num::Constant(fr)
+                Num::Constant(fr) => {
+                    new_state[(i, j)] = Num::Constant(keccak_ff_second_converter(fr, KECCAK_FIRST_SPARSE_BASE));
+                    if iter_count < elems_to_squeeze {
+                        squeezed.push(Num::Constant(keccak_ff_second_converter(fr, BINARY_BASE)));
+                    }
+                }
+                Num::Allocated(var) => {
+                    let mut input_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
+                    let mut output1_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
+                    let mut output2_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
+
+                    match var.get_value() {
+                        None => {
+                            for _ in 0..num_slices {
+                                let tmp = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
+                                input_slices.push(tmp);
+                            }
+                        },
+                        Some(f) => {
+                            // here we have to operate on row biguint number
+                            let mut big_f = BigUint::default();
+                            let f_repr = f.into_repr();
+                            for n in f_repr.as_ref().iter().rev() {
+                                big_f <<= 64;
+                                big_f += *n;
+                            } 
+
+                            for _ in 0..num_slices {
+                                let remainder = (big_f.clone() % BigUint::from(input_slice_modulus)).to_u64().unwrap();
+                                let new_val = Self::u64_to_ff(remainder);
+                                big_f /= input_slice_modulus;
+                                let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
+                                input_slices.push(tmp);
+                            }
+
+                            assert!(big_f.is_zero());
+                        }
+                    }
+
+                    let mut coef = E::Fr::one();
+                    let mut acc = var.clone();
+                    for (_is_first, is_last, input_chunk) in input_slices.iter().identify_first_last() {
+                        let (output1, output2, new_acc) = self.query_table_accumulate(
+                            cs, self.from_second_base_converter_table, input_chunk, &acc, &coef, is_last
+                        )?; 
+
+                        coef.mul_assign(&input_slice_modulus_fr);
+                        acc = new_acc;
+                    }
+
+                    if !is_final {
+                        let mut output1_total = AllocatedNum::alloc(cs, || {
+                            let fr = var.get_value().grab()?;
+                            Ok(keccak_ff_second_converter(fr, KECCAK_FIRST_SPARSE_BASE))
+                        })?;
+
+                        AllocatedNum::long_weighted_sum_eq(cs, &output1_slices[..], &output1_slice_modulus_fr, output1_total)?;
+                        new_state[(i, j)] = Num::Allocated(output1_total);
+                    }
+
+                    if iter_count < elements_to_squeeze {
+                        let mut output2_total = AllocatedNum::alloc(cs, || {
+                            let fr = var.get_value().grab()?;
+                            Ok(keccak_ff_second_converter(fr, BINARY_BASE))
+                        })?;
+
+                        AllocatedNum::long_weighted_sum_eq(cs, &output2_slices[..], &output2_slice_modulus_fr, output2_total)?;
+                        squeezed.push(Num::Allocated(output2_total));
+                    }
+                }
             }
         }
+
+        Ok((new_state, squeezed))
     }
 
     // we unite /rho (rotate) and conversion (FIRST_SPARSE_BASE -> SECOND_SPARSE_BASE) in one function
-    fn rho<CS: ConstraintSystem<E>>(&self, state: KeccakState<E>) -> Result<KeccakState<E>> {
-        let mut new_state = KeccakState::default();
-        let mut arr1 
-        let mut arr2
-        let mut arr3
+    // fn rho<CS: ConstraintSystem<E>>(&self, state: KeccakState<E>) -> Result<KeccakState<E>> {
+    //     let mut new_state = KeccakState::default();
+    //     let mut arr1 
+    //     let mut arr2
+    //     let mut arr3
 
-        for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
-            let offset = self.offsets[i][j];
+    //     for (i, j) in (0..KECCAK_LANE_WIDTH).zip(0..KECCAK_LANE_WIDTH) {
+    //         let offset = self.offsets[i][j];
 
-        } 
-    }
+    //     } 
+    // }
 
 }

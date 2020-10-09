@@ -654,6 +654,46 @@ impl<E: Engine> AllocatedNum<E> {
             variable: addition_result
         })
     }
+
+    pub fn lс_eq<CS>(cs: &mut CS, vars: &[Self], lc_coefs: &[E::Fr], total: &Self) -> Result<(), SynthesisError>
+    where CS: ConstraintSystem<E>
+    {
+        let mut coeffs = Vec::with_capacity(5);
+        let mut current_vars = Vec::with_capacity(4);
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        for (var, lc_coef) in vars.iter().zip(lc_coefs.iter()) {
+            if current_vars.len() < 4 {
+                coeffs.push(lc_coef.clone());
+                current_vars.push(var.clone());
+            }
+            else {
+                // we have filled in the whole vector!
+                coeffs.push(minus_one.clone());
+                let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
+                coeffs = vec![E::Fr::one(), lc_coef.clone()];
+                current_vars = vec![temp, var.clone()];
+            }
+        }
+
+        if current_vars.len() == 4 {
+            // we have filled in the whole vector!
+            coeffs.push(minus_one.clone());
+            let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
+            coeffs = vec![E::Fr::one()];
+            current_vars = vec![temp];
+        }
+
+        // pad with dummy variables
+        for _i in current_vars.len()..3 {
+            current_vars.push(AllocatedNum::alloc_zero(cs)?);
+            coeffs.push(E::Fr::zero());
+        }
+
+        AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &current_vars[..], &E::Fr::zero(), total)?;
+        Ok(())
+    }
 }
 
 
