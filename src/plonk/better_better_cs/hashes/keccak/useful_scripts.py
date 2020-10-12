@@ -50,3 +50,21 @@ print rems
 #[3, 2, dummy] и [2, 2, dummy] с условием a * b = 4
 
 # all 1-s idxes' : [0, 2]
+
+#3 , 2, 2: 3   3 * a = b * c
+# remainder [2, 2, 2] : 
+# [2, 2, x]: a * b = [1, 2, 4]: 3x - 2y
+# 2 * a * b - a - b : 0, 1, 4
+# a * b + a + b : [3, 5, 8,  | 7, 11, 15  3x - 2y 
+def lc(x, y, a, b):
+    return a *x - b * y
+
+for it in product(xrange(0, 100), repeat = 2):
+    a = it[0]
+    b = it[1]
+    vals = {}
+    for it in product(xrange(1,4), repeat = 2):
+        vals[lc(it[0], it[1], a, b)] = 1
+    if 2 in vals and 4 in vals and 8 in vals and 6 not in vals and 18 not in vals:
+        print "found"
+        print (a, b)

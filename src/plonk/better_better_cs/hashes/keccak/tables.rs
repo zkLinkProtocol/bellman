@@ -378,7 +378,7 @@ impl<E: Engine> LookupTableInternal<E> for MultiBaseConverterTable<E> {
 #[derive(Clone)]
 pub struct OverflowFriendlyBaseConverterTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 3],
-    table_lookup_map: std::collections::HashMap<E::Fr, E::Fr>,
+    table_lookup_map: std::collections::HashMap<E::Fr, (E::Fr, E::Fr)>,
     num_chunks: usize,
     base_b: u64,
     base_c: u64,
@@ -390,8 +390,8 @@ impl<E: Engine> OverflowFriendlyBaseConverterTable<E> {
     pub fn new<F: Fn(u64) -> u64>(num_chunks: usize, base_b: u64, base_c: u64, offset: u64, f: F, name: &'static str) -> Self {
         let table_size = pow(base_b as usize, num_chunks);
         let mut keys_vec = Vec::with_capacity(table_size);
+        let mut chunk_count_vec = Vec::with_capacity(table_size);
         let mut values_vec = Vec::with_capacity(table_size);
-        let unused = vec![E::Fr::zero(); table_size];
         let mut map = std::collections::HashMap::with_capacity(table_size);
 
         let base_b_fr = u64_to_ff::<E::Fr>(base_b);
@@ -412,6 +412,11 @@ impl<E: Engine> OverflowFriendlyBaseConverterTable<E> {
             });
             key.add_assign(&high_fr);
 
+            let mut chunk_count = (num_chunks - coefs.iter().take_while(|x| **x == 0).count()) as u64;
+            // optimization: if the number is zero, than chunk count is set to one: 
+            chunk_count = if chunk_count > 0 {chunk_count} else {1};
+            let chunk_count_fr = u64_to_ff(chunk_count);
+
             *coefs.last_mut().unwrap() += high;
             let value = coefs.iter().fold(zero_fr.clone(), |acc, x| {
                 let mut tmp = acc;
@@ -421,12 +426,13 @@ impl<E: Engine> OverflowFriendlyBaseConverterTable<E> {
             });
 
             keys_vec.push(key);
+            chunk_count_vec.push(chunk_count_fr);
             values_vec.push(value);
-            map.insert(key, value);
+            map.insert(key, (chunk_count_fr, value));
         }
 
         Self {
-            table_entries: [keys_vec, values_vec, unused],
+            table_entries: [keys_vec, chunk_count_vec, values_vec],
             table_lookup_map: map,
             num_chunks,
             base_b,
@@ -478,7 +484,7 @@ impl<E: Engine> LookupTableInternal<E> for OverflowFriendlyBaseConverterTable<E>
     }
     fn column_is_trivial(&self, column_num: usize) -> bool {
         assert!(column_num < 3);
-        column_num == 2
+        false
     }
 
     fn is_valid_entry(&self, keys: &[E::Fr], values: &[E::Fr]) -> bool {
@@ -486,7 +492,7 @@ impl<E: Engine> LookupTableInternal<E> for OverflowFriendlyBaseConverterTable<E>
         assert!(values.len() == self.num_values());
 
         if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
-            return entry == &values[0];
+            entry == &(values[0], values[1]);
         }
         false
     }
@@ -495,7 +501,7 @@ impl<E: Engine> LookupTableInternal<E> for OverflowFriendlyBaseConverterTable<E>
         assert!(keys.len() == self.num_keys());
 
         if let Some(entry) = self.table_lookup_map.get(&keys[0]) {
-            return Ok(vec![*entry, E::Fr::zero()])
+            return Ok(vec![entry.0, entry.1])
         }
 
         Err(SynthesisError::Unsatisfiable)

@@ -655,7 +655,7 @@ impl<E: Engine> AllocatedNum<E> {
         })
     }
 
-    pub fn lс_eq<CS>(cs: &mut CS, vars: &[Self], lc_coefs: &[E::Fr], total: &Self) -> Result<(), SynthesisError>
+    pub fn lc_eq<CS>(cs: &mut CS, vars: &[Self], lc_coefs: &[E::Fr], total: &Self) -> Result<(), SynthesisError>
     where CS: ConstraintSystem<E>
     {
         let mut coeffs = Vec::with_capacity(5);

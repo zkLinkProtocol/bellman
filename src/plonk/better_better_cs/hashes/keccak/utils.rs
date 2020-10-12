@@ -17,6 +17,15 @@ pub fn pow(base: usize, exp: usize) -> usize {
     res
 }
 
+pub fn biguint_pow(base: usize, exp: usize) -> BigUint {
+    let mut res = BigUint::one();
+    for _i in 0..exp {
+        res *= base;
+    }
+
+    res
+}
+
 
 pub fn u64_to_ff<Fr: PrimeField>(n: u64) -> Fr {
     let mut repr : <Fr as PrimeField>::Repr = Fr::zero().into_repr();
