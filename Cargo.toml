@@ -22,7 +22,6 @@ sha2 = "0.9"
 blake2 = "0.9"
 splitmut = "0.2"
 itertools = "0.9"
-keccak = "0.1.0"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
 pairing = {package = "pairing_ce", version = "0.24.*" }
@@ -35,7 +34,7 @@ prefetch = {version = "0.2", optional = true}
 
 web-sys = {version = "0.3", optional = true, features = ["console", "Performance", "Window"]}
 
-tiny-keccak = {version = "1.5", optional = true}
+tiny-keccak = {version = "1.5"}
 blake2-rfc = {version = "0.2.18", optional = true}
 
 blake2s_simd = {version = "0.5", optional = true}
@@ -56,12 +55,12 @@ default = ["multicore", "plonk"]
 #default = ["multicore", "nightly"]
 #default = ["wasm"]
 multicore = ["crossbeam", "futures/thread-pool"]
-sonic = ["tiny-keccak", "blake2-rfc"]
+sonic = ["blake2-rfc"]
 gm17 = []
 nolog = []
-plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const"]
+plonk = ["blake2s_simd", "lazy_static", "blake2s_const"]
 # redshift = ["plonk", "rescue_hash", "poseidon_hash"]
 # plonk = ["blake2s_simd", "lazy_static", "tiny-keccak", "blake2s_const", "rescue_hash", "poseidon_hash"]
-marlin = ["blake2s_simd", "tiny-keccak", "blake2s_const"]
+marlin = ["blake2s_simd", "blake2s_const"]
 wasm = ["web-sys"]
 asm = ["pairing/asm"]

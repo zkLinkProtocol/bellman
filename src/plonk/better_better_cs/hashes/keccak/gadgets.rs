@@ -30,18 +30,18 @@ type Result<T> = std::result::Result<T, SynthesisError>;
 
 // keccak full_width = 1600 bits = 200 bytes
 // rate = 136 byte = 1088 bits = 17 (64-bit) words
-const KECCAK_RATE_WORDS_SIZE : usize = 17;
-const DEFAULT_KECCAK_DIGEST_WORDS_SIZE : usize = 4;
-const DEFAULT_BINARY_NUM_OF_CHUNKS : usize = 16; // 2^16 is fine
-const DEFAULT_FIRST_BASE_NUM_OF_CHUNKS : usize = 4; 
-const DEFAULT_OF_FIRST_BASE_NUM_OF_CHUNKS : usize = 2;
-const DEFAULT_SECOND_BASE_NUM_OF_CHUNKS : usize = 5;
-const BINARY_BASE: u64 = 2;
+pub const KECCAK_RATE_WORDS_SIZE : usize = 17;
+pub const DEFAULT_KECCAK_DIGEST_WORDS_SIZE : usize = 4;
+pub const DEFAULT_BINARY_NUM_OF_CHUNKS : usize = 16; // 2^16 is fine
+pub const DEFAULT_FIRST_BASE_NUM_OF_CHUNKS : usize = 4; 
+pub const DEFAULT_OF_FIRST_BASE_NUM_OF_CHUNKS : usize = 2;
+pub const DEFAULT_SECOND_BASE_NUM_OF_CHUNKS : usize = 5;
+pub const BINARY_BASE: u64 = 2;
 // keccak state has 5 x 5 x 64 - bits, 
 // each row of 64 bits is a lane.
-const KECCAK_STATE_WIDTH : usize = 5;
-const KECCAK_LANE_WIDTH : usize = 64;
-const KECCAK_NUM_ROUNDS : usize = 24;
+pub const KECCAK_STATE_WIDTH : usize = 5;
+pub const KECCAK_LANE_WIDTH : usize = 64;
+pub const KECCAK_NUM_ROUNDS : usize = 24;
 #[derive(Clone)]
 pub struct KeccakState<E: Engine>([[Num<E>; KECCAK_STATE_WIDTH]; KECCAK_STATE_WIDTH]);
 
@@ -751,12 +751,17 @@ impl<E: Engine> KeccakGadget<E> {
         let mut state = input_state;
 
         for round in 0..(KECCAK_NUM_ROUNDS-1) {
-            let (new_state, _) = self.xi_i(cs, self.rho(cs, self.pi(cs, self.theta(cs, state)?)?)?, round, 0, None, false)?;
+            state = self.theta(cs, state)?;
+            state = self.pi(cs, state)?;
+            state = self.rho(cs, state)?;
+            let (new_state, _) = self.xi_i(cs, state, round, 0, None, false)?;
             state = new_state; 
         }
 
-        let tmp = self.rho(cs, self.pi(cs, self.theta(cs, state)?)?)?;
-        let (mut new_state, out) = self.xi_i(cs, tmp, KECCAK_NUM_ROUNDS-1, elems_to_squeeze, elems_to_mix, is_final)?;
+        state = self.theta(cs, state)?;
+        state = self.pi(cs, state)?;
+        state = self.rho(cs, state)?;
+        let (mut new_state, out) = self.xi_i(cs, state, KECCAK_NUM_ROUNDS-1, elems_to_squeeze, elems_to_mix, is_final)?;
         if elems_to_mix.is_some() {
             new_state[(0, 0)] = new_state[(0, 0)].add(cs, &Num::Constant(self.round_cnsts_in_first_base[KECCAK_NUM_ROUNDS-1]))?;
         }
@@ -860,27 +865,25 @@ impl<E: Engine> KeccakGadget<E> {
         for (is_first, _is_last, data_block) in data.chunks(KECCAK_RATE_WORDS_SIZE).identify_first_last() {
             if is_first {
                 for (idx, elem) in data_block.iter().enumerate() {
-                    let out = self.convert_binary_to_sparse_repr(cs: elem, KECCAK_BASE::KECCAK_FIRST_SPARSE_BASE)?;
+                    let out = self.convert_binary_to_sparse_repr(cs, elem, KECCAK_BASE::KECCAK_FIRST_SPARSE_BASE)?;
                     state[(idx % KECCAK_STATE_WIDTH, idx / KECCAK_STATE_WIDTH)] = out;
                 }
-                else {
-                    let (new_state, _) = self.keccak_f(cs, state, 0, Some(data_block), false)?;
-                    state = new_state;
-                }
+            }
+            else {
+                let (new_state, _) = self.keccak_f(cs, state, 0, Some(data_block), false)?;
+                state = new_state;
             }            
         }
 
         while res.len() < self.digest_size {
-            let elems_to_squeeze = std::min(self.digest_size - res.len(), KECCAK_RATE_WORDS_SIZE);
-            let (new_state, squeezed) = self.keccak_f(cs, state, 0, Some(data_block), false)?;
+            let elems_to_squeeze = std::cmp::min(self.digest_size - res.len(), KECCAK_RATE_WORDS_SIZE);
+            let is_final = res.len() + KECCAK_RATE_WORDS_SIZE >= self.digest_size;
+
+            let (new_state, mut squeezed) = self.keccak_f(cs, state, elems_to_squeeze, None, is_final)?;
+            state = new_state;
+            res.extend(squeezed.unwrap().into_iter());
         }
 
         Ok(res)
     }
 } 
-
-    
-
-
-
-}
