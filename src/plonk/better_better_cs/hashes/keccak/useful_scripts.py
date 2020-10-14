@@ -68,3 +68,4 @@ for it in product(xrange(0, 100), repeat = 2):
     if 2 in vals and 4 in vals and 8 in vals and 6 not in vals and 18 not in vals:
         print "found"
         print (a, b)
+

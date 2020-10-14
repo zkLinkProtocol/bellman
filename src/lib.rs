@@ -15,6 +15,7 @@ extern crate num_traits;
 extern crate sha2;
 extern crate splitmut;
 extern crate itertools;
+extern crate keccak;
 
 pub use pairing::*;
 

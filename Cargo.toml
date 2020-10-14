@@ -22,6 +22,7 @@ sha2 = "0.9"
 blake2 = "0.9"
 splitmut = "0.2"
 itertools = "0.9"
+keccak = "0.1.0"
 
 # pairing = {package = "pairing_ce", path = "../pairing" }
 pairing = {package = "pairing_ce", version = "0.24.*" }
