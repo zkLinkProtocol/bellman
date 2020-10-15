@@ -687,6 +687,7 @@ impl<E: Engine> KeccakGadget<E> {
         let table = &self.ternary_range_table;
 
         let mut iter = input.chunks_exact(3);
+        let remainder = iter.remainder(); 
         for block in iter {
             let vars = [block[0].get_variable(), block[1].get_variable(), block[2].get_variable(), d.get_variable()];
             
@@ -699,7 +700,6 @@ impl<E: Engine> KeccakGadget<E> {
             cs.end_gates_batch_for_step()?;
         }
 
-        let remainder = iter.remainder(); 
         if !remainder.is_empty() {
             let mut vars = [dummy.get_variable(), dummy.get_variable(), dummy.get_variable(), d.get_variable()];
             for (in_arr, out_arr) in remainder.iter().zip(vars.iter_mut()) {
@@ -720,30 +720,80 @@ impl<E: Engine> KeccakGadget<E> {
 
     fn handle_general_of<CS: ConstraintSystem<E>>(
         &self, cs: &mut CS, 
-        elem: &[AllocatedNum<E>], offset: usize, max_of_arr: &mut Vec<AllocatedNum<E>>, d_var: &Option<AllocatedNum<E>>,
+        elem: &AllocatedNum<E>, offset: u64, max_of_arr: &mut Vec<AllocatedNum<E>>, d_var: &Option<AllocatedNum<E>>,
     ) -> Result<()>
     {
-        let dummy = &self.allocated_one;
+        let dummy_one = &self.allocated_one;
+        let dummy_zero = AllocatedNum::alloc_zero(cs)?;
+
+        let zero = E::Fr::zero();
+        let one = E::Fr::one();
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        let a = AllocatedNum::alloc(cs, || {
+            let mut tmp = elem.get_value().grab()?;
+            let cnst : E::Fr = u64_to_ff(offset);
+            tmp.add_assign(&cnst);
+
+            Ok(tmp)
+        })?;
+        let b = max_of_arr.pop().unwrap_or(dummy_one.clone());
+
+        let (c, d) = match d_var {
+            None => {
+                // [elem + offset, max_of_or_dummy, max_of_or_dummy, elem]
+                // constraint: a = d + offset;
+                (max_of_arr.pop().unwrap_or(dummy_one.clone()), elem.clone())
+            },
+            Some(var) => {
+                // [elem + offset, max_of_dummy, elem, d]
+                // constraint: a = c + offset;
+                (elem.clone(), var.clone())
+            },
+        };
+        
+        let vars = [a.get_variable(), b.get_variable(), c.get_variable(), d.get_variable()];
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        let range_of_linear_terms_start = range_of_linear_terms.start;
+        let table = &self.ternary_range_table;
+        
+        cs.begin_gates_batch_for_step()?;
+
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+    
+        let mut gate_term = MainGateTerm::new();
+        let (_, mut gate_coefs) = CS::MainGate::format_term(gate_term, dummy_zero.get_variable())?;
+
+        gate_coefs[range_of_linear_terms_start] = minus_one;
+        gate_coefs[range_of_linear_terms_start + 1] = zero.clone();  
         match d_var {
             None => {
+                // [elem + offset, max_of_or_dummy, max_of_or_dummy, elem]
+                // constraint: a = d + offset;
+                gate_coefs[range_of_linear_terms_start + 2] = zero;
+                gate_coefs[range_of_linear_terms_start + 3] = one;  
+            },
+            Some(var) => {
+                // [elem + offset, max_of_dummy, elem, d]
+                // constraint: a = c + offset;
+                gate_coefs[range_of_linear_terms_start + 2] = one;
+                gate_coefs[range_of_linear_terms_start + 3] = zero;  
+            },
+        };
 
-            }
-        }
-        let d = d_var.clone().unwrap_or(dummy.clone());
+        let cnst_index = CS::MainGate::index_for_constant_term();
+        gate_coefs[cnst_index] = u64_to_ff(offset);
 
-        
-        let mut vars = [dummy.get_variable(), dummy.get_variable(), dummy.get_variable(), d.get_variable()];
-            for (in_arr, out_arr) in remainder.iter().zip(vars.iter_mut()) {
-                *out_arr = in_arr.get_variable(); 
-            }
+        let mg = CS::MainGate::default();
+        cs.new_gate_in_batch(
+            &mg,
+            &gate_coefs,
+            &vars,
+            &[]
+        )?;
 
-            cs.begin_gates_batch_for_step()?; 
-            cs.allocate_variables_without_gate(
-                &vars,
-                &[]
-            )?;
-            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-            cs.end_gates_batch_for_step()?;
+        cs.end_gates_batch_for_step()?;
 
         Ok(())
     }
@@ -854,22 +904,22 @@ impl<E: Engine> KeccakGadget<E> {
 
         // handle offsets
         // NB: all of this stuff may be optimized further
-        let mut next_row_var = match of_map.get(1) {
+        let mut next_row_var = match of_map.get(&1usize) {
             None => None,
-            Some(arr) => self.handle_one_bit_of_arr(arr)?,
+            Some(arr) => self.handle_one_bit_of_arr(cs, arr)?,
         };
         
-        let max_of_arr = of_map.get(self.first_base_num_of_chunks - 1).cloned().unwrap_or(vec![]);
+        let mut max_of_arr = of_map.get(&(self.first_base_num_of_chunks - 1)).cloned().unwrap_or(vec![]);
         for of in 2..(self.first_base_num_of_chunks - 1) {
-            let cur_of_arr = of_map.get(of).cloned().unwrap_or(vec![]);
+            let cur_of_arr = of_map.get(&of).cloned().unwrap_or(vec![]);
             for elem in cur_of_arr {
-                handle_general_of(cs, elem, max_of_arr, next_row_var)?;
+                self.handle_general_of(cs, &elem, (self.first_base_num_of_chunks - 1 - of) as u64, &mut max_of_arr, &next_row_var)?;
                 next_row_var = None;
             }
         }
         
         if !max_of_arr.is_empty() {
-            handle_max_of_arr(cs, max_of_arr, next_row_var)?;
+            self.handle_max_of_arr(cs, &max_of_arr, &next_row_var)?;
             next_row_var = None;
         }
 
