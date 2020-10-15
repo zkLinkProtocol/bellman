@@ -102,6 +102,9 @@ pub struct KeccakGadget<E: Engine> {
     round_cnsts_in_first_base : [E::Fr; KECCAK_NUM_ROUNDS],
     round_cnsts_in_second_base : [E::Fr; KECCAK_NUM_ROUNDS],
     digest_size: usize,
+
+    // not really necessary but simplifies design
+    allocated_one : AllocatedNum<E>,
 }
 
 impl<E: Engine> KeccakGadget<E> {
@@ -226,6 +229,8 @@ impl<E: Engine> KeccakGadget<E> {
             f(0x8000000080008081, r), f(0x8000000000008080, r), f(0x0000000080000001, r), f(0x8000000080008008, r),
         ];
 
+        let allocated_one = AllocatedNum::alloc_cnst(cs, E::Fr::one())?;
+
         Ok(KeccakGadget {
             from_binary_converter_table,
             first_to_second_base_converter_table,
@@ -244,6 +249,8 @@ impl<E: Engine> KeccakGadget<E> {
             round_cnsts_in_first_base,
             round_cnsts_in_second_base,
             digest_size,
+
+            allocated_one,
         })
     }
 
@@ -625,6 +632,122 @@ impl<E: Engine> KeccakGadget<E> {
         pow(KECCAK_FIRST_SPARSE_BASE as usize, exp) as u64
     }
 
+    fn handle_one_bit_of_arr<CS>(&self, cs: &mut CS, input: &[AllocatedNum<E>]) -> Result<Option<AllocatedNum<E>>> 
+    where CS: ConstraintSystem<E>
+    {
+        let mut cnst : E::Fr = u64_to_ff(input.len() as u64);
+        cnst.negate();
+        let mut gate_vars = Vec::with_capacity(4);
+        let mut res = None;
+
+        let one = E::Fr::one();
+        let mut minus_one = one.clone();
+        minus_one.negate();
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+
+        for (_is_first, is_last, elem) in input.iter().identify_first_last()  {
+            if gate_vars.len() < 4 {
+                gate_vars.push(elem.clone());
+            }
+            else {
+                // we have filled in the whole vector!
+                if !is_last {
+                    let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), minus_one.clone()];
+                    let temp = AllocatedNum::quartic_lc_with_const(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+                    gate_vars = vec![temp, elem.clone()];
+                }
+                else {
+                    let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), one.clone()];
+                    AllocatedNum::quartic_lc_with_const(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+                    res = Some(elem.clone());
+                    gate_vars = vec![];
+                }
+                cnst = E::Fr::zero();
+            }
+        }
+
+        if !gate_vars.is_empty() {
+            // pad with dummy variables
+            for _i in gate_vars.len()..4 {
+                gate_vars.push(dummy.clone());
+            }
+            
+            let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), E::Fr::zero()];
+            AllocatedNum::quartic_lc_with_const(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+        }
+
+        Ok(res)
+    }
+
+    fn handle_max_of_arr<CS>(&self, cs: &mut CS, input: &[AllocatedNum<E>], d_var: &Option<AllocatedNum<E>>) -> Result<()>
+    where CS: ConstraintSystem<E>
+    {
+        let dummy = &self.allocated_one;
+        let d = d_var.clone().unwrap_or(dummy.clone());
+        let table = &self.ternary_range_table;
+
+        let mut iter = input.chunks_exact(3);
+        for block in iter {
+            let vars = [block[0].get_variable(), block[1].get_variable(), block[2].get_variable(), d.get_variable()];
+            
+            cs.begin_gates_batch_for_step()?; 
+            cs.allocate_variables_without_gate(
+                &vars[..],
+                &[]
+            )?;
+            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+            cs.end_gates_batch_for_step()?;
+        }
+
+        let remainder = iter.remainder(); 
+        if !remainder.is_empty() {
+            let mut vars = [dummy.get_variable(), dummy.get_variable(), dummy.get_variable(), d.get_variable()];
+            for (in_arr, out_arr) in remainder.iter().zip(vars.iter_mut()) {
+                *out_arr = in_arr.get_variable(); 
+            }
+
+            cs.begin_gates_batch_for_step()?; 
+            cs.allocate_variables_without_gate(
+                &vars,
+                &[]
+            )?;
+            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+            cs.end_gates_batch_for_step()?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_general_of<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, 
+        elem: &[AllocatedNum<E>], offset: usize, max_of_arr: &mut Vec<AllocatedNum<E>>, d_var: &Option<AllocatedNum<E>>,
+    ) -> Result<()>
+    {
+        let dummy = &self.allocated_one;
+        match d_var {
+            None => {
+
+            }
+        }
+        let d = d_var.clone().unwrap_or(dummy.clone());
+
+        
+        let mut vars = [dummy.get_variable(), dummy.get_variable(), dummy.get_variable(), d.get_variable()];
+            for (in_arr, out_arr) in remainder.iter().zip(vars.iter_mut()) {
+                *out_arr = in_arr.get_variable(); 
+            }
+
+            cs.begin_gates_batch_for_step()?; 
+            cs.allocate_variables_without_gate(
+                &vars,
+                &[]
+            )?;
+            cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+            cs.end_gates_batch_for_step()?;
+
+        Ok(())
+    }
+
     // we unite /rho (rotate) and conversion (FIRST_SPARSE_BASE -> SECOND_SPARSE_BASE) in one function
     fn rho<CS: ConstraintSystem<E>>(&self, cs: &mut CS, state: KeccakState<E>) -> Result<KeccakState<E>> {
         let mut new_state = KeccakState::default();
@@ -731,16 +854,27 @@ impl<E: Engine> KeccakGadget<E> {
 
         // handle offsets
         // NB: all of this stuff may be optimized further
-        // first group all ones: we are going to have the constraint: a + b + c + d == 4;
-        // do it for all blocks of all possible lengths (mixing three's if necessary)
-        // How to do it in RUST?
-        // let of_max_vec = of_map.entry(self.first_base_num_of_chunks - 1).or_insert(vec![]);
-        // let of_1_vec = of_map.entry(1).or_insert(vec![]);
-        // for block in of_1_vec.chunks()
-        //book_reviews.get(book) {
-        //Some(review)
+        let mut next_row_var = match of_map.get(1) {
+            None => None,
+            Some(arr) => self.handle_one_bit_of_arr(arr)?,
+        };
+        
+        let max_of_arr = of_map.get(self.first_base_num_of_chunks - 1).cloned().unwrap_or(vec![]);
+        for of in 2..(self.first_base_num_of_chunks - 1) {
+            let cur_of_arr = of_map.get(of).cloned().unwrap_or(vec![]);
+            for elem in cur_of_arr {
+                handle_general_of(cs, elem, max_of_arr, next_row_var)?;
+                next_row_var = None;
+            }
+        }
+        
+        if !max_of_arr.is_empty() {
+            handle_max_of_arr(cs, max_of_arr, next_row_var)?;
+            next_row_var = None;
+        }
 
-        // now for the remaining
+        assert!(next_row_var.is_none());
+
         Ok(new_state) 
     }
 

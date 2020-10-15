@@ -64,19 +64,12 @@ mod test {
         }
     }
 
-    fn slice_to_ff<Fr: PrimeField>(slice: [u8]) -> Fr {
-        assert_eq!(slice.len(), 8);
-        let num = u64::from_le_bytes(slice);
+    fn slice_to_ff<Fr: PrimeField>(input: &[u8]) -> Fr {
+        assert_eq!(input.len(), 8);
+        let (int_bytes, _) = input.split_at(std::mem::size_of::<u64>());
+        let num = u64::from_le_bytes(int_bytes.try_into().unwrap());
         u64_to_ff(num)
     }
-
-
-
-fn read_be_u64(input: &mut &[u8]) -> u64 {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<u64>());
-    *input = rest;
-    u64::from_be_bytes(int_bytes.try_into().unwrap())
-}
 
     #[test]
     fn keccak_gadget_test() 
@@ -88,22 +81,22 @@ fn read_be_u64(input: &mut &[u8]) -> u64 {
         for i in 0..(input.len() - 1) {
             input[i] = rng.gen();
         }
-        input.last_mut().unwrap() = 0b10000001;
+        *(input.last_mut().unwrap()) = 0b10000001 as u8;
 
         let mut hasher = Keccak::new_sha3_256();
-        hasher.update(&input[0..(input(len) - 1)]);
+        hasher.update(&input[0..(input.len() - 1)]);
 
-        let mut output: [u8; 32] = [0; 32];
+        let mut output: [u8; DEFAULT_KECCAK_DIGEST_WORDS_SIZE * 8] = [0; DEFAULT_KECCAK_DIGEST_WORDS_SIZE * 8];
         hasher.finalize(&mut output);
     
         let mut input_fr_arr = Vec::with_capacity(KECCAK_RATE_WORDS_SIZE * NUM_OF_BLOCKS);
-        let mut output_fr_arr = [Fr::zero(); 8];
+        let mut output_fr_arr = [Fr::zero(); DEFAULT_KECCAK_DIGEST_WORDS_SIZE];
 
         for (i, block) in input.chunks(8).enumerate() {
             input_fr_arr.push(slice_to_ff::<Fr>(block));
         }
 
-        for (i, block) in output.chunks(4).enumerate() {
+        for (i, block) in output.chunks(8).enumerate() {
             output_fr_arr[i] = slice_to_ff::<Fr>(block);
         }
         
