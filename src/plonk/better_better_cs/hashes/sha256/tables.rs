@@ -146,6 +146,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256SparseRotateTable<E> {
 // first column containts all values of x in the range [0, 2^bits - 1]
 // the corresponding value in the second column is sparse representation of x >> shift
 // the thirf column is unused
+// REFACTOR: make is used!
 #[derive(Clone)]
 pub struct Sha256SparseShiftTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 2],
@@ -259,6 +260,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256SparseShiftTable<E> {
 // y = \sum_{i=0}^{num_chunks-1} y_i 2^i, where y_i \in [0, 1] - bit decomposition of y of bitlegth = num_of_chunks
 // here every y_i = x_i mod 2
 // the table actually contains two colums (x, y) - the third is always zero
+// REFACTOR: make third column used
 #[derive(Clone)]
 pub struct Sha256NormalizationTable<E: Engine> {
     table_entries: [Vec<E::Fr>; 3],
@@ -395,6 +397,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256NormalizationTable<E> {
 // However, having a table of such a small size is not that usefulm hence we go into operating on several bits (or chunks) at once:
 // assuming that x = \sum_{i = 0}^{num_chunks - 1} x_i 7^i, out table entry is (x, y), 
 // where y = \sum_{i = 0}^{num_chunks - 1} f(x_i) 2^i.
+// TODO: use third column
 pub const SHA256_CHOOSE_BASE: usize = 7;
 #[derive(Clone)]
 pub struct Sha256ChooseTable<E: Engine> {
@@ -545,6 +548,7 @@ impl<E: Engine> LookupTableInternal<E> for Sha256ChooseTable<E> {
 // | 1 | 1 | 1 | 0 |           3 |
 //
 // this well-formed function f(x): [0; 3] -> [0;1] is called majority
+// TODO: use third column
 pub const SHA256_MAJORITY_BASE: usize = 4;
 #[derive(Clone)]
 pub struct Sha256MajorityTable<E: Engine> {

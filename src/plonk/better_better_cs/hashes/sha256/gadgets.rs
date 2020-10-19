@@ -51,6 +51,7 @@ impl OverflowTracker {
         res
     }
 
+    // TODO: CONTAINS a bug! need a fix
     fn get_template(&self) -> u64 {
         let base_value : u64 = (1u64 << SHA256_REG_WIDTH) - 1;
         let res = match self {
@@ -73,6 +74,7 @@ impl OverflowTracker {
         pow
     }
 
+    // TODO: CONTAINS a bug! need a fix
     fn new_from_template(template: u64) -> Self {
         let val = Self::num_bits(template) - (SHA256_REG_WIDTH as u64);
         val.into()

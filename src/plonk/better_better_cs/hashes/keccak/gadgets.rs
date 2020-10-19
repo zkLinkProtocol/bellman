@@ -131,6 +131,8 @@ impl<E: Engine> KeccakGadget<E> {
             PolyIdentifier::VariablesPolynomial(2)
         ];
 
+        println!("first table");
+
         let name1: &'static str = "from_binary_converter_table";
         let from_binary_converter_table = LookupTableApplication::new(
             name1,
@@ -141,6 +143,8 @@ impl<E: Engine> KeccakGadget<E> {
             true
         );
 
+        println!("second table");
+
         let name2 : &'static str = "first_to_second_base_converter_table";
         let f = |x| { keccak_u64_first_conveter(x)};
         let first_to_second_base_converter_table = LookupTableApplication::new(
@@ -149,6 +153,8 @@ impl<E: Engine> KeccakGadget<E> {
             columns3.clone(),
             true
         );
+
+        println!("third table");
 
         let name3 : &'static str = "of_first_to_second_base_converter_table";
         let f = |x| { keccak_u64_first_conveter(x)};
@@ -160,6 +166,8 @@ impl<E: Engine> KeccakGadget<E> {
             columns3.clone(),
             true
         );
+
+        println!("fourth table");
 
         let name4 : &'static str = "ternary_range_table";
         let f = |x| { keccak_u64_second_converter(x)};
@@ -230,6 +238,8 @@ impl<E: Engine> KeccakGadget<E> {
         ];
 
         let allocated_one = AllocatedNum::alloc_cnst(cs, E::Fr::one())?;
+
+        println!("here");
 
         Ok(KeccakGadget {
             from_binary_converter_table,
