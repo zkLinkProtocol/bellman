@@ -2386,7 +2386,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let claimed_gates_list = C::declare_used_gates()?;
         let known_gates_list = &self.sorted_gates;
 
-        assert_eq!(&claimed_gates_list, known_gates_list, "trying to perform setup for a circuit that has different gates set from synthesized one");
+        assert_eq!(&claimed_gates_list, known_gates_list, "trying to perform setup for a circuit that has different gates set from synthesized one: circuit claims {:?}, in synthesis we had {:?}", &claimed_gates_list, &known_gates_list);
 
         // check for consistency
         {
