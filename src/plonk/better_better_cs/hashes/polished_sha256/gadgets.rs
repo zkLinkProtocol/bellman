@@ -428,7 +428,7 @@ impl<E: Engine> Sha256Gadget<E> {
     // ------------------------------------------------------------------------------------------------------------------------
 
     // for list of overflowed numbers, deduce the maximal possible overflow of their sum
-    fn deduce_of(&self, mut of_trackers: Vec<OverflowTracker>) -> OverflowTracker
+    fn deduce_of(&self, of_trackers: Vec<OverflowTracker>) -> OverflowTracker
     {
         assert!(!of_trackers.is_empty());
 
@@ -445,14 +445,41 @@ impl<E: Engine> Sha256Gadget<E> {
     // every register among of a, b, c, d is put in the corresponding position (if nonconstant)
     //
     // NB: we calculate separately all constant registers and of for them (just a usuful trick)
-    fn tracked_positioned_sum<>(&self, cs: &mut CS, b: &NumWithTracker<E>)
-    where CS: ConstraintSystem<E>
+    fn tracked_positioned_sum_mod32<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, b: &NumWithTracker<E>, c: &NumWithTracker<E>, d: &NumWithTracker
+    ) -> Result<NumWithTracker<E>>
     {
         // special case - all of b, c, d are actually constants
+        // there value would be there sum modulo 2^32
+        if b.num.is_constant() && c.num.is_constant() && d.num.is_constant() {
+            let value = {
+                let b_u64 = ff_to_u64(b.num.get_value().unwrap());
+                let c_u64 = ff_to_u64(c.num.get_value().unwrap());
+                let d_u64 = ff_to_u64(d.num.get_value().unwrap())
+                let n = (b_u64 + c_u64 + d_u64) & ((1 << SHA256_REG_WIDTH) - 1);
+                u64_to_ff(n)
+            };
+            return Ok(Num::Constant(value).into());
+        }
         
         // start with calculation of of
+        let mut cnst_found = false;
+        let mut of_vec = Vec::with_capacity(3);
+        for elem in [b, c, d] {
+            if elem.num.is_constant() { cnst_found = true } else { of_vec.push(elem.of_tracker) }
+        }
+        if cnst_found {
+            of_vec.push(OverflowTracker::NoOverflow)
+        }
+        let res_of = self.deduce_of(of_vec); 
 
-        // ......
+        // construct the gate
+        let mut cnst = E::Fr::zero();
+        let dummy =
+
+        // construct the result - a
+        // it will always be an allocated num
+        let a = AllocatedNum::alloc(cs,) 
     }
   
     fn converter_helper(&self, n: u64, sparse_base: u64, rotation: usize, extraction: usize) -> E::Fr {
@@ -493,16 +520,16 @@ impl<E: Engine> Sha256Gadget<E> {
     // table query x => f(x), g(x)
     // running sum for input: acc_next = acc - coef * x
     // if is_final is set, simply check: acc = coef * x
-    // returns (f(x), g(x), acc_next)
+    // returns (f(x), g(x)) and updates acc
     fn query_table_acc<CS: ConstraintSystem<E>>(
         &self, 
         cs: &mut CS, 
         table: &Arc<LookupTableApplication<E>>, 
         key: &AllocatedNum<E>,
-        prev_acc: &AllocatedNum<E>,
+        acc: &mut AllocatedNum<E>,
         coef: &E::Fr,
         is_final: bool,
-    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)> 
+    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>)> 
     {
         let (f_key, g_key) = match key.get_value() {
             None => {
@@ -568,23 +595,25 @@ impl<E: Engine> Sha256Gadget<E> {
 
         cs.end_gates_batch_for_step()?;
 
-        Ok((f_key, g_key, new_acc))
+        *acc = new_acc;
+        Ok((f_key, g_key))
     }
 
     // range check for of, assuming of is at most SHA256_GADGET_CHUNK bits long
     // we accomplish range check exploting sha-specific sparse-rotations tables
     // the row has the form: [of, sparse(of), sparse_rotate(of), acc]
-    // returns new_acc = acc - of * coef;
-    fn of_range_check<CS>(&self, cs: &mut CS, of: &AllocatedNum<E>, acc: &AllocatedNum<E>, coef: &E::Fr) -> Result<AllocatedNum<E>> 
-    where CS: ConstraintSystem<E>
+    // updates acc: new_acc = acc - of * coef;
+    fn of_range_check<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, of: &AllocatedNum<E>, acc: &mut AllocatedNum<E>, coef: &E::Fr,
+    ) -> Result()> 
     {
         let table = match self.use_global_range_table {
             false => &self.sha256_base4_rot2_table,
             true => self.global_range_table.as_ref().unwrap(),
         };
 
-       let (_, _, new_acc) = self.query_table_acc(cs, table, of, acc, coef, false)?;
-        Ok(new_acc)
+       self.query_table_acc(cs, table, of, &mut acc, coef, false)?;
+        Ok(())
     }
 
     fn query_table<CS: ConstraintSystem<E>>(
@@ -749,14 +778,14 @@ impl<E: Engine> Sha256Gadget<E> {
 
         if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
             let of = self.allocate_converted_num(cs, &var, self.max_of_width, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0)?;
-            acc = self.of_range_check(cs, &of, &acc, &cf[3])?;
+            self.of_range_check(cs, &of, &mut acc, &cf[3])?;
         }
         let full_normal = acc.clone();
 
-        let (sparse_low, sparse_low_rot6, acc) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &low, &acc, &cf[0], false)?;
-        let (sparse_mid, _sparse_mid_rot6, acc) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &mid, &acc, &cf[1], false)?;
-        let (sparse_high, sparse_high_rot3, acc) = self.query_table_acc(
-            cs, &self.sha256_base7_rot3_extr10_table, &high, &acc, &cf[2], true
+        let (sparse_low, sparse_low_rot6) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &low, &mut acc, &cf[0], false)?;
+        let (sparse_mid, _sparse_mid_rot6) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &mid, &mut acc, &cf[1], false)?;
+        let (sparse_high, sparse_high_rot3) = self.query_table_acc(
+            cs, &self.sha256_base7_rot3_extr10_table, &high, &mut acc, &cf[2], true
         )?;
 
         let full_sparse = {
@@ -906,7 +935,7 @@ impl<E: Engine> Sha256Gadget<E> {
         match input.overflow_tracker {
             OverflowTracker::OneBitOverflow | OverflowTracker::SignificantOverflow(_) => {
                 let of = self.allocate_converted_num(cs, &var, self.max_of_width, SHA256_REG_WIDTH, 0, 0, 0)?;
-                acc = self.of_range_check(cs, &of, &acc, &cf[3])?;
+                self.of_range_check(cs, &of, &mut acc, &cf[3])?;
             }
             _ => {},
         }
@@ -923,9 +952,9 @@ impl<E: Engine> Sha256Gadget<E> {
             cs, &var, SHA256_GADGET_CHUNK_SIZE - 1, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE
         )?;
 
-        let (sparse_low, sparse_low_rot2, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &low, &acc, &cf[0], false)?;
-        let (sparse_mid, sparse_mid_rot2, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &mid, &acc, &cf[1], false)?;
-        let (sparse_high, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_width10_table, &high, &acc, &cf[2], true)?;
+        let (sparse_low, sparse_low_rot2) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &low, &mut acc, &cf[0], false)?;
+        let (sparse_mid, sparse_mid_rot2) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &mid, &mut acc, &cf[1], false)?;
+        let (sparse_high, _) = self.query_table_acc(cs, &self.sha256_base4_rot2_width10_table, &high, &mut acc, &cf[2], true)?;
 
         let full_sparse = {
             // full_sparse = low_sparse + 4^11 * mid_sparse + 4^22 * high_sparse
@@ -1070,7 +1099,7 @@ impl<E: Engine> Sha256Gadget<E> {
         base: usize, 
         num_chunks: usize,
         use_d_next: bool,
-    ) -> Result<Num<E>>
+    ) -> Result<(Num<E>, bool)>
     {
         if let Num::Constant(x) = input {
             let output = converter_func(x.clone());
@@ -1082,7 +1111,7 @@ impl<E: Engine> Sha256Gadget<E> {
         // split and slice!
         let num_slices = Self::round_up(SHA256_REG_WIDTH, num_chunks);
         let mut input_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
-        //let mut output_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
+        let mut output_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
         let input_slice_modulus = pow(base, num_chunks);
 
         match x.get_value() {
@@ -1113,27 +1142,23 @@ impl<E: Engine> Sha256Gadget<E> {
             }
         }
 
+        let mut acc = x;
         let mut output_acc = AllocatedNum::alloc_zero(cs)?;
         let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
-        for input_chunk in input_slices.iter().rev() {
-            output_acc = self.query_table_accumulate(cs, table, input_chunk, &output_acc, &output_base)?;
-        }
 
-                // for i in 0..num_slices {
-                //     let tmp = self.query_table1(cs, table, &input_slices[i])?;
-                //     output_slices.push(tmp);
-                // }
-                // let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
-                // AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
-                
-                // TODO: use negative dialation for A!
-                //println!("OPTIMIZE");
-                let input_base = Self::u64_to_ff(input_slice_modulus as u64);
-                AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
-                
-                return Ok(Num::Allocated(output_acc));
-            }
+        for (_is_first, is_last, input_chunk) in input_slices.iter() {
+            let (f_out_chunk, g_out_chunk) = self.query_table_acc(cs, table, input_chunk, &acc, &output_base)?;
         }
+        
+        // let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
+        // AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
+        
+        // TODO: use negative dialation for A!
+        //println!("OPTIMIZE");
+        let input_base = Self::u64_to_ff(input_slice_modulus as u64);
+        AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
+        
+        return Ok(Num::Allocated(output_acc));
     }
 
     // fn choose<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>) -> Result<NumWithTracker<E>>

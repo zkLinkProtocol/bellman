@@ -580,7 +580,7 @@ impl<E: Engine> AllocatedNum<E> {
         cs: &mut CS,
         coefs: &[E::Fr],
         vars: &[Self],
-        total: &Self,
+        _total: &Self,
     ) -> Result<Self, SynthesisError>
     {
         assert_eq!(vars.len(), 4);
@@ -667,10 +667,8 @@ impl<E: Engine> AllocatedNum<E> {
         let mut acc_fr = E::Fr::one();
         let mut coeffs = Vec::with_capacity(5);
         let mut current_vars = Vec::with_capacity(4);
-        let mut minus_one = E::Fr::one();
-        minus_one.negate();
-
-        for (_is_first, is_last, var) in vars.iter().identify_first_last() {
+       
+        for (i, var) in vars.iter().enumerate() {
             if current_vars.len() < 4 {
                 coeffs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
@@ -686,22 +684,22 @@ impl<E: Engine> AllocatedNum<E> {
             }
         }
 
-        if current_vars.len() == 4 {
-            // we have filled in the whole vector!
-            coeffs.push(minus_one.clone());
-            let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
-            coeffs = vec![E::Fr::one()];
-            current_vars = vec![temp];
+        let use_d_next = if current_vars.len() == 4 {
+            AllocatedNum::quartic_lc_eq(cs, &coeffs[..], &current_vars[..], &total)?;
+            true
         }
+        else {
+            // pad with dummy variables
+            for _i in current_vars.len()..3 {
+                current_vars.push(AllocatedNum::alloc_zero(cs)?);
+                coeffs.push(E::Fr::zero());
+            }
 
-        // pad with dummy variables
-        for _i in current_vars.len()..3 {
-            current_vars.push(AllocatedNum::alloc_zero(cs)?);
-            coeffs.push(E::Fr::zero());
-        }
+            AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &current_vars[..], &E::Fr::zero(), total)?;
+            false
+        };
 
-        AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &current_vars[..], &E::Fr::zero(), total)?;
-        Ok(())
+        Ok(use_d_next)
     }
 
     pub fn add_two<CS: ConstraintSystem<E>>(&self, cs: &mut CS, x: Self, y: Self) -> Result<Self, SynthesisError>
