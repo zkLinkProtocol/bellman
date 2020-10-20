@@ -727,6 +727,14 @@ impl<E: Engine> Num<E> {
         }
     }
 
+    pub fn get_variable(&self) -> Option<AllocatedNum<E>> 
+    {
+        match self {
+            Num::Constant(_) => None,
+            Num::Allocated(var) => var.clone(),
+        }
+    }
+
     pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
     {
         let res = match (self, other) {

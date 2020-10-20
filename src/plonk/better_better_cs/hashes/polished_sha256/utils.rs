@@ -46,7 +46,11 @@ pub fn u64_exp_to_ff<Fr: PrimeField>(n: u64, exp: u64) -> Fr {
 }
 
 pub fn ff_to_u64<Fr: PrimeField>(fr: &Fr) -> u64 {
-    fr.into_repr().as_ref()[0]
+    let repr = fr.into_repr().as_ref();
+    for i in 1..8 {
+        assert_eq!(repr[i], 0);
+    }
+    repr[0]
 }
 
 fn biguint_to_ff<Fr: PrimeField>(value: &BigUint) -> Fr {

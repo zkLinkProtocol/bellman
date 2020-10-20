@@ -405,1050 +405,412 @@ impl<E: Engine> Sha256Gadget<E> {
         })
     }
 
-    // here we assume that maximal overflow is not more than 4 bits
-    // we return both the extracted 32bit value and of_l and of_h (both - two bits long)
-    // fn extract_32_from_constant(&self, x: &E::Fr) -> (E::Fr, E::Fr, E::Fr) {
-    //     let mut repr = x.into_repr();
-    //     let mut of_l_repr = repr.clone();
-    //     let mut of_h_repr = repr.clone();
-        
-    //     repr.as_mut()[0] &= (1 << 32) - 1; 
-    //     let extracted = E::Fr::from_repr(repr).expect("should decode");
-
-    //     of_l_repr.as_mut()[0] >>= 32;
-    //     of_l_repr.as_mut()[0] &= 3;
-    //     let of_l = E::Fr::from_repr(repr).expect("should decode");
-
-    //     of_h_repr.as_mut()[0] >>= 34;
-    //     let of_h = E::Fr::from_repr(repr).expect("should decode");
-
-    //     (extracted, of_l, of_h)
-    // }
-
-    // fn extact_32_with_custom_gates<CS: ConstraintSystem<E>>(&self, cs: &mut CS, var: &AllocatedNum<E>) -> Result<AllocatedNum<E>> {
-    //     //create a_0, a_1, ..., a_15 = extracted.
-    //     let mut vars = Vec::with_capacity(16);
-    //     vars.push(AllocatedNum::alloc_zero(cs)?);
-
-    //     for i in 0..16 {
-    //         let val = var.get_value().map(| elem | {
-    //             let mut repr = elem.into_repr();
-    //             repr.as_mut()[0] >>= 30 - 2 * i;
-    //             let extracted = E::Fr::from_repr(repr).expect("should decode");
-
-    //             extracted
-    //         });
-
-    //         vars.push(AllocatedNum::alloc(cs, || val.grab())?);
-    //     }
-
-    //     let mut two = E::Fr::one();
-    //     two.double();
-
-    //     for i in 0..4 {
-    //         let x = [vars[4*i].get_variable(), vars[4*i+1].get_variable(), vars[4*i+2].get_variable(), vars[4*i+3].get_variable()];
-    //         cs.new_single_gate_for_trace_step(
-    //             &RangeCheckConstraintGate::default(), 
-    //             &[two.clone()], 
-    //             &x, 
-    //             &[]
-    //         )?;
-    //     }
-
-    //     let (of_l_value, of_h_value) = match var.get_value() {
-    //         None => (None, None),
-    //         Some(elem) => {
-    //             let temp = self.extract_32_from_constant(&elem);
-    //             (Some(temp.1), Some(temp.2))
-    //         },
-    //     };
-
-    //     let of_l_var = AllocatedNum::alloc(cs, || of_l_value.grab())?;
-    //     let of_h_var = AllocatedNum::alloc(cs, || of_h_value.grab())?;
-
-    //     cs.begin_gates_batch_for_step()?;
-        
-    //     cs.new_gate_in_batch( 
-    //         &SparseRangeGate::new(1),
-    //         &[two.clone()],
-    //         &[var.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
-    //         &[],
-    //     )?;
-
-    //     cs.new_gate_in_batch( 
-    //         &SparseRangeGate::new(2),
-    //         &[two.clone()],
-    //         &[var.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
-    //         &[],
-    //     )?;
-
-    //     // the selectors in the main gate go in the following order:
-    //     // [q_a, q_b, q_c, q_d, q_m, q_const, q_d_next]
-    //     // we constraint the equation: q_a - 2^32 q_b - 2^34 q_c - q_d = 0;
-    //     // so in our case: q_a = -1, q_b = 2^32; q_c = 2^34; q_d = 1; q_m = q_const = q_d_next = 0;
-
-    //     let zero = E::Fr::zero();
-    //     let one = E::Fr::one();
-    //     let mut minus_one = E::Fr::one();
-    //     minus_one.negate();
-
-    //     let mut temp32_repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
-    //     temp32_repr.as_mut()[0] = 1 << 32;
-    //     let coef32 = E::Fr::from_repr(temp32_repr).expect("should parse");
-
-    //     let mut temp34_repr : <E::Fr as PrimeField>::Repr = E::Fr::zero().into_repr();
-    //     temp34_repr.as_mut()[0] = 1 << 34;
-    //     let coef34 = E::Fr::from_repr(temp34_repr).expect("should parse");
-
-    //     cs.new_gate_in_batch(
-    //         &CS::MainGate::default(),
-    //         &[minus_one, coef32, coef34, one, zero.clone(), zero.clone(), zero],
-    //         &[var.get_variable(), of_l_var.get_variable(), of_h_var.get_variable(), vars[15].get_variable()],
-    //         &[],
-    //     )?;
-
-    //     cs.end_gates_batch_for_step()?;
-
-    //     Ok(vars.pop().expect("top element exists"))
-    // }
-
-    // fn extract_32_with_range_table<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     var: &AllocatedNum<E>, 
-    //     chunk_bitlen: usize, 
-    // ) -> Result<AllocatedNum<E>> 
-    // {
-    //     let num_of_chunks = Self::round_up(SHA256_REG_WIDTH, chunk_bitlen);
-    //     let diff = SHA256_REG_WIDTH - chunk_bitlen * num_of_chunks;
-    //     let high_chunk_bitlen =  if diff > 0 { diff } else { chunk_bitlen };
-    //     let mut chunks : Vec<AllocatedNum<E>> = Vec::with_capacity(num_of_chunks);
-        
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     let mut of  = dummy.clone();
-    //     let mut extracted = dummy.clone();
-    //     let dummy = dummy.get_variable();
-
-    //     match var.get_value() {
-    //         None => {
-    //             for _i in 0..num_of_chunks {
-    //                 let tmp = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //                 chunks.push(tmp);
-    //             }
-
-    //             of = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //             extracted = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //         },
-    //         Some(fr) => {
-    //             let f_repr = fr.into_repr();
-    //             let n = f_repr.as_ref()[0];
-
-    //             for i in 0..num_of_chunks {
-    //                 let mask = if i != num_of_chunks - 1 { chunk_bitlen} else { high_chunk_bitlen};
-    //                 let new_val = Self::u64_to_ff((n >> (i * chunk_bitlen)) & ((1 << mask) - 1));
-    //                 let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
-    //                 chunks.push(tmp);
-    //             }
-
-    //             let of_val = Self::u64_to_ff(n >> SHA256_REG_WIDTH);
-    //             of = AllocatedNum::alloc(cs, || Ok(of_val))?;
-
-    //             let extracted_val = Self::u64_to_ff(n & ((1 << SHA256_REG_WIDTH) - 1));
-    //             extracted = AllocatedNum::alloc(cs, || Ok(extracted_val))?;
-    //         },
-    //     };
-
-    //     // assume we have a range table which allows us to check if x is in [0; 2^chunk_bitlen - 1]
-    //     // (or in other words that binary representation of x is at most chunk_bitlen bits in length)
-    //     // assume than, that our task is to check that some value x is actually at most n bits in length (here n < chunk_bitlen)
-    //     // in order to do this we have in fact to query table twice:
-    //     // first time we check that value x is in range [0; 2^chunk_bitlen - 1]
-    //     // and secon time we check that x * 2^(chunk_bitlen - n) is in the same range
-    //     // note, that in our decomposition into chunks only the top_most chunk may be overflowed and requires such
-    //     // a more thorough check (this is what the parameter "strict used for")
-    //     // in this case both checks (that x is in range and that  x * 2^(chunk_bitlen - n) is in range)
-    //     // will occupy only two consecutive lines of trace  - 
-    //     // we leverage the fact, that there only two used columns (apart from sparse_rotate_tables) in range table
-    //     // and hence we may allocate first range check (for x) and arithmetic operation ( y =  x * 2^(chunk_bitlen - n))
-    //     // on the same line
-    //     // if we are do not have special range table in our disposal, we are going to use sha256-specific-tables in order to
-    //     // perform range checks, as most of them have the first column similar to that of range table! 
-    //     // moreover, we may actually do more and split our number as of|10|11|11| bits.
-    //     // note, that we also exploit the fact that out overflow can't be two large
-    //     // and in any case will fit into the range table
-    //     let range_table = self.global_table.as_ref().unwrap();
-
-    //     let mut range_check = |var: &AllocatedNum<E>, shift: usize| -> Result<()> {
-    //         if shift == 0 {
-    //             cs.begin_gates_batch_for_step()?; 
-    //             let vars = [var.get_variable(), dummy, dummy, dummy];
-
-    //             cs.allocate_variables_without_gate(
-    //                 &vars,
-    //                 &[]
-    //             )?;
-                
-    //             cs.apply_single_lookup_gate(&vars[..range_table.width()], range_table.clone())?;
-    //             cs.end_gates_batch_for_step()?;
-    //         }
-    //         else {
-    //             let new_val = match var.get_value() {
-    //                 None => None,
-    //                 Some(fr) => {
-    //                     let f_repr = fr.into_repr();
-    //                     let n = f_repr.as_ref()[0] << shift;
-    //                     Some(Self::u64_to_ff(n))
-    //                 },
-    //             };
-    //             let shifted_var = AllocatedNum::alloc(cs, || new_val.grab())?;
-                
-    //             let zero = E::Fr::zero();
-    //             let mut minus_one = E::Fr::one();
-    //             minus_one.negate();
-    //             let coef = Self::u64_to_ff(1 << shift);
-
-    //             cs.begin_gates_batch_for_step()?; 
-                
-    //             let first_trace_step = [var.get_variable(), dummy, dummy, shifted_var.get_variable()];
-
-    //             cs.new_gate_in_batch(
-    //                 &CS::MainGate::default(),
-    //                 &[coef, zero.clone(), zero.clone(), zero.clone(), minus_one, zero.clone(), zero],
-    //                 &first_trace_step[..],
-    //                 &[],
-    //             )?;
-
-    //             cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
-    //             cs.end_gates_batch_for_step()?;
-
-    //             cs.begin_gates_batch_for_step()?; 
-    //             let second_trace_step = [shifted_var.get_variable(), dummy, dummy, dummy];
-
-    //             cs.allocate_variables_without_gate(
-    //                 &second_trace_step,
-    //                 &[]
-    //             )?;
-                
-    //             cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
-    //             cs.end_gates_batch_for_step()?;
-    //         }
-
-    //         Ok(())
-    //     }; 
-
-    //     let mut chunks_iter = chunks.iter().peekable();
-    //     while let Some(chunk) = chunks_iter.next() {
-    //         if chunks_iter.peek().is_some() {
-    //             // this is not the top-most chunk: only one range check is required
-    //             range_check(chunk, 0);              
-    //         } else {
-    //             // this is the top-most chunk
-    //             // however, it is not strcitly neccessary that both range-checks are required 
-    //             // (for x and x * 2^(chunk_bitlen -n))
-    //             // if bitlen of topmost chunks is equal to the chunk_bitlen, than there is no possibility of overflow
-    //             // e.g, this is the case of range table of bitlength 16
-    //             range_check(chunk, chunk_bitlen - high_chunk_bitlen);  
-    //         }
-    //     }
-    //     range_check(&of, 0); 
-
-    //     let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
-    //     AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
-
-    //     // check that extracted + of * 32 = input
-    //     let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     AllocatedNum::ternary_lc_eq(
-    //         cs, 
-    //         &[E::Fr::one(), full_reg_size, E::Fr::zero()],
-    //         &[extracted.clone(), of, dummy],
-    //         &var
-    //     )?;
-
-    //     Ok(extracted)
-    // }
-
-    // fn extract_using_sparse_rotate_table<CS>(&self, cs: &mut CS, var: &AllocatedNum<E>) -> Result<AllocatedNum<E>>
-    // where CS: ConstraintSystem<E>
-    // {
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     let mut of  = dummy.clone();
-    //     let mut low = dummy.clone();
-    //     let mut mid = dummy.clone();
-    //     let mut high = dummy.clone();
-    //     let mut extracted = dummy.clone();
-
-    //     let chunk_bitlen : usize = 11;
-    //     let high_chunk_bitlen : usize = 10;
-        
-    //     match var.get_value() {
-    //         None => {               
-    //             low = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //             mid = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //             high = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;   
-    //             of = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //             extracted = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //         },
-    //         Some(fr) => {
-    //             let f_repr = fr.into_repr();
-    //             let n = f_repr.as_ref()[0];
-
-    //             let low_val = Self::u64_to_ff(n & ((1 << chunk_bitlen) - 1));
-    //             low = AllocatedNum::alloc(cs, || Ok(low_val))?;
-
-    //             let mid_val = Self::u64_to_ff((n >> chunk_bitlen) & ((1 << chunk_bitlen) - 1));
-    //             mid = AllocatedNum::alloc(cs, || Ok(mid_val))?;
-
-    //             let high_val = Self::u64_to_ff((n >> 2*chunk_bitlen) & ((1 << high_chunk_bitlen) - 1));
-    //             high = AllocatedNum::alloc(cs, || Ok(high_val))?;
-
-    //             // NOTE that we also use high_chunk_bitlen to generate mask for of!
-    //             let of_val = Self::u64_to_ff((n >> SHA256_REG_WIDTH) & ((1 << high_chunk_bitlen) - 1));
-    //             of = AllocatedNum::alloc(cs, || Ok(of_val))?;
-
-    //             let extracted_val = Self::u64_to_ff(n & ((1 << SHA256_REG_WIDTH) - 1));
-    //             extracted = AllocatedNum::alloc(cs, || Ok(extracted_val))?;
-    //         },
-    //     };
-
-    //     let mut range_check = |var: &AllocatedNum<E>, is_11_bit_check: bool| -> Result<()> {
-    //         if is_11_bit_check {
-    //             self.query_table2(cs, &self.sha256_base4_rot7_table, var)?;
-    //         }
-    //         else {
-    //             self.query_table2(cs, &self.sha256_base4_widh10_table, var)?;
-    //         }
-    //         Ok(())
-    //     };
-        
-    //     range_check(&low, true);
-    //     range_check(&mid, true);
-    //     range_check(&high, false);
-    //     range_check(&of, false);
-                      
-    //     let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
-    //     AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted)?;
-
-    //     // check that extracted + of * 32 = input
-    //     let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     AllocatedNum::ternary_lc_eq(
-    //         cs, 
-    //         &[E::Fr::one(), full_reg_size, E::Fr::zero()],
-    //         &[extracted.clone(), of, dummy],
-    //         &var
-    //     )?;
-
-    //     Ok(extracted)
-    // }
-
-    // fn extact_32_from_overflowed_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, var: &Num<E>) -> Result<Num<E>> {
-    //     let res = match var {
-    //         Num::Constant(x) => {
-    //             Num::Constant(self.extract_32_from_constant(x).0)
-    //         },
-    //         Num::Allocated(x) => {
-    //             let extracted_var = match self.global_strategy {
-    //                 GlobalStrategy::UseCustomGadgets => self.extact_32_with_custom_gates(cs, x)?,
-    //                 GlobalStrategy::UseRangeCheckTable(num_bits) => self.extract_32_with_range_table(cs, x, num_bits)?,
-    //                 // do extraction, reusing sha256-specific tables
-    //                 _ => self.extract_using_sparse_rotate_table(cs, x)?,
-    //             };
-    //             Num::Allocated(extracted_var)
-    //         },
-    //     };
-
-    //     Ok(res)
-    // }
-
-    // fn extact_32_from_tracked_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, var: NumWithTracker<E>) -> Result<Num<E>> {
-    //     let res = match var.overflow_tracker {
-    //         OverflowTracker::NoOverflow => var.num,
-    //         _ => self.extact_32_from_overflowed_num(cs, &var.num)?,
-    //     };
-
-    //     Ok(res)
-    // }
-
-    // fn deduce_of(&self, mut of_trackers: Vec<OverflowTracker>) -> OverflowTracker
-    // {
-    //     assert!(!of_trackers.is_empty());
-
-    //     let mut total : u64 = 0;
-    //     for of in of_trackers {
-    //         total += of.get_template();
-    //     }
-    //     OverflowTracker::new_from_template(total)
-    // }
-
-    // // for given 11-bit number x (represented in sparse form), y|hb|lbb, where lbb - 2-bits, hb - 1bit and y 8-bit
-    // // (all are represented in sparse form)
-    // // returns the components of decomposition: y, hb, lbb
-    // fn unpack_chunk<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     x: AllocatedNum<E>, 
-    //     base: usize
-    // ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)> 
-    // {
-    //     let res = match self.global_strategy {
-    //         GlobalStrategy::UseCustomGadgets => self.unpack_chunk_with_custom_gates(cs, x, base),
-    //         GlobalStrategy::UseSpecializedTables => unimplemented!(),
-    //         GlobalStrategy::Use_8_1_2_SplitTable => {
-    //             assert_eq!(base, 2);
-    //             self.unpack_chunk_with_split_table(cs, x)
-    //         },
-    //         GlobalStrategy::UseRangeCheckTable(num_bits) => {
-    //             assert_eq!(base, 2);
-    //             self.unpack_chunk_with_range_table(cs, x, num_bits)
-    //         },
-    //     };
-    //     res
-    // }
-
-    // fn unpack_chunk_with_custom_gates<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     x: AllocatedNum<E>, 
-    //     base: usize
-    // ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)> 
-    // {   
-    //     let mut lbb_fr = None;
-    //     let mut hb_fr = None;
-    //     let mut y_full_fr = None;
-    //     let mut y2_fr = None;
-    //     let mut y4_fr = None;
-    //     let mut y6_fr = None;
-    //     let base_squared = base * base;
-
-    //     match x.get_value() {
-    //         None => {},
-    //         Some(val) => {
-    //             let mut big_f = BigUint::default();
-    //             let f_repr = val.clone().into_repr();
-    //             for n in f_repr.as_ref().iter().rev() {
-    //                 big_f <<= 64;
-    //                 big_f += *n;
-    //             }
-
-    //             let lbb_val = (big_f.clone() % BigUint::from(base_squared)).to_u64().unwrap();
-    //             lbb_fr = Some(Self::u64_to_ff(lbb_val));
-    //             big_f /= base_squared;
-
-    //             let hb_val = (big_f.clone() % BigUint::from(base)).to_u64().unwrap();
-    //             hb_fr = Some(Self::u64_to_ff(hb_val));
-    //             big_f /= base;
-
-    //             y_full_fr = Some(Self::biguint_to_ff(&big_f));
-    //             big_f /= base_squared;
-
-    //             y6_fr = Some(Self::biguint_to_ff(&big_f));
-    //             big_f /= base_squared;
-
-    //             y4_fr = Some(Self::biguint_to_ff(&big_f));
-    //             big_f /= base_squared;
-
-    //             y2_fr = Some(Self::biguint_to_ff(&big_f));
-    //             big_f /= base_squared;
-
-    //             assert!(big_f.is_zero());
-    //         },
-    //     }
-        
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     let lbb = AllocatedNum::alloc(cs, || lbb_fr.grab())?;
-    //     let hb = AllocatedNum::alloc(cs, || hb_fr.grab())?;
-    //     let y_full = AllocatedNum::alloc(cs, || y_full_fr.grab())?;
-    //     let y2 = AllocatedNum::alloc(cs, || y2_fr.grab())?;
-    //     let y4 = AllocatedNum::alloc(cs, || y4_fr.grab())?;
-    //     let y6 = AllocatedNum::alloc(cs, || y6_fr.grab())?;
-
-    //     let base_squared_fr = Self::u64_to_ff(base_squared as u64);
-
-    //     cs.new_single_gate_for_trace_step(
-    //         &RangeCheckConstraintGate::default(), 
-    //         &[base_squared_fr.clone()], 
-    //         &[y6.get_variable(), y4.get_variable(), y2.get_variable(), dummy.get_variable()], 
-    //         &[]
-    //     )?;  
-   
-    //     cs.begin_gates_batch_for_step()?;
-        
-    //     cs.new_gate_in_batch( 
-    //         &SparseRangeGate::new(1),
-    //         &[base_squared_fr.clone()],
-    //         &[x.get_variable(), lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
-    //         &[],
-    //     )?;
-
-    //     cs.new_gate_in_batch( 
-    //         &SparseRangeGate::new(2),
-    //         &[E::Fr::zero()],
-    //         &[x.get_variable(), lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
-    //         &[],
-    //     )?;
-
-    //     // the selectors in the main gate go in the following order:
-    //     // [q_a, q_b, q_c, q_d, q_m, q_const, q_d_next]
-    //     // we constraint the equation: -x + lbb + base^2 * hb + base^3 * y = 0;
-    //     // so in our case: q_a = -1, q_b = 1; q_c = base^2; q_d = base^2; q_m = q_const = q_d_next = 0;
-
-    //     let zero = E::Fr::zero();
-    //     let one = E::Fr::one();
-    //     let mut minus_one = E::Fr::one();
-    //     minus_one.negate();
-    //     let base_cubed_fr = Self::u64_to_ff((base_squared * base) as u64);
-            
-    //     cs.new_gate_in_batch(
-    //         &CS::MainGate::default(),
-    //         &[minus_one, one, base_squared_fr, base_cubed_fr, zero.clone(), zero.clone(), zero],
-    //         &[x.get_variable(),lbb.get_variable(), hb.get_variable(), y_full.get_variable()],
-    //         &[],
-    //     )?;
-
-    //     cs.end_gates_batch_for_step()?;
-
-    //     Ok((y_full, hb, lbb))
-    // }
-
-    // fn unpack_chunk_with_split_table<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     x: AllocatedNum<E>, 
-    // ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)>
-    // {
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     let mut y = dummy.clone();
-    //     let mut hb = y.clone();
-    //     let mut lbb = hb.clone();
-
-    //     let res = match x.get_value() {
-    //         None => {
-    //             y = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?; 
-    //             hb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //             lbb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //         },
-    //         Some(fr) => {
-    //             let f_repr = fr.into_repr();
-    //             let n = f_repr.as_ref()[0];
-
-    //             let lbb_val = Self::u64_to_ff(n & 3);
-    //             lbb = AllocatedNum::alloc(cs, || Ok(lbb_val))?;
-
-    //             let hb_val = Self::u64_to_ff((n >> 2) & 1);
-    //             hb = AllocatedNum::alloc(cs, || Ok(hb_val))?;
-
-    //             let y_val = Self::u64_to_ff(n >> 3);
-    //             y = AllocatedNum::alloc(cs, || Ok(y_val))?;
-    //         },     
-    //     };
-
-    //     cs.begin_gates_batch_for_step()?;
-
-    //     let vars = [y.get_variable(), hb.get_variable(), lbb.get_variable(), x.get_variable()];
-    //     let table = self.global_table.as_ref().unwrap();
-
-    //     // cs.allocate_variables_without_gate(
-    //     //     &vars,
-    //     //     &[]
-    //     // )?;
-
-    //     cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     let mut gate_term = MainGateTerm::new();
-    //     let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
-        
-    //     let mut minus_one = E::Fr::one();
-    //     minus_one.negate();
-    //     let coeffs = [E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3), minus_one];
-    //     let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
-
-    //     for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
-    //         local_coeffs[idx] = coef.clone();
-    //     }
-
-    //     let mg = CS::MainGate::default();
-
-    //     cs.new_gate_in_batch(
-    //         &mg,
-    //         &local_coeffs,
-    //         &local_vars,
-    //         &[]
-    //     )?;
-
-    //     cs.end_gates_batch_for_step()?;
-
-    //     // AllocatedNum::ternary_lc_eq(
-    //     //     cs,
-    //     //     &[E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3)],
-    //     //     &[lbb.clone(), hb.clone(), y.clone()],
-    //     //     &x,
-    //     // )?;
-
-    //     Ok((y, hb, lbb))
-    // }
-
-    // fn unpack_chunk_with_range_table<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     x: AllocatedNum<E>, 
-    //     table_bitlen: usize,
-    // ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)>
-    // {
-    //     let dummy = AllocatedNum::alloc_zero(cs)?;
-    //     let mut y = dummy.clone();
-    //     let mut hb = y.clone();
-    //     let mut lbb = hb.clone();
-
-    //     let res = match x.get_value() {
-    //         None => {
-    //             y = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?; 
-    //             hb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //             lbb = AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?;
-    //         },
-    //         Some(fr) => {
-    //             let f_repr = fr.into_repr();
-    //             let n = f_repr.as_ref()[0];
-
-    //             let lbb_val = Self::u64_to_ff(n & 3);
-    //             lbb = AllocatedNum::alloc(cs, || Ok(lbb_val))?;
-
-    //             let hb_val = Self::u64_to_ff((n >> 2) & 1);
-    //             hb = AllocatedNum::alloc(cs, || Ok(hb_val))?;
-
-    //             let y_val = Self::u64_to_ff(n >> 3);
-    //             y = AllocatedNum::alloc(cs, || Ok(y_val))?;
-    //         },     
-    //     };
-
-    //     let range_table = self.global_table.as_ref().unwrap();
-    //     let dummy = dummy.get_variable();
-
-    //     let mut range_check = |var: &AllocatedNum<E>, var_bitlen: usize| -> Result<()> {
-    //         assert!(var_bitlen != table_bitlen);
-    //         let shift = table_bitlen - var_bitlen;
-            
-    //         let new_val = match var.get_value() {
-    //             None => None,
-    //             Some(fr) => {
-    //                 let f_repr = fr.into_repr();
-    //                 let n = f_repr.as_ref()[0] << shift;
-    //                 Some(Self::u64_to_ff(n))
-    //             },
-    //         };
-    //         let shifted_var = AllocatedNum::alloc(cs, || new_val.grab())?;
-            
-    //         let zero = E::Fr::zero();
-    //         let mut minus_one = E::Fr::one();
-    //         minus_one.negate();
-    //         let coef = Self::u64_to_ff(1 << shift);
-
-    //         cs.begin_gates_batch_for_step()?; 
-            
-    //         let first_trace_step = [var.get_variable(), dummy, dummy, shifted_var.get_variable()];
-
-    //         cs.new_gate_in_batch(
-    //             &CS::MainGate::default(),
-    //             &[coef, zero.clone(), zero.clone(), minus_one, zero.clone(), zero.clone(), zero],
-    //             &first_trace_step[..],
-    //             &[],
-    //         )?;
-            
-    //         cs.apply_single_lookup_gate(&first_trace_step[..range_table.width()], range_table.clone())?;
-    //         cs.end_gates_batch_for_step()?;
-
-    //         cs.begin_gates_batch_for_step()?; 
-    //         let second_trace_step = [shifted_var.get_variable(), dummy, dummy, dummy];
-
-    //         cs.allocate_variables_without_gate(
-    //             &second_trace_step,
-    //             &[]
-    //         )?;
-            
-    //         cs.apply_single_lookup_gate(&second_trace_step[..range_table.width()], range_table.clone())?;
-    //         cs.end_gates_batch_for_step()?;
-
-    //         Ok(())
-    //     };
-
-    //     range_check(&lbb, 2)?;
-    //     range_check(&hb, 1)?;
-    //     range_check(&y, 8)?;
-
-    //     AllocatedNum::ternary_lc_eq(
-    //         cs,
-    //         &[E::Fr::one(), Self::u64_to_ff(1 << 2), Self::u64_to_ff(1 << 3)],
-    //         &[lbb.clone(), hb.clone(), y.clone()],
-    //         &x,
-    //     )?;
-        
-    //     Ok((y, hb, lbb))
-    // } 
-
-    // fn converter_helper(&self, n: u64, sparse_base: usize, rotation: usize, extraction: usize) -> E::Fr {
-    //     let t = map_into_sparse_form(rotate_extract(n as usize, rotation, extraction), sparse_base);
-    //     E::Fr::from_str(&t.to_string()).unwrap()
-    // }
-
-    // fn allocate_converted_num<CS: ConstraintSystem<E>>(
-    //     &self,
-    //     cs: &mut CS,
-    //     var: &AllocatedNum<E>, 
-    //     chunk_bitlen: usize, 
-    //     chunk_offset: usize, 
-    //     sparse_base: usize,
-    //     rotation: usize, 
-    //     extraction: usize
-    // ) -> Result<AllocatedNum<E>> 
-    // {
-    //     let new_val = var.get_value().map( |fr| {
-    //         let repr = fr.into_repr();
-    //         let n = (repr.as_ref()[0] >> chunk_offset) & ((1 << chunk_bitlen) - 1);
-    //         self.converter_helper(n, sparse_base, rotation, extraction)
-    //     });
-
-    //     AllocatedNum::alloc(cs, || new_val.grab())
-    // }
-
-    // fn query_table1<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     table: &Arc<LookupTableApplication<E>>, 
-    //     key: &AllocatedNum<E>
-    // ) -> Result<AllocatedNum<E>> 
-    // {
-    //     let res = match key.get_value() {
-    //         None => AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
-    //         Some(val) => {
-    //             let new_val = table.query(&[val])?[0];
-    //             AllocatedNum::alloc(cs, || Ok(new_val))?
-    //         },     
-    //     };
-
-    //     cs.begin_gates_batch_for_step()?;
-
-    //     let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
-    //     let vars = [key.get_variable(), res.get_variable(), dummy, dummy];
-
-    //     cs.allocate_variables_without_gate(
-    //         &vars,
-    //         &[]
-    //     )?;
-    //     cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-    //     cs.end_gates_batch_for_step()?;
-
-    //     Ok(res)
-    // }
-
-    // fn query_table2<CS: ConstraintSystem<E>>(
-    //     &self,
-    //     cs: &mut CS, 
-    //     table: &Arc<LookupTableApplication<E>>, 
-    //     key: &AllocatedNum<E>
-    // ) -> Result<(AllocatedNum<E>, AllocatedNum<E>)> 
-    // {
-    //     let res = match key.get_value() {
-    //         None => (
-    //             AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?, 
-    //             AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?
-    //         ),
-    //         Some(val) => {
-    //             let new_vals = table.query(&[val])?;
-    //             (
-    //                 AllocatedNum::alloc(cs, || Ok(new_vals[0]))?,
-    //                 AllocatedNum::alloc(cs, || Ok(new_vals[1]))?
-    //             )
-    //         },     
-    //     };
-
-    //     cs.begin_gates_batch_for_step()?;
-
-    //     //let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
-    //     let vars = [key.get_variable(), res.0.get_variable(), res.1.get_variable(), key.get_variable()];
-    //     cs.allocate_variables_without_gate(
-    //         &vars,
-    //         &[]
-    //     )?;
-    //     cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-
-    //     cs.end_gates_batch_for_step()?;
-    //     Ok(res)
-    // }
-
-    // // the idea realized in this function is to combine accumulation of running sum with normalization
-    // // assume we have representation of x as x = \sum x_i a^i, where each x_i is in [0, a-1] and we have
-    // // highy nonlinear normalization funtion f: [0, a-1] -> [0, b-1], implemented via corresponding table
-    // // the wanted result is y = \sum f(x_i) b^i
-    // // we can conbine transformation of each chunk x_i and accumulation of resulting y_i via f on the same row:
-    // // start with acc = 0
-    // // for the row [x_i, f(x_i), acc_prev, acc_new], let acc_new = acc_prev * b^i + f(x_i)
-
-    // // NB: if we are allowed to use two values fron the next row, then we may accumulate two running sums simultaneously
-    // // (for x and y correspondingly)
-    // // the row in this case would be [x_i, f(x_i), x_acc, y_acc]  
-    // fn query_table_accumulate<CS: ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     table: &Arc<LookupTableApplication<E>>, 
-    //     key: &AllocatedNum<E>,
-    //     prev_acc: &AllocatedNum<E>,
-    //     base: &E::Fr,
-    // ) -> Result<AllocatedNum<E>> 
-    // {
-    //     let f_key = match key.get_value() {
-    //         None => AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
-    //         Some(val) => {
-    //             let new_val = table.query(&[val])?[0];
-    //             AllocatedNum::alloc(cs, || Ok(new_val))?
-    //         },     
-    //     };
-
-    //     let new_acc = AllocatedNum::alloc(cs, || {
-    //         let mut tmp = prev_acc.get_value().grab()?;
-    //         tmp.mul_assign(base);
-    //         tmp.add_assign(&(f_key.get_value().grab())?);
-    //         Ok(tmp)
-    //     })?;
-
-    //     let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
-    //     let mut minus_one = E::Fr::one();
-    //     minus_one.negate();
-    //     let range_of_linear_terms = CS::MainGate::range_of_linear_terms();  
-
-    //     // new_acc = prev_acc * base + f_key
-    //     let vars = [key.get_variable(), f_key.get_variable(), prev_acc.get_variable(), new_acc.get_variable()];
-    //     let coeffs = [E::Fr::zero(), E::Fr::one(), base.clone(), minus_one.clone()];
-
-    //     cs.begin_gates_batch_for_step()?;
-
-    //     cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
     
-    //     let mut gate_term = MainGateTerm::new();
-    //     let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy)?;
-    //     for (idx, coef) in range_of_linear_terms.clone().zip(coeffs.iter()) {
-    //         local_coeffs[idx] = coef.clone();
-    //     }
+    // -----------------------------------------------------------------------------------------------------------------------
+    // -----------------------------------------------------------------------------------------------------------------------
+    // helper functions
+    // ------------------------------------------------------------------------------------------------------------------------
+    // ------------------------------------------------------------------------------------------------------------------------
 
-    //     let mg = CS::MainGate::default();
-    //     cs.new_gate_in_batch(
-    //         &mg,
-    //         &local_coeffs,
-    //         &vars,
-    //         &[]
-    //     )?;
+    // for list of overflowed numbers, deduce the maximal possible overflow of their sum
+    fn deduce_of(&self, mut of_trackers: Vec<OverflowTracker>) -> OverflowTracker
+    {
+        assert!(!of_trackers.is_empty());
 
-    //     cs.end_gates_batch_for_step()?;
+        let mut total : u64 = 0;
+        for of in of_trackers {
+            total += of.get_template();
+        }
+        OverflowTracker::new_from_template(total)
+    }
+  
+    fn converter_helper(&self, n: u64, sparse_base: u64, rotation: usize, extraction: usize) -> E::Fr {
+        let t = map_into_sparse_form(rotate_extract(n as usize, rotation, extraction), sparse_base as usize);
+        E::Fr::from_str(&t.to_string()).unwrap()
+    }
 
-    //     Ok(new_acc)
-    // }
+    fn allocate_converted_num<CS: ConstraintSystem<E>>(
+        &self,
+        cs: &mut CS,
+        var: &AllocatedNum<E>, 
+        chunk_bitlen: usize, 
+        chunk_offset: usize, 
+        sparse_base: usize,
+        rotation: usize, 
+        extraction: usize
+    ) -> Result<AllocatedNum<E>> 
+    {
+        let new_val = var.get_value().map( |fr| {
+            let repr = fr.into_repr();
+            let n = (repr.as_ref()[0] >> chunk_offset) & ((1 << chunk_bitlen) - 1);
+            self.converter_helper(n, sparse_base, rotation, extraction)
+        });
 
-    // fn convert_into_sparse_chooser_form<CS : ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     input: NumWithTracker<E>, 
-    // ) -> Result<SparseChValue<E>> 
-    // {   
-    //     // match input.overflow_tracker {
-    //     //     OverflowTracker::NoOverflow => println!(" no overflow"),
-    //     //     OverflowTracker::OneBitOverflow => println!("one bit"),
-    //     //     OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => println!("{} oveflow", n),
-    //     // };
+        AllocatedNum::alloc(cs, || new_val.grab())
+    }
 
-    //     if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
-    //         assert!(n <= 17);
-    //     };
+    // the idea realized in this function is to combine accumulation of running sum with normalization
+    // assume we have representation of x as x = \sum x_i a^i, where each x_i is in [0, a-1] and we have
+    // highy nonlinear normalization funtion f: [0, a-1] -> [0, b-1], implemented via corresponding table
+    // the wanted result is y = \sum f(x_i) b^i
+    // we can conbine transformation of each chunk x_i and accumulation of resulting y_i via f on the same row:
+    // start with acc = 0
+    // for the row [x_i, f(x_i), acc_prev, acc_new], let acc_new = acc_prev * b^i + f(x_i)
+    
+    // actual implementation is the following:
+    // for row of the form [x, f(x), g(x), acc] do:
+    // table query x => f(x), g(x)
+    // running sum for input: acc_next = acc - coef * x
+    // if is_final is set, simply check: acc = coef * x
+    // returns (f(x), g(x), acc_next)
+    fn query_table_acc<CS: ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        table: &Arc<LookupTableApplication<E>>, 
+        key: &AllocatedNum<E>,
+        prev_acc: &AllocatedNum<E>,
+        coef: &E::Fr,
+        is_final: bool,
+    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>, AllocatedNum<E>)> 
+    {
+        let (f_key, g_key) = match key.get_value() {
+            None => {
+                (
+                    AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?, 
+                    AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
+                )
+            },
+            Some(val) => {
+                let vals = table.query(&[val])?;
+                (AllocatedNum::alloc(cs, || Ok(vals[0]))?, AllocatedNum::alloc(cs, || Ok(vals[1]))?)
+            },     
+        };
+
+        let new_acc = if !is_final {
+            AllocatedNum::alloc(cs, || {
+                let mut res = prev_acc.get_value().grab()?;
+                let mut tmp = key.get_value().grab()?;
+                tmp.mul_assign(coef);
+                res.sub_assign(&(f_key.get_value().grab())?);
+                Ok(tmp)
+            })?
+        }
+        else {
+            AllocatedNum::alloc_zero(cs)?
+        };
+
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        let range_of_next_step_linear_terms = CS::MainGate::range_of_next_step_linear_terms();
+        let idx_of_last_linear_term = range_of_next_step_linear_terms.last().expect("must have an index");
+
+        // new_acc = prev_acc - base * key
+        // or: base * key + new_acc - prev_acc = 0;
+        let vars = [key.get_variable(), f_key.get_variable(), g_key.get_variable(), new_acc.get_variable()];
+        let coeffs = [coef.clone(), E::Fr::zero(), E::Fr::zero(), minus_one];
+
+        cs.begin_gates_batch_for_step()?;
+
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+    
+        let mut gate_term = MainGateTerm::new();
+        let (_, mut gate_coefs) = CS::MainGate::format_term(gate_term, dummy)?;
+
+        for (idx, coef) in range_of_linear_terms.zip(coeffs.into_iter()) {
+            gate_coefs[idx] = *coef;
+        }
+
+        if !is_final {
+            gate_coefs[idx_of_last_linear_term] = E::Fr::one();
+        }
+
+        let mg = CS::MainGate::default();
+        cs.new_gate_in_batch(
+            &mg,
+            &gate_coefs,
+            &vars,
+            &[]
+        )?;
+
+        cs.end_gates_batch_for_step()?;
+
+        Ok((f_key, g_key, new_acc))
+    }
+
+    // range check for of, assuming of is at most SHA256_GADGET_CHUNK bits long
+    // we accomplish range check exploting sha-specific sparse-rotations tables
+    // the row has the form: [of, sparse(of), sparse_rotate(of), of]
+    fn of_range_check<CS: ConstraintSystem<E>>(&self, cs: &mut CS, of: &AllocatedNum<E>) -> Result<()> {
+        let table = &self.sha256_base4_rot2_table;
+        let (b, c) = match of.get_value() {
+            None => {
+                (
+                    AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?, 
+                    AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?,
+                )
+            },
+            Some(val) => {
+                let vals = table.query(&[val])?;
+                (AllocatedNum::alloc(cs, || Ok(vals[0]))?, AllocatedNum::alloc(cs, || Ok(vals[1]))?)
+            },     
+        };
+        let vars = [of.get_variable(), b.get_variable(), c.get_variable(), of.get_variable()];
+
+        cs.begin_gates_batch_for_step()?;
+        cs.allocate_variables_without_gate(&vars, &[])?;
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+        cs.end_gates_batch_for_step()?;
+
+        Ok(())
+    }
+
+    fn query_table<CS: ConstraintSystem<E>>(
+        &self,
+        cs: &mut CS, 
+        table: &Arc<LookupTableApplication<E>>, 
+        key: &AllocatedNum<E>
+    ) -> Result<(AllocatedNum<E>, AllocatedNum<E>)> 
+    {
+        let res = match key.get_value() {
+            None => (
+                AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?, 
+                AllocatedNum::alloc(cs, || Err(SynthesisError::AssignmentMissing))?
+            ),
+            Some(val) => {
+                let new_vals = table.query(&[val])?;
+                (
+                    AllocatedNum::alloc(cs, || Ok(new_vals[0]))?,
+                    AllocatedNum::alloc(cs, || Ok(new_vals[1]))?
+                )
+            },     
+        };
+
+        cs.begin_gates_batch_for_step()?;
+
+        //let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+        let vars = [key.get_variable(), res.0.get_variable(), res.1.get_variable(), key.get_variable()];
+        cs.allocate_variables_without_gate(
+            &vars,
+            &[]
+        )?;
+        cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+
+        cs.end_gates_batch_for_step()?;
+        Ok(res)
+    }
+
+    // --------------------------------------------------------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------------------------------------
+    // convertion and normalization routines
+    // ---------------------------------------------------------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------------------------------------------------------
+
+    fn convert_into_sparse_chooser_form<CS : ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        input: NumWithTracker<E>, 
+    ) -> Result<SparseChValue<E>> 
+    {   
+        if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
+            assert!(n <= SHA256_GADGET_CHUNK_SIZE + 1);
+        };
         
-    //     match input.num {
-    //         Num::Constant(x) => {
-    //             let repr = x.into_repr();
-    //             // NOTE : think, if it is safe for n to be overflowed
-    //             let n = repr.as_ref()[0] & ((1 << 32) - 1); 
-                
-    //             let res = SparseChValue {
-    //                 normal: (Num::Constant(x)).into(),
-    //                 sparse: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 0, 0)),
-    //                 rot6: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 6, 0)),
-    //                 rot11: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 11, 0)),
-    //                 rot25: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 25, 0)),
-    //             };
-
-    //             return Ok(res)
-    //         },
-    //         Num::Allocated(var) => {
-    //             let mut of_flag_dropped = false;          
-
-    //             // split our 32bit variable into 11-bit chunks:
-    //             // there will be three chunks (low, mid, high) for 32bit number
-    //             // note that, we can deal here with possible 1-bit overflow: (as 3 * 11 = 33)
-    //             // in order to do this we allow extraction set to 10 for the table working with highest chunk
-                
-    //             let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
-    //             let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
-    //             let high = self.allocate_converted_num(
-    //                 cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
-
-    //             let (sparse_low, sparse_low_rot6) = self.query_table2(cs, &self.sha256_base7_rot6_table, &low)?;
-    //             let (sparse_mid, _sparse_mid_rot6) = self.query_table2(cs, &self.sha256_base7_rot6_table, &mid)?;
-    //             let (sparse_high, sparse_high_rot3) = self.query_table2(cs, &self.sha256_base7_rot3_extr10_table, &high)?;
-
-    //             let full_normal = match input.overflow_tracker 
-    //             {
-    //                 OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => {
-    //                     // compose full normal = low + 2^11 * mid + 2^22 * high
-    //                     AllocatedNum::ternary_lc_eq(
-    //                         cs, 
-    //                         &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
-    //                         &[low, mid, high],
-    //                         &var,
-    //                     )?;
-    //                     var.clone()
-    //                 }
-                    
-    //                 _ => {
-    //                     // full normal = low + 2^11 * mid + 2^22 * high + 2^33 * overflow
-    //                     // allocate overflow on the next row alongside with the range check
-    //                     let of = self.allocate_converted_num(
-    //                         cs, &var, RANGE_TABLE_WIDTH, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0
-    //                     )?;
-
-    //                     AllocatedNum::quartic_lc_eq(
-    //                         cs,
-    //                         &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 33)],
-    //                         &[low.clone(), mid.clone(), high.clone(), of.clone()],
-    //                         &var,
-    //                     )?;
-
-    //                     self.query_table2(cs, &self.range_table, &of)?;
-
-    //                     let full_normal = match input.overflow_tracker {
-    //                         OverflowTracker::SignificantOverflow(n) if n >= 15 => {
-    //                             of_flag_dropped = true;
-    //                             let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
-    //                             AllocatedNum::ternary_lc_eq(
-    //                                 cs,
-    //                                 &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
-    //                                 &[low, mid, high],
-    //                                 &truncated,
-    //                             )?;
-    //                             truncated
-    //                         },
-    //                         _ => var.clone()
-    //                     };
-    //                     full_normal
-    //                 }
-    //             };
+        if let Num::Constant(x) = input.num {
+            let repr = x.into_repr();
+            let n = repr.as_ref()[0] & ((1 << 32) - 1); 
             
-    //             let full_sparse = {
-    //                 // full_sparse = low_sparse + 7^11 * mid_sparse + 7^22 * high_sparse
-    //                 let sparse_full = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 0, SHA256_REG_WIDTH
-    //                 )?;
+            let res = SparseChValue {
+                normal: (Num::Constant(x)).into(),
+                sparse: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 0, 0)),
+                rot6: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 6, 0)),
+                rot11: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 11, 0)),
+                rot25: Num::Constant(self.converter_helper(n, SHA256_CHOOSE_BASE, 25, 0)),
+            };
 
-    //                 let limb_1_shift = Self::u64_exp_to_ff(7, 11);
-    //                 let limb_2_shift = Self::u64_exp_to_ff(7, 22);
+            return Ok(res)
+        }
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), limb_1_shift, limb_2_shift],
-    //                     &[sparse_low.clone(), sparse_mid.clone(), sparse_high.clone()],
-    //                     &sparse_full,
-    //                 )?;
+        let var = num.input.get_variable().unwrap();
+        let mut of_flag_dropped = false;          
 
-    //                 sparse_full
-    //             };
+        // split our 32bit variable into 11-bit chunks:
+        // there will be three chunks (low, mid, high) for 32bit number
+        // note that, we can deal here with possible 1-bit overflow: (as 3 * 11 = 33)
+        // in order to do this we allow extraction set to 10 for the table working with highest chunk
+        
+        let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
+        let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
+        let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
 
-    //             let full_sparse_rot6 = {
-    //                 // full_sparse_rot6 = low_sparse_rot6 + 7^(11-6) * sparse_mid + 7^(22-6) * sparse_high
-    //                 let full_sparse_rot6 = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 6, SHA256_REG_WIDTH
-    //                 )?;
+        let mut acc = var.clone();
+        let flag = match input.overflow_tracker {
+            OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => true,
+            _ => false,
+        };
+        let cf = [];
 
-    //                 let rot6_limb_1_shift = Self::u64_exp_to_ff(7, 11-6);
-    //                 let rot6_limb_2_shift = Self::u64_exp_to_ff(7, 22 - 6);
+        let (sparse_low, sparse_low_rot6, acc) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &low, &acc, &cf[0], false)?;
+        let (sparse_mid, _sparse_mid_rot6, acc) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &mid, &acc, &cf[1], false)?;
+        let (sparse_high, sparse_high_rot3) = self.query_table_acc(cs, &self.sha256_base7_rot3_extr10_table, &high, &acc, &cf[1], flag)?;
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot6_limb_1_shift, rot6_limb_2_shift],
-    //                     &[sparse_low_rot6, sparse_mid.clone(), sparse_high.clone()],
-    //                     &full_sparse_rot6,
-    //                 )?;
+        let full_normal = match input.overflow_tracker 
+        {
+            OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => {
+                // compose full normal = low + 2^11 * mid + 2^22 * high
+                AllocatedNum::ternary_lc_eq(
+                    cs, 
+                    &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
+                    &[low, mid, high],
+                    &var,
+                )?;
+                var.clone()
+            }
+            
+            _ => {
+                // full normal = low + 2^11 * mid + 2^22 * high + 2^33 * overflow
+                // allocate overflow on the next row alongside with the range check
+                let of = self.allocate_converted_num(
+                    cs, &var, RANGE_TABLE_WIDTH, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0
+                )?;
 
-    //                 full_sparse_rot6
-    //             };
+                AllocatedNum::quartic_lc_eq(
+                    cs,
+                    &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 33)],
+                    &[low.clone(), mid.clone(), high.clone(), of.clone()],
+                    &var,
+                )?;
 
-    //             let full_sparse_rot11 = {
-    //                 // full_sparse_rot11 = sparse_mid + 7^(22-11) * sparse_high + 7^(32-11) * sparse_low
-    //                 let full_sparse_rot11 = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 11, SHA256_REG_WIDTH
-    //                 )?;
+                self.query_table2(cs, &self.range_table, &of)?;
 
-    //                 let rot11_limb_0_shift = Self::u64_exp_to_ff(7, 32 - 11);
-    //                 let rot11_limb_2_shift = Self::u64_exp_to_ff(7, 22 - 11);
+                let full_normal = match input.overflow_tracker {
+                    OverflowTracker::SignificantOverflow(n) if n >= 15 => {
+                        of_flag_dropped = true;
+                        let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
+                        AllocatedNum::ternary_lc_eq(
+                            cs,
+                            &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
+                            &[low, mid, high],
+                            &truncated,
+                        )?;
+                        truncated
+                    },
+                    _ => var.clone()
+                };
+                full_normal
+            }
+        };
+            
+        let full_sparse = {
+            // full_sparse = low_sparse + 7^11 * mid_sparse + 7^22 * high_sparse
+            let sparse_full = self.allocate_converted_num(
+                cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 0, SHA256_REG_WIDTH
+            )?;
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot11_limb_0_shift, rot11_limb_2_shift],
-    //                     &[sparse_mid.clone(), sparse_low.clone(), sparse_high],
-    //                     &full_sparse_rot11,
-    //                 )?;
+            let limb_1_shift = Self::u64_exp_to_ff(7, 11);
+            let limb_2_shift = Self::u64_exp_to_ff(7, 22);
 
-    //                 full_sparse_rot11
-    //             };
+            AllocatedNum::ternary_lc_eq(
+                cs, 
+                &[E::Fr::one(), limb_1_shift, limb_2_shift],
+                &[sparse_low.clone(), sparse_mid.clone(), sparse_high.clone()],
+                &sparse_full,
+            )?;
 
-    //             let full_sparse_rot_25 = {
-    //                 // full_sparse_rot25 = sparse_high_rot3 + 7^(11-3) * sparse_low + 7^(22-3) * sparse_mid
-    //                 let full_sparse_rot25 = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 25, SHA256_REG_WIDTH
-    //                 )?;
+            sparse_full
+        };
 
-    //                 let rot25_limb_0_shift = Self::u64_exp_to_ff(7, 10 - 3);
-    //                 let rot25_limb_1_shift = Self::u64_exp_to_ff(7, 21 - 3);
+        let full_sparse_rot6 = {
+            // full_sparse_rot6 = low_sparse_rot6 + 7^(11-6) * sparse_mid + 7^(22-6) * sparse_high
+            let full_sparse_rot6 = self.allocate_converted_num(
+                cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 6, SHA256_REG_WIDTH
+            )?;
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot25_limb_0_shift, rot25_limb_1_shift],
-    //                     &[sparse_high_rot3, sparse_low, sparse_mid],
-    //                     &full_sparse_rot25,
-    //                 )?;
+            let rot6_limb_1_shift = Self::u64_exp_to_ff(7, 11-6);
+            let rot6_limb_2_shift = Self::u64_exp_to_ff(7, 22 - 6);
 
-    //                 full_sparse_rot25
-    //             };
+            AllocatedNum::ternary_lc_eq(
+                cs, 
+                &[E::Fr::one(), rot6_limb_1_shift, rot6_limb_2_shift],
+                &[sparse_low_rot6, sparse_mid.clone(), sparse_high.clone()],
+                &full_sparse_rot6,
+            )?;
 
-    //             let new_tracker = if of_flag_dropped {OverflowTracker::OneBitOverflow} else {input.overflow_tracker};
+            full_sparse_rot6
+        };
 
-    //             let res = SparseChValue{
-    //                 normal: NumWithTracker { 
-    //                     num: Num::Allocated(full_normal), 
-    //                     overflow_tracker: new_tracker, 
-    //                 },
-    //                 sparse: Num::Allocated(full_sparse),
-    //                 rot6: Num::Allocated(full_sparse_rot6),
-    //                 rot11: Num::Allocated(full_sparse_rot11),
-    //                 rot25: Num::Allocated(full_sparse_rot_25),
-    //             };
-    //             return Ok(res);
-    //         }
-    //     }
-    // }
+        let full_sparse_rot11 = {
+            // full_sparse_rot11 = sparse_mid + 7^(22-11) * sparse_high + 7^(32-11) * sparse_low
+            let full_sparse_rot11 = self.allocate_converted_num(
+                cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 11, SHA256_REG_WIDTH
+            )?;
 
-    // // IMPORTANT NOTE:
-    // // there is a small difference between conversion into sparse chooser form and ... majority form functions 
-    // // more precisely, we are using 2 different tables in the first case: rot6 table for low and mid chunks and rot3 - for upper one
-    // // this allows to embed handling of 1-bit overflow into the table itself without additional overflow check (as called above)
-    // // this works as following: we split our number into  3 11-bit chunks, hence there 33 bits overall
-    // // however, our upper table for chooser has nontrivial extraction: we forget about the top-most bit of highest chunk, 
-    // // so our ombined full result will be of length 11 + 11 + 10 = 32, as required
-    // // NB:
-    // // 1) this way, we may handle only potential one-bit overflows, for the case of 2-bit overflows and more traditional 
-    // // approaches are required (as used inside extract_32_from_overflowed_num function)
-    // // 2) we can use the same approach inside the "conversion into sparse majority form" function - or. in other words, 
-    // // create two tables instead of one: both will be base4_rot2, but the second one will also containt non-trivial extraction 
-    // // which forgets about the highest bit of 11-bit chunks. Sometimes, creation of additional goes for free (e.g. in current 
-    // // implementation, we do not have any penalty in prover's\verifier's workload with the introduction of new table as long as 
-    // // there total number is less than closest power of 2). The choice of strategy: either work with two tables or work only with
-    // // base4_rot_2 and ALWAYS do overflow_check (even if we are sure, that we have only one bit of overflow) is handled
-    // // by MAJORITY_CONVERSION_STRATEGY flag
+            let rot11_limb_0_shift = Self::u64_exp_to_ff(7, 32 - 11);
+            let rot11_limb_2_shift = Self::u64_exp_to_ff(7, 22 - 11);
+
+            AllocatedNum::ternary_lc_eq(
+                cs, 
+                &[E::Fr::one(), rot11_limb_0_shift, rot11_limb_2_shift],
+                &[sparse_mid.clone(), sparse_low.clone(), sparse_high],
+                &full_sparse_rot11,
+            )?;
+
+            full_sparse_rot11
+        };
+
+        let full_sparse_rot_25 = {
+            // full_sparse_rot25 = sparse_high_rot3 + 7^(11-3) * sparse_low + 7^(22-3) * sparse_mid
+            let full_sparse_rot25 = self.allocate_converted_num(
+                cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 25, SHA256_REG_WIDTH
+            )?;
+
+            let rot25_limb_0_shift = Self::u64_exp_to_ff(7, 10 - 3);
+            let rot25_limb_1_shift = Self::u64_exp_to_ff(7, 21 - 3);
+
+            AllocatedNum::ternary_lc_eq(
+                cs, 
+                &[E::Fr::one(), rot25_limb_0_shift, rot25_limb_1_shift],
+                &[sparse_high_rot3, sparse_low, sparse_mid],
+                &full_sparse_rot25,
+            )?;
+
+            full_sparse_rot25
+        };
+
+        let new_tracker = if of_flag_dropped {OverflowTracker::OneBitOverflow} else {input.overflow_tracker};
+
+        let res = SparseChValue{
+            normal: NumWithTracker { 
+                num: Num::Allocated(full_normal), 
+                overflow_tracker: new_tracker, 
+            },
+            sparse: Num::Allocated(full_sparse),
+            rot6: Num::Allocated(full_sparse_rot6),
+            rot11: Num::Allocated(full_sparse_rot11),
+            rot25: Num::Allocated(full_sparse_rot_25),
+        };
+        return Ok(res);
+    }
+
+    // IMPORTANT NOTE:
+    // there is a small difference between conversion into sparse chooser form and majority form functions 
+    // more precisely, we are using 2 different tables in the first case: rot6 table for low and mid chunks and rot3 - for upper one
+    // this allows to embed handling of 1-bit overflow into the table itself without additional overflow check (as called above)
+    // this works as following: we split our number into  3 11-bit chunks, hence there 33 bits overall
+    // however, our upper table for chooser has nontrivial extraction: we forget about the top-most bit of highest chunk, 
+    // so our ombined full result will be of length 11 + 11 + 10 = 32, as required
+    // NB:
+    // 1) this way, we may handle only potential one-bit overflows, for the case of 2-bit overflows and more traditional 
+    // approaches are required (as used inside extract_32_from_overflowed_num function)
+    // 2) we can use the same approach inside the "conversion into sparse majority form" function - or. in other words, 
+    // create two tables instead of one: both will be base4_rot2, but the second one will also containt non-trivial extraction 
+    // which forgets about the highest bit of 11-bit chunks. Sometimes, creation of additional goes for free (e.g. in current 
+    // implementation, we do not have any penalty in prover's\verifier's workload with the introduction of new table as long as 
+    // there total number is less than closest power of 2). The choice of strategy: either work with two tables or work only with
+    // base4_rot_2 and ALWAYS do overflow_check (even if we are sure, that we have only one bit of overflow) is handled
+    // by MAJORITY_CONVERSION_STRATEGY flag
 
     // fn convert_into_sparse_majority_form<CS : ConstraintSystem<E>>(
     //     &self, 
