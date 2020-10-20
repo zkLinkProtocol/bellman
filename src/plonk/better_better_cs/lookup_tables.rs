@@ -14,6 +14,8 @@ use crate::plonk::better_cs::utils::*;
 use super::cs::*;
 use super::data_structures::*;
 
+pub const RANGE_CHECK_SINGLE_APPLICATION_TABLE_NAME: &'static str = "Range check table for a single column";
+
 pub trait LookupTableInternal<E: Engine>: Send 
     + Sync 
     + 'static 
@@ -106,7 +108,7 @@ impl<E: Engine> LookupTableApplication<E> {
     pub fn new_range_table_of_width_3(width: usize, over: Vec<PolyIdentifier>) -> Result<Self, SynthesisError> {
         let table = RangeCheckTableOverOneColumnOfWidth3::new(width);
 
-        let name = "Range check table for a single column";
+        let name = RANGE_CHECK_SINGLE_APPLICATION_TABLE_NAME;
 
         Ok(Self {
             name: name,
@@ -308,7 +310,7 @@ impl<E: Engine> std::fmt::Debug for RangeCheckTableOverSingleColumn<E> {
 
 impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
     fn name(&self) -> &'static str {
-        "Range check table for a single column"
+        RANGE_CHECK_SINGLE_APPLICATION_TABLE_NAME
     }
     fn table_size(&self) -> usize {
         debug_assert_eq!(1usize << self.bits, self.table_entries.len());
@@ -344,7 +346,7 @@ impl<E: Engine> LookupTableInternal<E> for RangeCheckTableOverSingleColumn<E> {
     fn table_id(&self) -> E::Fr {
         table_id_from_string(self.name())
     }
-    fn sort(&self, values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
+    fn sort(&self, _values: &[E::Fr], _column: usize) -> Result<Vec<E::Fr>, SynthesisError> {
         unimplemented!()
     }
     fn box_clone(&self) -> Box<dyn LookupTableInternal<E>> {
