@@ -30,6 +30,7 @@ const SHA256_REG_WIDTH : usize = 32;
 const CH_DEFAULT_NUM_OF_CHUNKS : usize = 5; // 7^4 is fine
 const MAJ_AND_SHEDULER_DEFAULT_NUM_OF_CHUNKS : usize = 8; // 4^6 is fine
 const BINARY_BASE : u64 = 2;
+const DEFAULT_RANGE_TABLE_WIDTH : usize = 16;
 
 
 // helper struct for tracking how far current value from being in 32-bit range
@@ -255,6 +256,16 @@ pub struct Sha256Gadget<E: Engine> {
     // namely: Sha256ShedulerHelperTable
     sha256_sheduler_helper_table : Arc<LookupTableApplication<E>>,
 
+    // there is an option to handle of range checks via globally defined range table
+    // if there is no such table available, we are not going to create such a range table ourselves
+    // instead we accomplish rabge checks via sha_specific sparse_rotate tables
+    // in fact, there is not much benefit from using 16-bit range table than our inner 11-bit tables
+    // but if we are given one as a gift. why not to exploit it?
+    use_global_range_table: bool,
+    global_range_table_width: usize,
+    global_range_table: Option<Arc<LookupTableApplication<E>>>,
+    max_of_width: usize,
+
     // constants 
     iv: [E::Fr; 8],
     round_constants: [E::Fr; 64],
@@ -267,6 +278,9 @@ impl<E: Engine> Sha256Gadget<E> {
         ch_base_num_of_chunks: Option<usize>,
         maj_sheduler_base_num_of_chunks: Option<usize>,
         use_c_prev : bool,
+        use_global_range_table: bool,
+        global_range_table_width : usize,
+        global_range_table_name: &str,
     ) -> Result<Self> {
 
         let ch_num_of_chunks = ch_base_num_of_chunks.unwrap_or(CH_DEFAULT_NUM_OF_CHUNKS);
@@ -384,6 +398,17 @@ impl<E: Engine> Sha256Gadget<E> {
             u64_to_ff(0x90befffa), u64_to_ff(0xa4506ceb), u64_to_ff(0xbef9a3f7), u64_to_ff(0xc67178f2),
         ];
 
+        let (global_range_table, max_of_width) = match use_global_range_table {
+            true => {
+                // there is no point in using small range tables
+                assert!(global_range_table_width > SHA256_GADGET_CHUNK_SIZE);
+                // for now only range table of width 16 is supported
+                assert_eq!(global_range_table_width, DEFAULT_RANGE_TABLE_WIDTH);
+                (Some(cs.get_table(global_range_table_name)?), global_range_table_width)
+            },
+            false => (None, SHA256_GADGET_CHUNK_SIZE),
+        };
+
         Ok(Sha256Gadget {
             use_c_prev,
             ch_num_of_chunks,
@@ -399,6 +424,11 @@ impl<E: Engine> Sha256Gadget<E> {
         
             sha256_base4_rot7_table,
             sha256_sheduler_helper_table,
+
+            use_global_range_table,
+            global_range_table_width,
+            global_range_table,
+            max_of_width,
 
             iv,
             round_constants,
@@ -435,7 +465,7 @@ impl<E: Engine> Sha256Gadget<E> {
         var: &AllocatedNum<E>, 
         chunk_bitlen: usize, 
         chunk_offset: usize, 
-        sparse_base: usize,
+        sparse_base: u64,
         rotation: usize, 
         extraction: usize
     ) -> Result<AllocatedNum<E>> 
@@ -542,9 +572,24 @@ impl<E: Engine> Sha256Gadget<E> {
 
     // range check for of, assuming of is at most SHA256_GADGET_CHUNK bits long
     // we accomplish range check exploting sha-specific sparse-rotations tables
-    // the row has the form: [of, sparse(of), sparse_rotate(of), of]
-    fn of_range_check<CS: ConstraintSystem<E>>(&self, cs: &mut CS, of: &AllocatedNum<E>) -> Result<()> {
-        let table = &self.sha256_base4_rot2_table;
+    // the row has the form: [of, sparse(of), sparse_rotate(of), of_shifted]
+    // also check that of * coef = of_shifted
+    fn of_range_check<CS>(&self, cs: &mut CS, of: &AllocatedNum<E>, of_shifted: &AllocatedNum<E>, coef: &E::Fr) -> Result<()> 
+    where CS: ConstraintSystem<E>
+    {
+        let table = match self.use_global_range_table {
+            false => &self.sha256_base4_rot2_table,
+            true => self.global_range_table.as_ref().unwrap(),
+        };
+
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let dummy = AllocatedNum::alloc_zero(cs)?.get_variable();
+
+        let linear_terms = CS::MainGate::range_of_linear_terms();
+        let a_idx = linear_terms.start;
+        let d_idx = linear_terms.end - 1; 
+
         let (b, c) = match of.get_value() {
             None => {
                 (
@@ -557,11 +602,19 @@ impl<E: Engine> Sha256Gadget<E> {
                 (AllocatedNum::alloc(cs, || Ok(vals[0]))?, AllocatedNum::alloc(cs, || Ok(vals[1]))?)
             },     
         };
-        let vars = [of.get_variable(), b.get_variable(), c.get_variable(), of.get_variable()];
+        let vars = [of.get_variable(), b.get_variable(), c.get_variable(), of_shifted.get_variable()];
 
         cs.begin_gates_batch_for_step()?;
-        cs.allocate_variables_without_gate(&vars, &[])?;
+
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+        let mut gate_term = MainGateTerm::new();
+        let (_, mut gate_coefs) = CS::MainGate::format_term(gate_term, dummy)?;
+        gate_coefs[a_idx] = coef.clone();
+        gate_coefs[d_idx] = minus_one;
+        
+        let mg = CS::MainGate::default();
+        cs.new_gate_in_batch(&mg, &gate_coefs, &vars, &[])?;
+        
         cs.end_gates_batch_for_step()?;
 
         Ok(())
@@ -602,6 +655,83 @@ impl<E: Engine> Sha256Gadget<E> {
         Ok(res)
     }
 
+    fn extact_32_bits_from_tracked_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: NumWithTracker<E>) -> Result<Num<E>> 
+    {
+        let res = match input.overflow_tracker {
+            OverflowTracker::NoOverflow => input.num,
+            _ => match &input.num {
+                Num::Constant(fr) => {
+                    let repr = fr.into_repr();
+                    let n = repr.as_ref()[0] & ((1 << SHA256_REG_WIDTH) - 1); 
+                    Num::Constant(Self::u64_to_ff(n))
+                },
+                Num::Allocated(var) => {
+                    let res = if self.use_global_range_table {
+                        // NB: the only supported value for range table width is 16!
+                        let range_table_width = DEFAULT_RANGE_TABLE_WIDTH;
+                        let low = self.allocate_converted_num(cs, var, range_table_width, 0, 0, 0, 0)?;
+                        let high = self.allocate_converted_num(cs, var, range_table_width, range_table_width, 0, 0, 0)?;
+                        let of = self.allocate_converted_num(cs, var, range_table_width, range_table_width * 2, 0, 0, 0)?;
+
+                        let cf = [
+                            E::Fr::one(), u64_to_ff(1 << range_table_width), u64_to_ff(1 << (2 * range_table_width)),
+                        ];
+                        let table = &self.global_range_table.as_ref().unwrap();
+
+                        let mut acc = var.clone();
+                        let (_, _, acc) = self.query_table_acc(cs, table, &low, &acc, &cf[0], false)?;
+                        let (_, _, acc) = self.query_table_acc(cs, table, &high, &acc, &cf[1], false)?;
+                        let (_, _, acc) = self.query_table_acc(cs, table, &of, &acc, &cf[2], true)?;
+
+                        let extracted = self.allocate_converted_num(cs, var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
+                        let dummy = AllocatedNum::alloc_zero(cs)?;
+                        
+                        AllocatedNum::ternary_lc_eq(
+                            cs, 
+                            &[cf[0].clone(), cf[1].clone(), E::Fr::zero()],
+                            &[low, high, dummy],
+                            &extracted,
+                        )?;
+                        Num::Allocated(extracted)
+                    }
+                    else {
+                        let low = self.allocate_converted_num(cs, var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
+                        let mid = self.allocate_converted_num(cs, var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
+                        let high = self.allocate_converted_num(
+                            cs, var, SHA256_GADGET_CHUNK_SIZE - 1, SHA256_GADGET_CHUNK_SIZE * 2, 0, 0, 0
+                        )?;
+                        let of = self.allocate_converted_num(cs, var, SHA256_GADGET_CHUNK_SIZE, SHA256_REG_WIDTH, 0, 0, 0)?;
+
+                        let cf = [
+                            E::Fr::one(), u64_to_ff(1 << SHA256_GADGET_CHUNK_SIZE), 
+                            u64_to_ff(1 << (2 * SHA256_GADGET_CHUNK_SIZE)), u64_to_ff(1 << SHA256_REG_WIDTH),
+                        ];
+
+                        let mut acc = var.clone();
+                        let trunc_table = &self.sha256_base4_rot2_width10_table;
+                        let (_, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &low, &acc, &cf[0], false)?;
+                        let (_, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &mid, &acc, &cf[1], false)?;
+                        let (_, _, acc) = self.query_table_acc(cs, &trunc_table, &high, &acc, &cf[2], false)?;
+                        let (_, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &of, &acc, &cf[3], true)?;
+
+                        let extracted = self.allocate_converted_num(cs, var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
+        
+                        AllocatedNum::ternary_lc_eq(
+                            cs, 
+                            &[cf[0].clone(), cf[1].clone(), cf[2].clone()],
+                            &[low, mid, high],
+                            &extracted,
+                        )?;
+                        Num::Allocated(extracted)
+                    };
+                    res
+                },
+            }
+        };
+        
+        Ok(res)
+    }
+
     // --------------------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------------------
     // convertion and normalization routines
@@ -615,7 +745,7 @@ impl<E: Engine> Sha256Gadget<E> {
     ) -> Result<SparseChValue<E>> 
     {   
         if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
-            assert!(n <= SHA256_GADGET_CHUNK_SIZE + 1);
+            assert!(n <= (self.max_of_width as u64) + 1);
         };
         
         if let Num::Constant(x) = input.num {
@@ -633,7 +763,7 @@ impl<E: Engine> Sha256Gadget<E> {
             return Ok(res)
         }
 
-        let var = num.input.get_variable().unwrap();
+        let var = input.num.get_variable().unwrap();
         let mut of_flag_dropped = false;          
 
         // split our 32bit variable into 11-bit chunks:
@@ -650,67 +780,49 @@ impl<E: Engine> Sha256Gadget<E> {
             OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => true,
             _ => false,
         };
-        let cf = [];
+        let cf = [
+            E::Fr::one(), u64_to_ff(1 << SHA256_GADGET_CHUNK_SIZE), 
+            u64_to_ff(1 << (2 * SHA256_GADGET_CHUNK_SIZE)), u64_to_ff(1 << (3 * SHA256_GADGET_CHUNK_SIZE)),
+        ];
 
         let (sparse_low, sparse_low_rot6, acc) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &low, &acc, &cf[0], false)?;
         let (sparse_mid, _sparse_mid_rot6, acc) = self.query_table_acc(cs, &self.sha256_base7_rot6_table, &mid, &acc, &cf[1], false)?;
-        let (sparse_high, sparse_high_rot3) = self.query_table_acc(cs, &self.sha256_base7_rot3_extr10_table, &high, &acc, &cf[1], flag)?;
+        let (sparse_high, sparse_high_rot3, acc) = self.query_table_acc(
+            cs, &self.sha256_base7_rot3_extr10_table, &high, &acc, &cf[2], flag
+        )?;
 
-        let full_normal = match input.overflow_tracker 
-        {
-            OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => {
-                // compose full normal = low + 2^11 * mid + 2^22 * high
-                AllocatedNum::ternary_lc_eq(
-                    cs, 
-                    &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
-                    &[low, mid, high],
-                    &var,
-                )?;
-                var.clone()
-            }
-            
-            _ => {
+        let full_normal = match input.overflow_tracker {
+            OverflowTracker::NoOverflow | OverflowTracker::OneBitOverflow => var,
+            OverflowTracker::SignificantOverflow(n) => {
                 // full normal = low + 2^11 * mid + 2^22 * high + 2^33 * overflow
                 // allocate overflow on the next row alongside with the range check
-                let of = self.allocate_converted_num(
-                    cs, &var, RANGE_TABLE_WIDTH, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0
-                )?;
+                let of = self.allocate_converted_num(cs, &var, self.max_of_width, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0)?;
+                self.of_range_check(cs, &of, &acc, &cf[3])?;
 
-                AllocatedNum::quartic_lc_eq(
-                    cs,
-                    &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 33)],
-                    &[low.clone(), mid.clone(), high.clone(), of.clone()],
-                    &var,
-                )?;
-
-                self.query_table2(cs, &self.range_table, &of)?;
-
-                let full_normal = match input.overflow_tracker {
-                    OverflowTracker::SignificantOverflow(n) if n >= 15 => {
-                        of_flag_dropped = true;
-                        let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
-                        AllocatedNum::ternary_lc_eq(
-                            cs,
-                            &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
-                            &[low, mid, high],
-                            &truncated,
-                        )?;
-                        truncated
-                    },
-                    _ => var.clone()
+                let full_normal = if n >= (self.max_of_width as u64 - 1) {
+                    of_flag_dropped = true;
+                    let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
+                    AllocatedNum::ternary_lc_eq(
+                        cs, &[cf[0].clone(), cf[1].clone(), cf[2].clone()], &[low, mid, high], &truncated,
+                    )?;
+                    truncated
+                }
+                else { 
+                    var 
                 };
+
                 full_normal
-            }
+            },
         };
-            
+   
         let full_sparse = {
             // full_sparse = low_sparse + 7^11 * mid_sparse + 7^22 * high_sparse
             let sparse_full = self.allocate_converted_num(
                 cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 0, SHA256_REG_WIDTH
             )?;
 
-            let limb_1_shift = Self::u64_exp_to_ff(7, 11);
-            let limb_2_shift = Self::u64_exp_to_ff(7, 22);
+            let limb_1_shift = u64_exp_to_ff(7, 11);
+            let limb_2_shift = u64_exp_to_ff(7, 22);
 
             AllocatedNum::ternary_lc_eq(
                 cs, 
@@ -728,8 +840,8 @@ impl<E: Engine> Sha256Gadget<E> {
                 cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 6, SHA256_REG_WIDTH
             )?;
 
-            let rot6_limb_1_shift = Self::u64_exp_to_ff(7, 11-6);
-            let rot6_limb_2_shift = Self::u64_exp_to_ff(7, 22 - 6);
+            let rot6_limb_1_shift = u64_exp_to_ff(7, 11-6);
+            let rot6_limb_2_shift = u64_exp_to_ff(7, 22 - 6);
 
             AllocatedNum::ternary_lc_eq(
                 cs, 
@@ -747,8 +859,8 @@ impl<E: Engine> Sha256Gadget<E> {
                 cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 11, SHA256_REG_WIDTH
             )?;
 
-            let rot11_limb_0_shift = Self::u64_exp_to_ff(7, 32 - 11);
-            let rot11_limb_2_shift = Self::u64_exp_to_ff(7, 22 - 11);
+            let rot11_limb_0_shift = u64_exp_to_ff(7, 32 - 11);
+            let rot11_limb_2_shift = u64_exp_to_ff(7, 22 - 11);
 
             AllocatedNum::ternary_lc_eq(
                 cs, 
@@ -766,8 +878,8 @@ impl<E: Engine> Sha256Gadget<E> {
                 cs, &var, SHA256_REG_WIDTH + 1, 0, SHA256_CHOOSE_BASE, 25, SHA256_REG_WIDTH
             )?;
 
-            let rot25_limb_0_shift = Self::u64_exp_to_ff(7, 10 - 3);
-            let rot25_limb_1_shift = Self::u64_exp_to_ff(7, 21 - 3);
+            let rot25_limb_0_shift = u64_exp_to_ff(7, 10 - 3);
+            let rot25_limb_1_shift = u64_exp_to_ff(7, 21 - 3);
 
             AllocatedNum::ternary_lc_eq(
                 cs, 
@@ -812,196 +924,228 @@ impl<E: Engine> Sha256Gadget<E> {
     // base4_rot_2 and ALWAYS do overflow_check (even if we are sure, that we have only one bit of overflow) is handled
     // by MAJORITY_CONVERSION_STRATEGY flag
 
-    // fn convert_into_sparse_majority_form<CS : ConstraintSystem<E>>(
-    //     &self, 
-    //     cs: &mut CS, 
-    //     input: NumWithTracker<E>, 
-    // ) -> Result<SparseMajValue<E>> 
-    // {      
-    //     // match input.overflow_tracker {
-    //     //     OverflowTracker::NoOverflow => println!(" no overflow"),
-    //     //     OverflowTracker::OneBitOverflow => println!("one bit"),
-    //     //     OverflowTracker::SmallOverflow(n) | OverflowTracker::SignificantOverflow(n) => println!("{} oveflow", n),
-    //     // };
+    fn convert_into_sparse_majority_form<CS : ConstraintSystem<E>>(
+        &self, 
+        cs: &mut CS, 
+        input: NumWithTracker<E>, 
+    ) -> Result<SparseMajValue<E>> 
+    {      
+        if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
+            assert!(n <= self.max_of_width as u64);
+        };
 
-    //     if let OverflowTracker::SignificantOverflow(n) = input.overflow_tracker {
-    //         assert!(n <= 16);
-    //     };
+        if let Num::Constant(x) = input.num {
+            let repr = x.into_repr();
+            // NOTE : think, if it is safe for n to be overflowed
+            let n = repr.as_ref()[0] & ((1 << 32) - 1); 
+            
+            let res = SparseMajValue {
+                normal: (Num::Constant(x)).into(),
+                sparse: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 0, 0)),
+                rot2: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 2, 0)),
+                rot13: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 13, 0)),
+                rot22: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 22, 0)),
+            };
 
-    //     match input.num {
-    //         Num::Constant(x) => {
-    //             let repr = x.into_repr();
-    //             // NOTE : think, if it is safe for n to be overflowed
-    //             let n = repr.as_ref()[0] & ((1 << 32) - 1); 
-                
-    //             let res = SparseMajValue {
-    //                 normal: (Num::Constant(x)).into(),
-    //                 sparse: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 0, 0)),
-    //                 rot2: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 2, 0)),
-    //                 rot13: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 13, 0)),
-    //                 rot22: Num::Constant(self.converter_helper(n, SHA256_MAJORITY_BASE, 22, 0)),
-    //             };
+            return Ok(res)
+        };
 
-    //             return Ok(res)
-    //         },
-    //         Num::Allocated(var) => {
-    //             let mut of_flag_dropped = false;
-                
-    //             // split our 32bit variable into 11-bit chunks:
-    //             // there will be three chunks (low, mid, high) for 32bit number
-    //             // note that, we can deal here with possible 1-bit overflow: (as 3 * 11 = 33)
-    //             // in order to do this we allow extraction set to 10 for the table working with highest chunk
-                
-    //             let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
-    //             let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
-    //             let high = self.allocate_converted_num(
-    //                 cs, &var, SHA256_GADGET_CHUNK_SIZE - 1, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE
-    //             )?;
+        let var = input.num.get_variable().unwrap();
+        let mut of_flag_dropped = false;          
 
-    //             let (sparse_low, sparse_low_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &low)?;
-    //             let (sparse_mid, sparse_mid_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &mid)?;
-    //             //assert_eq!(self.majority_strategy, Strategy::UseCustomTable);
-    //             // let high_chunk_table = match self.majority_strategy {
-    //             //     Strategy::UseCustomTable => self.sha256_base4_rot2_extr10_table.as_ref().unwrap(),
-    //             //     Strategy::NaivaApproach => &self.sha256_base4_rot2_table,
-    //             // };
-    //             let (sparse_high, _) = self.query_table2(cs, &self.sha256_base4_widh10_table, &high)?;
+        let mut acc = var.clone();
+        let flag = match input.overflow_tracker {
+            OverflowTracker::NoOverflow => true,
+            _ => false,
+        };
+        let cf = [
+            E::Fr::one(), u64_to_ff(1 << SHA256_GADGET_CHUNK_SIZE), 
+            u64_to_ff(1 << (2 * SHA256_GADGET_CHUNK_SIZE)), u64_to_ff(1 << (3 * SHA256_REG_WIDTH)),
+        ];
+           
+        // split our 32bit variable into 11-bit chunks:
+        // there will be three chunks (low, mid, high) for 32bit number
+        // note that, we can deal here with possible 1-bit overflow: (as 3 * 11 = 33)
+        // in order to do this we allow extraction set to 10 for the table working with highest chunk
+        
+        let low = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0, 0)?;
+        let mid = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE, SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
+        let high = self.allocate_converted_num(
+            cs, &var, SHA256_GADGET_CHUNK_SIZE - 1, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, SHA256_GADGET_CHUNK_SIZE
+        )?;
 
-    //             let full_normal = match input.overflow_tracker 
-    //             {
-    //                 OverflowTracker::NoOverflow => {
-    //                     // compose full normal = low + 2^11 * mid + 2^22 * high
-    //                     AllocatedNum::ternary_lc_eq(
-    //                         cs, 
-    //                         &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
-    //                         &[low, mid, high],
-    //                         &var,
-    //                     )?;
-    //                     var.clone()
-    //                 }
-    //                 _ => {
-    //                     // full normal = low + 2^11 * mid + 2^22 * high - 2^32 * overflow
-    //                     // allocate overflow on the next row alongside with the range check
-    //                     let of = self.allocate_converted_num(
-    //                         cs, &var, RANGE_TABLE_WIDTH, SHA256_REG_WIDTH, 0, 0, 0
-    //                     )?;
+        let (sparse_low, sparse_low_rot2, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &low, &acc, &cf[0], false)?;
+        let (sparse_mid, sparse_mid_rot2, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &mid, &acc, &cf[1], false)?;
+        let (sparse_high, _, acc) = self.query_table_acc(cs, &elf.sha256_base4_rot2_width10_table, &high, &acc, &cf[2], flag)?;
 
-    //                     AllocatedNum::quartic_lc_eq(
-    //                         cs,
-    //                         &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 32)],
-    //                         &[low.clone(), mid.clone(), high.clone(), of.clone()],
-    //                         &var,
-    //                     )?;
+        let full_normal = match input.overflow_tracker {
+            OverflowTracker::NoOverflow => var,
+            OverflowTracker::OneBitOverflow | OverflowTracker::SignificantOverflow(n) => {
+                // full normal = low + 2^11 * mid + 2^22 * high + 2^33 * overflow
+                // allocate overflow on the next row alongside with the range check
+                let of = self.allocate_converted_num(cs, &var, self.max_of_width, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0)?;
+                self.of_range_check(cs, &of, &acc, &cf[3])?;
 
-    //                     self.query_table2(cs, &self.range_table, &of)?;
+                let full_normal = if n >= (self.max_of_width as u64 - 1) {
+                    of_flag_dropped = true;
+                    let truncated = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE * 3, 0, 0, 0, 0)?;
+                    AllocatedNum::ternary_lc_eq(
+                        cs, &[cf[0].clone(), cf[1].clone(), cf[2].clone()], &[low, mid, high], &truncated,
+                    )?;
+                    truncated
+                }
+                else { 
+                    var 
+                };
 
-    //                     let full_normal = match input.overflow_tracker {
-    //                         OverflowTracker::SignificantOverflow(n) if n >= 15 => {
-    //                             of_flag_dropped = true;
-    //                             let truncated = self.allocate_converted_num(cs, &var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
-    //                             AllocatedNum::ternary_lc_eq(
-    //                                 cs,
-    //                                 &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
-    //                                 &[low, mid, high],
-    //                                 &truncated,
-    //                             )?;
-    //                             truncated
-    //                         },
-    //                         _ => var.clone()
-    //                     };
-    //                     full_normal
-    //                 }
-    //             };
+                full_normal
+            },
+        };
 
-    //             let full_sparse = {
-    //                 // full_sparse = low_sparse + 4^11 * mid_sparse + 4^22 * high_sparse
-    //                 let sparse_full = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 0, SHA256_REG_WIDTH
-    //                 )?;
+                let (sparse_low, sparse_low_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &low)?;
+                let (sparse_mid, sparse_mid_rot2) = self.query_table2(cs, &self.sha256_base4_rot2_table, &mid)?;
+                //assert_eq!(self.majority_strategy, Strategy::UseCustomTable);
+                // let high_chunk_table = match self.majority_strategy {
+                //     Strategy::UseCustomTable => self.sha256_base4_rot2_extr10_table.as_ref().unwrap(),
+                //     Strategy::NaivaApproach => &self.sha256_base4_rot2_table,
+                // };
+                let (sparse_high, _) = self.query_table2(cs, &self.sha256_base4_widh10_table, &high)?;
 
-    //                 let limb_1_shift = Self::u64_exp_to_ff(4, 11);
-    //                 let limb_2_shift = Self::u64_exp_to_ff(4, 22);
+                let full_normal = match input.overflow_tracker 
+                {
+                    OverflowTracker::NoOverflow => {
+                        // compose full normal = low + 2^11 * mid + 2^22 * high
+                        AllocatedNum::ternary_lc_eq(
+                            cs, 
+                            &[E::Fr::one(), Self::u64_exp_to_ff(1 << 11, 0), Self::u64_exp_to_ff(1 << 22, 0)],
+                            &[low, mid, high],
+                            &var,
+                        )?;
+                        var.clone()
+                    }
+                    _ => {
+                        // full normal = low + 2^11 * mid + 2^22 * high - 2^32 * overflow
+                        // allocate overflow on the next row alongside with the range check
+                        let of = self.allocate_converted_num(
+                            cs, &var, RANGE_TABLE_WIDTH, SHA256_REG_WIDTH, 0, 0, 0
+                        )?;
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), limb_1_shift, limb_2_shift],
-    //                     &[sparse_low.clone(), sparse_mid.clone(), sparse_high.clone()],
-    //                     &sparse_full,
-    //                 )?;
-    //                 sparse_full
-    //             };
+                        AllocatedNum::quartic_lc_eq(
+                            cs,
+                            &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22), Self::u64_to_ff(1 << 32)],
+                            &[low.clone(), mid.clone(), high.clone(), of.clone()],
+                            &var,
+                        )?;
 
-    //             let full_sparse_rot2 = {
-    //                 // full_sparse_rot2 = low_sparse_rot2 + 4^(11-2) * sparse_mid + 4^(22-2) * sparse_high
-    //                 let full_sparse_rot2 = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 2, SHA256_REG_WIDTH
-    //                 )?;
+                        self.query_table2(cs, &self.range_table, &of)?;
 
-    //                 let rot2_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 2);
-    //                 let rot2_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 2);
+                        let full_normal = match input.overflow_tracker {
+                            OverflowTracker::SignificantOverflow(n) if n >= 15 => {
+                                of_flag_dropped = true;
+                                let truncated = self.allocate_converted_num(cs, &var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
+                                AllocatedNum::ternary_lc_eq(
+                                    cs,
+                                    &[E::Fr::one(), Self::u64_to_ff(1 << 11), Self::u64_to_ff(1 << 22)],
+                                    &[low, mid, high],
+                                    &truncated,
+                                )?;
+                                truncated
+                            },
+                            _ => var.clone()
+                        };
+                        full_normal
+                    }
+                };
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot2_limb_1_shift, rot2_limb_2_shift],
-    //                     &[sparse_low_rot2, sparse_mid.clone(), sparse_high.clone()],
-    //                     &full_sparse_rot2,
-    //                 )?;
-    //                 full_sparse_rot2
-    //             };
+                let full_sparse = {
+                    // full_sparse = low_sparse + 4^11 * mid_sparse + 4^22 * high_sparse
+                    let sparse_full = self.allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 0, SHA256_REG_WIDTH
+                    )?;
 
-    //             let full_sparse_rot13 = {
-    //                 // full_sparse_rot13 = sparse_mid_rot2 + 4^(22-11-2) * sparse_high + 4^(32-11-2) * sparse_low
-    //                 let full_sparse_rot13 = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 13, SHA256_REG_WIDTH
-    //                 )?;
+                    let limb_1_shift = Self::u64_exp_to_ff(4, 11);
+                    let limb_2_shift = Self::u64_exp_to_ff(4, 22);
 
-    //                 let rot13_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 2 - 11);
-    //                 let rot13_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 2 - 11);
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), limb_1_shift, limb_2_shift],
+                        &[sparse_low.clone(), sparse_mid.clone(), sparse_high.clone()],
+                        &sparse_full,
+                    )?;
+                    sparse_full
+                };
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot13_limb_0_shift, rot13_limb_2_shift],
-    //                     &[sparse_mid_rot2, sparse_low.clone(), sparse_high.clone()],
-    //                     &full_sparse_rot13,
-    //                 )?;
-    //                 full_sparse_rot13
-    //             };
+                let full_sparse_rot2 = {
+                    // full_sparse_rot2 = low_sparse_rot2 + 4^(11-2) * sparse_mid + 4^(22-2) * sparse_high
+                    let full_sparse_rot2 = self.allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 2, SHA256_REG_WIDTH
+                    )?;
 
-    //             let full_sparse_rot_22 = {
-    //                 // full_sparse_rot22 = sparse_high + 4^(32 - 22) * sparse_low + 4^(32 - 22 + 11) * sparse_mid
-    //                 let full_sparse_rot22 = self.allocate_converted_num(
-    //                     cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 22, SHA256_REG_WIDTH
-    //                 )?;
+                    let rot2_limb_1_shift = Self::u64_exp_to_ff(4, 11 - 2);
+                    let rot2_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 2);
 
-    //                 let rot22_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 22);
-    //                 let rot22_limb_1_shift = Self::u64_exp_to_ff(4, 32 - 22 + 11);
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot2_limb_1_shift, rot2_limb_2_shift],
+                        &[sparse_low_rot2, sparse_mid.clone(), sparse_high.clone()],
+                        &full_sparse_rot2,
+                    )?;
+                    full_sparse_rot2
+                };
 
-    //                 AllocatedNum::ternary_lc_eq(
-    //                     cs, 
-    //                     &[E::Fr::one(), rot22_limb_0_shift, rot22_limb_1_shift],
-    //                     &[sparse_high, sparse_low, sparse_mid],
-    //                     &full_sparse_rot22,
-    //                 )?;
+                let full_sparse_rot13 = {
+                    // full_sparse_rot13 = sparse_mid_rot2 + 4^(22-11-2) * sparse_high + 4^(32-11-2) * sparse_low
+                    let full_sparse_rot13 = self.allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 13, SHA256_REG_WIDTH
+                    )?;
 
-    //                 full_sparse_rot22
-    //             };
+                    let rot13_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 2 - 11);
+                    let rot13_limb_2_shift = Self::u64_exp_to_ff(4, 22 - 2 - 11);
 
-    //             let new_tracker = if of_flag_dropped {OverflowTracker::NoOverflow} else {input.overflow_tracker};
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot13_limb_0_shift, rot13_limb_2_shift],
+                        &[sparse_mid_rot2, sparse_low.clone(), sparse_high.clone()],
+                        &full_sparse_rot13,
+                    )?;
+                    full_sparse_rot13
+                };
 
-    //             let res = SparseMajValue{
-    //                 normal: NumWithTracker {
-    //                     num: Num::Allocated(full_normal), 
-    //                     overflow_tracker: new_tracker, 
-    //                 },
-    //                 sparse: Num::Allocated(full_sparse),
-    //                 rot2: Num::Allocated(full_sparse_rot2),
-    //                 rot13: Num::Allocated(full_sparse_rot13),
-    //                 rot22: Num::Allocated(full_sparse_rot_22),
-    //             };
-    //             return Ok(res);
-    //         }
-    //     }
-    // }
+                let full_sparse_rot_22 = {
+                    // full_sparse_rot22 = sparse_high + 4^(32 - 22) * sparse_low + 4^(32 - 22 + 11) * sparse_mid
+                    let full_sparse_rot22 = self.allocate_converted_num(
+                        cs, &var, SHA256_REG_WIDTH, 0, SHA256_MAJORITY_BASE, 22, SHA256_REG_WIDTH
+                    )?;
+
+                    let rot22_limb_0_shift = Self::u64_exp_to_ff(4, 32 - 22);
+                    let rot22_limb_1_shift = Self::u64_exp_to_ff(4, 32 - 22 + 11);
+
+                    AllocatedNum::ternary_lc_eq(
+                        cs, 
+                        &[E::Fr::one(), rot22_limb_0_shift, rot22_limb_1_shift],
+                        &[sparse_high, sparse_low, sparse_mid],
+                        &full_sparse_rot22,
+                    )?;
+
+                    full_sparse_rot22
+                };
+
+                let new_tracker = if of_flag_dropped {OverflowTracker::NoOverflow} else {input.overflow_tracker};
+
+                let res = SparseMajValue{
+                    normal: NumWithTracker {
+                        num: Num::Allocated(full_normal), 
+                        overflow_tracker: new_tracker, 
+                    },
+                    sparse: Num::Allocated(full_sparse),
+                    rot2: Num::Allocated(full_sparse_rot2),
+                    rot13: Num::Allocated(full_sparse_rot13),
+                    rot22: Num::Allocated(full_sparse_rot_22),
+                };
+                return Ok(res);
+            }
+        }
+    }
 
     // // this function does the following: 
     // // given any x = \sum_{i=0}^{n} x_i * base^i and well-defined mapping f: [0; base-1] -> [0; 1]
