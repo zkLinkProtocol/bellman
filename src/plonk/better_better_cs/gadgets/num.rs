@@ -576,6 +576,43 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(res_var)
     }
 
+    pub fn quartic_lc_eq<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+        total: &Self,
+    ) -> Result<Self, SynthesisError>
+    {
+        assert_eq!(vars.len(), 4);
+        assert_eq!(coefs.len(), 4);
+        
+        let dummy = Self::alloc_zero(cs)?;
+        let mut gate_term = MainGateTerm::new();
+        let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.variable)?;
+        
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        for (i, idx) in range_of_linear_terms.enumerate() {
+            local_coeffs[idx] = coefs[i];
+        }
+        
+        let next_row_coef_idx = CS::MainGate::range_of_next_step_linear_terms().last().unwrap();
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        local_coeffs[next_row_coef_idx] = minus_one;
+        
+        local_vars = vec![vars[0].get_variable(), vars[1].get_variable(), vars[2].get_variable(), vars[3].get_variable()];
+        let mg = CS::MainGate::default();
+
+        cs.new_single_gate_for_trace_step(
+            &mg,
+            &local_coeffs,
+            &local_vars,
+            &[]
+        )?;
+
+        Ok(res_var)
+    }
+
     // for given array of slices : [x0, x1, x2, ..., xn] of arbitrary length, base n and total accumulated x
     // validates that x = x0 + x1 * base + x2 * base^2 + ... + xn * base^n
     pub fn long_weighted_sum_eq<CS>(cs: &mut CS, vars: &[Self], base: &E::Fr, total: &Self) -> Result<(), SynthesisError>
@@ -596,6 +633,50 @@ impl<E: Engine> AllocatedNum<E> {
             }
             else {
                 // we have filled in the whole vector!
+                coeffs.push(minus_one.clone());
+                let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
+                coeffs = vec![E::Fr::one(), acc_fr.clone()];
+                current_vars = vec![temp, var.clone()];
+                
+                acc_fr.mul_assign(&base);
+            }
+        }
+
+        if current_vars.len() == 4 {
+            // we have filled in the whole vector!
+            coeffs.push(minus_one.clone());
+            let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
+            coeffs = vec![E::Fr::one()];
+            current_vars = vec![temp];
+        }
+
+        // pad with dummy variables
+        for _i in current_vars.len()..3 {
+            current_vars.push(AllocatedNum::alloc_zero(cs)?);
+            coeffs.push(E::Fr::zero());
+        }
+
+        AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &current_vars[..], &E::Fr::zero(), total)?;
+        Ok(())
+    }
+
+    pub fn long_weighted_sum_eq_with_d_next<CS: ConstraintSystem<E>>(
+        cs: &mut CS, vars: &[Self], base: &E::Fr, total: &Self
+    ) -> Result<bool, SynthesisError>
+    {
+        let mut acc_fr = E::Fr::one();
+        let mut coeffs = Vec::with_capacity(5);
+        let mut current_vars = Vec::with_capacity(4);
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        for (_is_first, is_last, var) in vars.iter().identify_first_last() {
+            if current_vars.len() < 4 {
+                coeffs.push(acc_fr.clone());
+                acc_fr.mul_assign(&base);
+                current_vars.push(var.clone());
+            }
+            else {
                 coeffs.push(minus_one.clone());
                 let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
                 coeffs = vec![E::Fr::one(), acc_fr.clone()];
@@ -731,7 +812,7 @@ impl<E: Engine> Num<E> {
     {
         match self {
             Num::Constant(_) => None,
-            Num::Allocated(var) => var.clone(),
+            Num::Allocated(var) => Some(var.clone()),
         }
     }
 
