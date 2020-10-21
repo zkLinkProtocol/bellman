@@ -2474,89 +2474,91 @@ impl<E: Engine> Sha256GadgetParams<E> {
 
     fn optimized_extact_32_from_tracked_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: NumWithTracker<E>) -> Result<Num<E>> 
     {
-        let res = match input.overflow_tracker {
-            OverflowTracker::NoOverflow => input.num,
-            _ => match &input.num {
-                Num::Constant(fr) => {
-                    let repr = fr.into_repr();
-                    let n = repr.as_ref()[0] & ((1 << 32) - 1); 
-                    Num::Constant(Self::u64_to_ff(n))
+        let res = match &input.num {
+            Num::Constant(fr) => {
+                let repr = fr.into_repr();
+                let n = repr.as_ref()[0] & ((1 << 32) - 1); 
+                Num::Constant(Self::u64_to_ff(n))
+            }
+
+            Num::Allocated(var) => {
+                if let OverflowTracker::NoOverflow = input.overflow_tracker {
+                    return Ok(input.num);
                 }
-                Num::Allocated(var) => {
-                    let low = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, 0, 0, 0, 0)?;
-                    let high = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, RANGE_TABLE_WIDTH, 0, 0, 0)?;
-                    let of = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, RANGE_TABLE_WIDTH * 2, 0, 0, 0)?;
 
-                    // we will have three rows: first row - range check for low, second for high, third for of
-                    // apart from range checks we will pack arithmetic
-                    // row1 : low, 0, 0, 0 - no additional constraints
-                    // row2: high, 0, low, extracted - low + 2^32 * high = extracted
-                    // row3: of, 0, extracted, input - extracted + of*2^32 = input
+                let low = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, 0, 0, 0, 0)?;
+                let high = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, RANGE_TABLE_WIDTH, 0, 0, 0)?;
+                let of = self.allocate_converted_num(cs, var, RANGE_TABLE_WIDTH, RANGE_TABLE_WIDTH * 2, 0, 0, 0)?;
+
+                // we will have three rows: first row - range check for low, second for high, third for of
+                // apart from range checks we will pack arithmetic
+                // row1 : low, 0, 0, 0 - no additional constraints
+                // row2: high, 0, low, extracted - low + 2^32 * high = extracted
+                // row3: of, 0, extracted, input - extracted + of*2^32 = input
                     
-                    let table = &self.range_table;
-                    let mut minus_one = E::Fr::one();
-                    minus_one.negate();
-                    let dummy = AllocatedNum::alloc_zero(cs)?;
-                    let extracted = AllocatedNum::alloc(cs, || {
-                        let low = low.get_value().grab()?;
-                        let high = high.get_value().grab()?;
-                        let mut tmp = Self::u64_to_ff(1 << 16);
-                        tmp.mul_assign(&high);
-                        tmp.add_assign(&low);
-                        Ok(tmp)
-                    })?;
-                    let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+                let table = &self.range_table;
+                let mut minus_one = E::Fr::one();
+                minus_one.negate();
+                let dummy = AllocatedNum::alloc_zero(cs)?;
+                let extracted = AllocatedNum::alloc(cs, || {
+                    let low = low.get_value().grab()?;
+                    let high = high.get_value().grab()?;
+                    let mut tmp = Self::u64_to_ff(1 << 16);
+                    tmp.mul_assign(&high);
+                    tmp.add_assign(&low);
+                    Ok(tmp)
+                })?;
+                let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
 
-                    let _first_row = self.query_table2(cs, table, &low)?;
+                let _first_row = self.query_table2(cs, table, &low)?;
 
-                    // second row
-                    cs.begin_gates_batch_for_step()?;
-                    let vars = [high.get_variable(), dummy.get_variable(), low.get_variable(), extracted.get_variable()];
-                    let coeffs = [Self::u64_to_ff(1 << 16), E::Fr::zero(), E::Fr::one(), minus_one.clone()];
-                    
-                    cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-                    
-                    let mut gate_term = MainGateTerm::new();
-                    let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
-                    for (idx, coef) in range_of_linear_terms.clone().zip(coeffs.iter()) {
-                        local_coeffs[idx] = coef.clone();
-                    }
-
-                    let mg = CS::MainGate::default();
-                    cs.new_gate_in_batch(
-                        &mg,
-                        &local_coeffs,
-                        &vars,
-                        &[]
-                    )?;
-
-                    cs.end_gates_batch_for_step()?;
-                    
-                    // third row 
-                    cs.begin_gates_batch_for_step()?;
-                    let vars = [of.get_variable(), dummy.get_variable(), extracted.get_variable(), var.get_variable()];
-                    let coeffs = [Self::u64_to_ff(1 << 32), E::Fr::zero(), E::Fr::one(), minus_one.clone()];
-                    
-                    cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
-                    
-                    let mut gate_term = MainGateTerm::new();
-                    let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
-                    for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
-                        local_coeffs[idx] = coef.clone();
-                    }
-
-                    let mg = CS::MainGate::default();
-                    cs.new_gate_in_batch(
-                        &mg,
-                        &local_coeffs,
-                        &vars,
-                        &[]
-                    )?;
-
-                    cs.end_gates_batch_for_step()?;
-
-                    Num::Allocated(extracted)
+                // second row
+                cs.begin_gates_batch_for_step()?;
+                let vars = [high.get_variable(), dummy.get_variable(), low.get_variable(), extracted.get_variable()];
+                let coeffs = [Self::u64_to_ff(1 << 16), E::Fr::zero(), E::Fr::one(), minus_one.clone()];
+                
+                cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+                
+                let mut gate_term = MainGateTerm::new();
+                let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
+                for (idx, coef) in range_of_linear_terms.clone().zip(coeffs.iter()) {
+                    local_coeffs[idx] = coef.clone();
                 }
+
+                let mg = CS::MainGate::default();
+                cs.new_gate_in_batch(
+                    &mg,
+                    &local_coeffs,
+                    &vars,
+                    &[]
+                )?;
+
+                cs.end_gates_batch_for_step()?;
+                
+                // third row 
+                cs.begin_gates_batch_for_step()?;
+                let vars = [of.get_variable(), dummy.get_variable(), extracted.get_variable(), var.get_variable()];
+                let coeffs = [Self::u64_to_ff(1 << 32), E::Fr::zero(), E::Fr::one(), minus_one.clone()];
+                
+                cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
+                
+                let mut gate_term = MainGateTerm::new();
+                let (_, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.get_variable())?;
+                for (idx, coef) in range_of_linear_terms.zip(coeffs.iter()) {
+                    local_coeffs[idx] = coef.clone();
+                }
+
+                let mg = CS::MainGate::default();
+                cs.new_gate_in_batch(
+                    &mg,
+                    &local_coeffs,
+                    &vars,
+                    &[]
+                )?;
+
+                cs.end_gates_batch_for_step()?;
+
+                Num::Allocated(extracted)
             }
         };
         

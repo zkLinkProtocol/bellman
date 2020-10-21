@@ -161,34 +161,6 @@ impl<E: Engine> Default for NumWithTracker<E>
     }
 }
 
-impl<E: Engine> NumWithTracker<E> {
-    pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Num<E>) -> Result<Self> {
-        let new_num = self.num.add(cs, other)?;
-        let new_tracker = match self.num.is_constant() && other.is_constant() {
-            true => OverflowTracker::NoOverflow,
-            false => self.overflow_tracker + OverflowTracker::OneBitOverflow,
-        };
-
-        Ok(NumWithTracker{
-            num: new_num,
-            overflow_tracker: new_tracker,
-        })
-    }
-
-    pub fn add_tracked<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &NumWithTracker<E>) -> Result<Self> {
-        let new_num = self.num.add(cs, &other.num)?;
-        let new_tracker = match self.num.is_constant() && other.num.is_constant() {
-            true => OverflowTracker::NoOverflow,
-            false => cmp::max(self.overflow_tracker, other.overflow_tracker) + OverflowTracker::OneBitOverflow,
-        };
-
-        Ok(NumWithTracker{
-            num: new_num,
-            overflow_tracker: new_tracker,
-        })
-    }
-}
-
 
 #[derive(Clone)]
 pub struct SparseChValue<E: Engine> {
@@ -448,50 +420,36 @@ impl<E: Engine> Sha256Gadget<E> {
         OverflowTracker::new_from_template(total)
     }
 
-    fn tracked_positioned_sum2_mod32<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, c: NumWithTracker<E>, d: NumWithTracker<E>,
-    ) -> Result<NumWithTracker<E>>
-    {
-        Ok(NumWithTracker::default())
-    }
-
-    fn tracked_positioned_sum3_with_cnst_mod32<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, cnst: E::Fr,
-    ) -> Result<NumWithTracker<E>>
-    {
-        Ok(NumWithTracker::default())
-    }
-
     // the most general form of linear sum:
-    // a = b + c + d, where (a, b, c, d) - our current row in the trace
+    // a = b + c + d + cnst, where (a, b, c, d) - our current row in the trace
     // the function consumes b, c, d as output and produce a  
     // every register among of a, b, c, d is put in the corresponding position (if nonconstant)
     //
     // NB: we calculate separately all constant registers and of for them (just a usuful trick)
     // so that we may reduce all constants mod 2^32 ahead of time
-    fn tracked_positioned_sum3_mod32<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>,
+    fn tracked_positioned_sum_general<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, cnst: E::Fr,
     ) -> Result<NumWithTracker<E>>
     {
-        Ok(NumWithTracker::default())
-        
         // special case - all of b, c, d are actually constants
         // there value would be there sum modulo 2^32
-        // if b.num.is_constant() && c.num.is_constant() && d.num.is_constant() {
-        //     let value = {
-        //         let b_u64 = ff_to_u64(&b.num.get_value().unwrap());
-        //         let c_u64 = ff_to_u64(&c.num.get_value().unwrap());
-        //         let d_u64 = ff_to_u64(&d.num.get_value().unwrap());
-        //         let n = (b_u64 + c_u64 + d_u64) & ((1 << SHA256_REG_WIDTH) - 1);
-        //         u64_to_ff(n)
-        //     };
-        //     return Ok(Num::Constant(value).into());
-        // }
-        
+        if b.num.is_constant() && c.num.is_constant() && d.num.is_constant() {
+            let value = {
+                let b_u64 = ff_to_u64(&b.num.get_value().unwrap());
+                let c_u64 = ff_to_u64(&c.num.get_value().unwrap());
+                let d_u64 = ff_to_u64(&d.num.get_value().unwrap());
+                let cnst_u64 = ff_to_u64(&cnst);
+                let n = (b_u64 + c_u64 + d_u64 + cnst_u64) & ((1 << SHA256_REG_WIDTH) - 1);
+                u64_to_ff(n)
+            };
+            return Ok(Num::Constant(value).into());
+        }
+
         // // start with calculation of overflow
         // let mut cnst_found = false;
         // let mut of_vec = Vec::with_capacity(3);
         // for elem in [b, c, d].iter() {
+            // if nonzero_constant!
         //     if elem.num.is_constant() { cnst_found = true } else { of_vec.push(elem.of_tracker) }
         // }
         // if cnst_found {
@@ -537,6 +495,29 @@ impl<E: Engine> Sha256Gadget<E> {
         // let a = AllocatedNum::alloc(cs,) 
 
         // AllocatedNum::use_only_this();
+
+        Ok(NumWithTracker::default())
+    }
+
+    fn tracked_positioned_sum2_mod32<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, c: NumWithTracker<E>, d: NumWithTracker<E>,
+    ) -> Result<NumWithTracker<E>>
+    {
+        self.tracked_positioned_sum_general(cs, NumWithTracker::default(), c, d, E::Fr::zero())
+    }
+
+    fn tracked_positioned_sum3_mod32<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>,
+    ) -> Result<NumWithTracker<E>>
+    {
+        self.tracked_positioned_sum_general(cs, b, c, d, E::Fr::zero())
+    }
+
+    fn tracked_positioned_sum3_with_cnst_mod32<CS: ConstraintSystem<E>>(
+        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, cnst: E::Fr,
+    ) -> Result<NumWithTracker<E>>
+    {
+        self.tracked_positioned_sum_general(cs, b, c, d, cnst)
     }
   
     fn converter_helper(&self, n: u64, sparse_base: u64, rotation: usize, extraction: usize) -> E::Fr {
@@ -1622,25 +1603,24 @@ impl<E: Engine> Sha256Gadget<E> {
             h = g;
             g = f;
             f = e;
-            let mut temp2 : NumWithTracker<E> = d.normal.into();
-            temp2 = temp2.add_tracked(cs, &temp1)?;
+            let temp2 = self.tracked_positioned_sum2_mod32(cs, d.normal.into(), temp1.clone())?;
             e = self.convert_into_sparse_chooser_form(cs, temp2)?;
             d = c;
             c = b;
             b = a;
-            let temp3 = maj.add_tracked(cs, &temp1)?;
+            let temp3 = self.tracked_positioned_sum2_mod32(cs, maj, temp1)?;
             a =self.convert_into_sparse_majority_form(cs, temp3)?;
         }
 
         let regs = Sha256Registers {
-            a: regs.a.add_tracked(cs, &a.normal)?,
-            b: regs.b.add_tracked(cs, &b.normal)?,
-            c: regs.c.add_tracked(cs, &c.normal)?,
-            d: regs.d.add_tracked(cs, &d.normal)?,
-            e: regs.e.add_tracked(cs, &e.normal)?,
-            f: regs.f.add_tracked(cs, &f.normal)?,
-            g: regs.g.add_tracked(cs, &g.normal)?,
-            h: regs.h.add_tracked(cs, &h.normal)?,
+            a: self.tracked_positioned_sum2_mod32(cs, regs.a, a.normal)?,
+            b: self.tracked_positioned_sum2_mod32(cs, regs.b, b.normal)?,
+            c: self.tracked_positioned_sum2_mod32(cs, regs.c, c.normal)?,
+            d: self.tracked_positioned_sum2_mod32(cs, regs.d, d.normal)?,
+            e: self.tracked_positioned_sum2_mod32(cs, regs.e, e.normal)?,
+            f: self.tracked_positioned_sum2_mod32(cs, regs.f, f.normal)?,
+            g: self.tracked_positioned_sum2_mod32(cs, regs.g, g.normal)?,
+            h: self.tracked_positioned_sum2_mod32(cs, regs.h, h.normal)?,
         };
         
         Ok(regs)

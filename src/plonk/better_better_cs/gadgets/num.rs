@@ -882,6 +882,19 @@ impl<E: Engine> Num<E> {
         }
     }
 
+    pub fn eq<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<(), SynthesisError>
+    {
+        match (self, other) {
+            (Num::Allocated(x), Num::Allocated(y)) => x.eq(cs, y.clone())?,
+            (Num::Allocated(x), Num::Constant(fr)) | (Num::Constant(fr), Num::Allocated(x)) => todo!(),
+            (Num::Constant(fr1), Num::Constant(fr2)) => {
+                println!("left: {}, right: {}", fr1, fr2);
+                assert_eq!(*fr1, *fr2);
+            },
+        }
+        Ok(())
+    }
+
     pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
     {
         let res = match (self, other) {
