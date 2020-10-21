@@ -428,7 +428,7 @@ impl<E: Engine> Sha256Gadget<E> {
     // NB: we calculate separately all constant registers and of for them (just a usuful trick)
     // so that we may reduce all constants mod 2^32 ahead of time
     fn tracked_positioned_sum_general<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, cnst: E::Fr,
+        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, input_cnst: E::Fr,
     ) -> Result<NumWithTracker<E>>
     {
         // special case - all of b, c, d are actually constants
@@ -438,65 +438,91 @@ impl<E: Engine> Sha256Gadget<E> {
                 let b_u64 = ff_to_u64(&b.num.get_value().unwrap());
                 let c_u64 = ff_to_u64(&c.num.get_value().unwrap());
                 let d_u64 = ff_to_u64(&d.num.get_value().unwrap());
-                let cnst_u64 = ff_to_u64(&cnst);
+                let cnst_u64 = ff_to_u64(&input_cnst);
                 let n = (b_u64 + c_u64 + d_u64 + cnst_u64) & ((1 << SHA256_REG_WIDTH) - 1);
                 u64_to_ff(n)
             };
             return Ok(Num::Constant(value).into());
         }
 
-        // // start with calculation of overflow
-        // let mut cnst_found = false;
-        // let mut of_vec = Vec::with_capacity(3);
-        // for elem in [b, c, d].iter() {
-            // if nonzero_constant!
-        //     if elem.num.is_constant() { cnst_found = true } else { of_vec.push(elem.of_tracker) }
-        // }
-        // if cnst_found {
-        //     of_vec.push(OverflowTracker::NoOverflow)
-        // }
-        // let res_of = self.deduce_of(of_vec); 
+        // construct the gate
+        let mut cnst = input_cnst;
+        let dummy = AllocatedNum::alloc_zero(cs)?;
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        let one = E::Fr::one();
 
-        // // construct the gate
-        // let mut cnst = E::Fr::zero();
-        // let dummy = AllocatedNum::alloc();
-        // let mut minus_one = E::Fr::one();
-        // minus_one.negate();
+        let b_var = match &b.num {
+            Num::Constant(fr) => {
+                cnst.add_assign(fr);
+                dummy.clone()
+            }
+            Num::Allocated(var) => var.clone(),
+        };
 
-        // let b_var = match b.num {
-        //     Num::Constant(fr) => {
-        //         cnst.add_assign(&fr);
-        //         dummy.clone()
-        //     }
-        //     Num::Allocated(var) => var.clone(),
-        // };
+        let c_var = match &c.num {
+            Num::Constant(fr) => {
+                cnst.add_assign(fr);
+                dummy.clone()
+            }
+            Num::Allocated(var) => var.clone(),
+        };
 
-        // let c_var = match c.num {
-        //     Num::Constant(fr) => {
-        //         cnst.add_assign(&fr);
-        //         dummy.clone()
-        //     }
-        //     Num::Allocated(var) => var.clone(),
-        // };
+        let d_var = match &d.num {
+            Num::Constant(fr) => {
+                cnst.add_assign(fr);
+                dummy.clone()
+            }
+            Num::Allocated(var) => var.clone(),
+        };
 
-        // let d_var = match d.num {
-        //     Num::Constant(fr) => {
-        //         cnst.add_assign(&fr);
-        //         dummy.clone()
-        //     }
-        //     Num::Allocated(var) => var.clone(),
-        // };
+        // reduce our constant mod 2^32
+        let repr = cnst.into_repr();
+        let n = repr.as_ref()[0] & ((1 << SHA256_REG_WIDTH) - 1);
+        cnst = E::Fr::from_repr(repr).expect("should parse");
+    
+        // calculation of the overflow
+        let mut of_vec = Vec::with_capacity(4);
+        for elem in [&b, &c, &d].iter() {
+            if !elem.num.is_constant() { 
+                of_vec.push(elem.overflow_tracker) 
+            }
+        }
+        if !cnst.is_zero() {
+            of_vec.push(OverflowTracker::NoOverflow)
+        }
+        let res_of = self.deduce_of(of_vec); 
 
-        // // reduce our constant mod32
-        
+        // construct the result - a
+        // it will always be an allocated num
+        let a_var = AllocatedNum::alloc(cs, || {
+            let mut sum = cnst.clone();
 
-        // // construct the result - a
-        // // it will always be an allocated num
-        // let a = AllocatedNum::alloc(cs,) 
+            let tmp = b_var.get_value().grab()?;
+            sum.add_assign(&tmp);
 
-        // AllocatedNum::use_only_this();
+            let tmp = c_var.get_value().grab()?;
+            sum.add_assign(&tmp);
 
-        Ok(NumWithTracker::default())
+            let tmp = d_var.get_value().grab()?;
+            sum.add_assign(&tmp);
+                
+            Ok(sum)
+        })?; 
+
+        // definitely, num module should be refactored!
+        AllocatedNum::use_only_this(
+            cs,
+            &[minus_one, one.clone(), one.clone(), one],
+            &[a_var.clone(), b_var, c_var, d_var],
+            &cnst,
+        )?;
+
+        let res = NumWithTracker {
+            num: Num::Allocated(a_var),
+            overflow_tracker: res_of,
+        };
+        Ok(res)
     }
 
     fn tracked_positioned_sum2_mod32<CS: ConstraintSystem<E>>(

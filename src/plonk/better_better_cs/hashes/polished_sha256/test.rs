@@ -223,7 +223,7 @@ mod test {
         let circuit = TestSha256Circuit::<Bn256>{
             input: input_fr_arr,
             output: output_fr_arr,
-             ch_base_num_of_chunks: None,
+            ch_base_num_of_chunks: None,
             maj_sheduler_base_num_of_chunks: None,
             is_const_test: true,
         };

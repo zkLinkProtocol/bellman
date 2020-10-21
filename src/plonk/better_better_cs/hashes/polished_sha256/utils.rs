@@ -48,7 +48,7 @@ pub fn u64_exp_to_ff<Fr: PrimeField>(n: u64, exp: u64) -> Fr {
 
 pub fn ff_to_u64<Fr: PrimeField>(fr: &Fr) -> u64 {
     let repr = fr.into_repr();
-    for i in 1..8 {
+    for i in 1..4 {
         assert_eq!(repr.as_ref()[i], 0);
     }
     repr.as_ref()[0]
