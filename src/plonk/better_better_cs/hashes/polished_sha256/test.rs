@@ -19,8 +19,7 @@ mod test {
         input: Vec<E::Fr>,
         output: [E::Fr; 8],
         ch_base_num_of_chunks: Option<usize>,
-        maj_base_num_of_chunks: Option<usize>,
-        sheduler_base_num_of_chunks: Option<usize>,
+        maj_sheduler_base_num_of_chunks: Option<usize>,
     }
 
     impl<E: Engine> Circuit<E> for TestSha256Circuit<E> {
@@ -30,9 +29,6 @@ mod test {
             Ok(
                 vec![
                     Width4MainGateWithDNext::default().into_internal(),
-                    RangeCheckConstraintGate::default().into_internal(),
-                    SparseRangeGate::new(1).into_internal(),
-                    SparseRangeGate::new(2).into_internal(),
                 ]
             )
         }
@@ -51,10 +47,8 @@ mod test {
                 actual_output_vars.push(new_var);
             }
 
-            let sha256_gadget = Sha256GadgetParams::new(
-                cs, 
-                self.global_strategy, self.majority_strategy,
-                self.ch_base_num_of_chunks, self.maj_base_num_of_chunks, self.sheduler_base_num_of_chunks,
+            let sha256_gadget = Sha256Gadget::new(
+                cs, self.ch_base_num_of_chunks, self.maj_sheduler_base_num_of_chunks, false, false, 0, "",
             )?;
 
             let supposed_output_vars = sha256_gadget.sha256(cs, &input_vars[..])?;
@@ -119,17 +113,8 @@ mod test {
         let circuit = TestSha256Circuit::<Bn256>{
             input: input_fr_arr,
             output: output_fr_arr,
-
-            // Note: this parameters may be played with!
-            // for now, the only testes versions are the following combinations
-            // global_strategy: Use_8_1_2_split, majority_strategy: NaiveApproach
-            // global_strategy: UseRangeTable(16), majority_strategy: NaiveApproach
-            global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
-            majority_strategy: Strategy::UseCustomTable,
-
             ch_base_num_of_chunks: None,
-            maj_base_num_of_chunks: None,
-            sheduler_base_num_of_chunks: None,
+            maj_sheduler_base_num_of_chunks: None,
         };
 
         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
@@ -179,17 +164,8 @@ mod test {
         let circuit = TestSha256Circuit::<Bn256>{
             input: input_fr_arr,
             output: output_fr_arr,
-
-            // Note: this parameters may be played with!
-            // for now, the only testes versions are the following combinations
-            // global_strategy: Use_8_1_2_split, majority_strategy: NaiveApproach
-            // global_strategy: UseRangeTable(16), majority_strategy: NaiveApproach
-            global_strategy: GlobalStrategy::Use_8_1_2_SplitTable,
-            majority_strategy: Strategy::UseCustomTable,
-
             ch_base_num_of_chunks: None,
-            maj_base_num_of_chunks: None,
-            sheduler_base_num_of_chunks: None,
+            maj_sheduler_base_num_of_chunks: None,
         };
 
         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();

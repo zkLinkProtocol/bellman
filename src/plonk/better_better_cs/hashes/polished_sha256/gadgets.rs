@@ -456,7 +456,7 @@ impl<E: Engine> Sha256Gadget<E> {
     }
 
     fn tracked_positioned_sum3_with_cnst_mod32<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, cnst: &E::Fr,
+        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>, cnst: E::Fr,
     ) -> Result<NumWithTracker<E>>
     {
         Ok(NumWithTracker::default())
@@ -1616,21 +1616,9 @@ impl<E: Engine> Sha256Gadget<E> {
             let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
             
             
-            let rc = Num::Constant(round_constants[i]);
-            let temp1 = self.tracked_positioned_sum4_mod32()
+            let rc = round_constants[i].clone();
+            let temp1 = self.tracked_positioned_sum3_with_cnst_mod32(cs, h.normal, ch, inputs[i].clone(), rc)?;
             
-            let var_args = &[h.normal.num, ch.num, inputs[i].num.clone(), rc];
-            let of_vec = vec![
-                h.normal.overflow_tracker, ch.overflow_tracker, inputs[i].overflow_tracker, OverflowTracker::NoOverflow
-            ];
-            // TODO: use negative DIALATION for tmp2
-            //println!("QQQ");
-            let temp1 = NumWithTracker {
-                num: Num::sum(cs, var_args)?,
-                overflow_tracker: self.deduce_of(of_vec),
-            }; 
-            //let temp1 = self.extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
-
             h = g;
             g = f;
             f = e;
@@ -1684,22 +1672,15 @@ impl<E: Engine> Sha256Gadget<E> {
         }
 
         let res = [
-            self.optimized_extact_32_from_tracked_num(cs, regs.a)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.b)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.c)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.d)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.e)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.f)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.g)?,
-            self.optimized_extact_32_from_tracked_num(cs, regs.h)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.a)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.b)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.c)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.d)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.e)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.f)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.g)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.h)?,
         ];
         Ok(res)
     }
 }
-   
-
-
-
-
-
-
