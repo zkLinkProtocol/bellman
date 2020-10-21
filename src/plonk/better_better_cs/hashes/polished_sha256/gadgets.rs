@@ -151,6 +151,16 @@ impl<E: Engine> From<Num<E>> for NumWithTracker<E>
     }
 }
 
+impl<E: Engine> Default for NumWithTracker<E> 
+{
+    fn default() -> Self {
+        NumWithTracker {
+            num: Num::default(),
+            overflow_tracker: OverflowTracker::NoOverflow,
+        }
+    }
+}
+
 impl<E: Engine> NumWithTracker<E> {
     pub fn add<CS: ConstraintSystem<E>>(&self, cs: &mut CS, other: &Num<E>) -> Result<Self> {
         let new_num = self.num.add(cs, other)?;
@@ -445,41 +455,75 @@ impl<E: Engine> Sha256Gadget<E> {
     // every register among of a, b, c, d is put in the corresponding position (if nonconstant)
     //
     // NB: we calculate separately all constant registers and of for them (just a usuful trick)
+    // so that we may reduce all constants mod 2^32 ahead of time
     fn tracked_positioned_sum_mod32<CS: ConstraintSystem<E>>(
-        &self, cs: &mut CS, b: &NumWithTracker<E>, c: &NumWithTracker<E>, d: &NumWithTracker
+        &self, cs: &mut CS, b: NumWithTracker<E>, c: NumWithTracker<E>, d: NumWithTracker<E>,
     ) -> Result<NumWithTracker<E>>
     {
+        Ok(NumWithTracker::default())
+        
         // special case - all of b, c, d are actually constants
         // there value would be there sum modulo 2^32
-        if b.num.is_constant() && c.num.is_constant() && d.num.is_constant() {
-            let value = {
-                let b_u64 = ff_to_u64(b.num.get_value().unwrap());
-                let c_u64 = ff_to_u64(c.num.get_value().unwrap());
-                let d_u64 = ff_to_u64(d.num.get_value().unwrap())
-                let n = (b_u64 + c_u64 + d_u64) & ((1 << SHA256_REG_WIDTH) - 1);
-                u64_to_ff(n)
-            };
-            return Ok(Num::Constant(value).into());
-        }
+        // if b.num.is_constant() && c.num.is_constant() && d.num.is_constant() {
+        //     let value = {
+        //         let b_u64 = ff_to_u64(&b.num.get_value().unwrap());
+        //         let c_u64 = ff_to_u64(&c.num.get_value().unwrap());
+        //         let d_u64 = ff_to_u64(&d.num.get_value().unwrap());
+        //         let n = (b_u64 + c_u64 + d_u64) & ((1 << SHA256_REG_WIDTH) - 1);
+        //         u64_to_ff(n)
+        //     };
+        //     return Ok(Num::Constant(value).into());
+        // }
         
-        // start with calculation of of
-        let mut cnst_found = false;
-        let mut of_vec = Vec::with_capacity(3);
-        for elem in [b, c, d] {
-            if elem.num.is_constant() { cnst_found = true } else { of_vec.push(elem.of_tracker) }
-        }
-        if cnst_found {
-            of_vec.push(OverflowTracker::NoOverflow)
-        }
-        let res_of = self.deduce_of(of_vec); 
+        // // start with calculation of overflow
+        // let mut cnst_found = false;
+        // let mut of_vec = Vec::with_capacity(3);
+        // for elem in [b, c, d].iter() {
+        //     if elem.num.is_constant() { cnst_found = true } else { of_vec.push(elem.of_tracker) }
+        // }
+        // if cnst_found {
+        //     of_vec.push(OverflowTracker::NoOverflow)
+        // }
+        // let res_of = self.deduce_of(of_vec); 
 
-        // construct the gate
-        let mut cnst = E::Fr::zero();
-        let dummy =
+        // // construct the gate
+        // let mut cnst = E::Fr::zero();
+        // let dummy = AllocatedNum::alloc();
+        // let mut minus_one = E::Fr::one();
+        // minus_one.negate();
 
-        // construct the result - a
-        // it will always be an allocated num
-        let a = AllocatedNum::alloc(cs,) 
+        // let b_var = match b.num {
+        //     Num::Constant(fr) => {
+        //         cnst.add_assign(&fr);
+        //         dummy.clone()
+        //     }
+        //     Num::Allocated(var) => var.clone(),
+        // };
+
+        // let c_var = match c.num {
+        //     Num::Constant(fr) => {
+        //         cnst.add_assign(&fr);
+        //         dummy.clone()
+        //     }
+        //     Num::Allocated(var) => var.clone(),
+        // };
+
+        // let d_var = match d.num {
+        //     Num::Constant(fr) => {
+        //         cnst.add_assign(&fr);
+        //         dummy.clone()
+        //     }
+        //     Num::Allocated(var) => var.clone(),
+        // };
+
+        // // reduce our constant mod32
+        
+
+        // // construct the result - a
+        // // it will always be an allocated num
+        // let a = AllocatedNum::alloc(cs,) 
+
+        // AllocatedNum::use_only_this();
     }
   
     fn converter_helper(&self, n: u64, sparse_base: u64, rotation: usize, extraction: usize) -> E::Fr {
@@ -546,7 +590,7 @@ impl<E: Engine> Sha256Gadget<E> {
 
         let new_acc = if !is_final {
             AllocatedNum::alloc(cs, || {
-                let mut res = prev_acc.get_value().grab()?;
+                let mut res = acc.get_value().grab()?;
                 let mut tmp = key.get_value().grab()?;
                 tmp.mul_assign(coef);
                 res.sub_assign(&(f_key.get_value().grab())?);
@@ -605,14 +649,14 @@ impl<E: Engine> Sha256Gadget<E> {
     // updates acc: new_acc = acc - of * coef;
     fn of_range_check<CS: ConstraintSystem<E>>(
         &self, cs: &mut CS, of: &AllocatedNum<E>, acc: &mut AllocatedNum<E>, coef: &E::Fr,
-    ) -> Result()> 
+    ) -> Result<()> 
     {
         let table = match self.use_global_range_table {
             false => &self.sha256_base4_rot2_table,
             true => self.global_range_table.as_ref().unwrap(),
         };
 
-       self.query_table_acc(cs, table, of, &mut acc, coef, false)?;
+       self.query_table_acc(cs, table, of, acc, coef, false)?;
         Ok(())
     }
 
@@ -675,9 +719,9 @@ impl<E: Engine> Sha256Gadget<E> {
                         let table = &self.global_range_table.as_ref().unwrap();
 
                         let mut acc = var.clone();
-                        let (_, _, acc) = self.query_table_acc(cs, table, &low, &acc, &cf[0], false)?;
-                        let (_, _, acc) = self.query_table_acc(cs, table, &high, &acc, &cf[1], false)?;
-                        let (_, _, acc) = self.query_table_acc(cs, table, &of, &acc, &cf[2], true)?;
+                        self.query_table_acc(cs, table, &low, &mut acc, &cf[0], false)?;
+                        self.query_table_acc(cs, table, &high, &mut acc, &cf[1], false)?;
+                        self.query_table_acc(cs, table, &of, &mut acc, &cf[2], true)?;
 
                         let extracted = self.allocate_converted_num(cs, var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
                         let dummy = AllocatedNum::alloc_zero(cs)?;
@@ -705,10 +749,10 @@ impl<E: Engine> Sha256Gadget<E> {
 
                         let mut acc = var.clone();
                         let trunc_table = &self.sha256_base4_rot2_width10_table;
-                        let (_, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &low, &acc, &cf[0], false)?;
-                        let (_, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &mid, &acc, &cf[1], false)?;
-                        let (_, _, acc) = self.query_table_acc(cs, &trunc_table, &high, &acc, &cf[2], false)?;
-                        let (_, _, acc) = self.query_table_acc(cs, &self.sha256_base4_rot2_table, &of, &acc, &cf[3], true)?;
+                        self.query_table_acc(cs, &self.sha256_base4_rot2_table, &low, &mut acc, &cf[0], false)?;
+                        self.query_table_acc(cs, &self.sha256_base4_rot2_table, &mid, &mut acc, &cf[1], false)?;
+                        self.query_table_acc(cs, &trunc_table, &high, &mut acc, &cf[2], false)?;
+                        self.query_table_acc(cs, &self.sha256_base4_rot2_table, &of, &mut acc, &cf[3], true)?;
 
                         let extracted = self.allocate_converted_num(cs, var, SHA256_REG_WIDTH, 0, 0, 0, 0)?;
         
@@ -730,7 +774,7 @@ impl<E: Engine> Sha256Gadget<E> {
 
     // --------------------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------------------
-    // convertion and normalization routines
+    // convertion and normalization routines used inside hash 
     // ---------------------------------------------------------------------------------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------------------------
 
@@ -1103,13 +1147,13 @@ impl<E: Engine> Sha256Gadget<E> {
     {
         if let Num::Constant(x) = input {
             let output = converter_func(x.clone());
-            return Ok(Num::Constant(output));
+            return Ok((Num::Constant(output), false));
         }
 
         let x = input.get_variable().unwrap();
         
         // split and slice!
-        let num_slices = Self::round_up(SHA256_REG_WIDTH, num_chunks);
+        let num_slices = round_up(SHA256_REG_WIDTH, num_chunks);
         let mut input_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
         let mut output_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
         let input_slice_modulus = pow(base, num_chunks);
@@ -1132,7 +1176,7 @@ impl<E: Engine> Sha256Gadget<E> {
 
                 for _i in 0..num_slices {
                     let remainder = (big_f.clone() % BigUint::from(input_slice_modulus)).to_u64().unwrap();
-                    let new_val = Self::u64_to_ff(remainder);
+                    let new_val = u64_to_ff(remainder);
                     big_f /= input_slice_modulus;
                     let tmp = AllocatedNum::alloc(cs, || Ok(new_val))?;
                     input_slices.push(tmp);
@@ -1142,152 +1186,104 @@ impl<E: Engine> Sha256Gadget<E> {
             }
         }
 
-        let mut acc = x;
-        let mut output_acc = AllocatedNum::alloc_zero(cs)?;
-        let output_base = Self::u64_exp_to_ff(2, num_chunks as u64);
+        let mut acc = x.clone();
+        let input_base = u64_to_ff(input_slice_modulus as u64);
+        let mut coef = E::Fr::one();
 
-        for (_is_first, is_last, input_chunk) in input_slices.iter() {
-            let (f_out_chunk, g_out_chunk) = self.query_table_acc(cs, table, input_chunk, &acc, &output_base)?;
+        for (_is_first, is_last, input_chunk) in input_slices.iter().identify_first_last() {
+            let (f_out_chunk, g_out_chunk) = self.query_table_acc(cs, table, input_chunk, &mut acc, &coef, is_last)?;
+            coef.mul_assign(&input_base);
+            let out_chunk = if !sel_flag { f_out_chunk } else { g_out_chunk };
+            output_slices.push(out_chunk);
         }
         
-        // let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
-        // AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_base, &output)?;
+        let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
+        let output_base = u64_to_ff(BINARY_BASE << num_chunks);
         
-        // TODO: use negative dialation for A!
-        //println!("OPTIMIZE");
-        let input_base = Self::u64_to_ff(input_slice_modulus as u64);
-        AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
+        // TODO: use negative dialation for b_prev!
+        let d_next_actually_used = if use_d_next {
+            AllocatedNum::long_weighted_sum_eq_with_d_next(cs, &output_slices, &output_base, &output)?
+        }
+        else {
+            AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output)?;
+            false
+        };
         
-        return Ok(Num::Allocated(output_acc));
+        return Ok((Num::Allocated(output), d_next_actually_used))
     }
 
-    // fn choose<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>) -> Result<NumWithTracker<E>>
-    // where CS: ConstraintSystem<E>
-    // {
-    //     let mut two = E::Fr::one();
-    //     two.double();
-    //     let mut three = two.clone();
-    //     three.add_assign(&E::Fr::one());
+    fn choose<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>) -> Result<NumWithTracker<E>>
+    where CS: ConstraintSystem<E>
+    {
+        let mut two = E::Fr::one();
+        two.double();
+        let mut three = two.clone();
+        three.add_assign(&E::Fr::one());
         
-    //     let t0 = Num::lc(cs, &[E::Fr::one(), two, three], &[e.sparse, f.sparse, g.sparse])?; 
-    //     let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[e.rot6, e.rot11, e.rot25])?;
+        let t0 = Num::lc(cs, &[E::Fr::one(), two, three], &[e.sparse, f.sparse, g.sparse])?; 
+        let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[e.rot6, e.rot11, e.rot25])?;
 
-    //     let r0 = self.normalize(
-    //         cs, &t0, 
-    //         &self.sha256_ch_normalization_table,
-    //         ch_map_normalizer,  
-    //         SHA256_CHOOSE_BASE, 
-    //         self.ch_base_num_of_chunks
-    //     )?;
+        let (r0, _) = self.normalize(
+            cs, &t0, 
+            &self.sha256_ch_normalization_table,
+            false,
+            ch_ff_normalizer,  
+            SHA256_CHOOSE_BASE as usize, 
+            self.ch_num_of_chunks,
+            false,
+        )?;
         
-    //     let r1 = self.normalize(
-    //         cs, &t1, 
-    //         &self.sha256_ch_xor_table, 
-    //         ch_xor_normalizer,
-    //         SHA256_CHOOSE_BASE, 
-    //         self.ch_base_num_of_chunks
-    //     )?;
+        let (r1, _) = self.normalize(
+            cs, &t1, 
+            &self.sha256_ch_normalization_table,
+            true, 
+            ch_xor_ff_normalizer,
+            SHA256_CHOOSE_BASE as usize, 
+            self.ch_num_of_chunks,
+            true,
+        )?;
 
-    //     let r0 : NumWithTracker<E> = r0.into();
-       
-    //     r0.add(cs, &r1)
-    // }
+        let r0 : NumWithTracker<E> = r0.into();
+        let r1 : NumWithTracker<E> = r1.into();
+        Ok(self.tracked_positioned_sum_mod32(cs, r0, NumWithTracker::default(), r1)?)
+    }
 
-    // fn majority<CS>(&self, cs: &mut CS, a: SparseMajValue<E>, b: SparseMajValue<E>, c: SparseMajValue<E>) -> Result<NumWithTracker<E>>
-    // where CS: ConstraintSystem<E>
-    // {   
-    //     let t0 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[a.sparse, b.sparse, c.sparse])?; 
-    //     let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[a.rot2, a.rot13, a.rot22])?;
+    fn majority<CS>(&self, cs: &mut CS, a: SparseMajValue<E>, b: SparseMajValue<E>, c: SparseMajValue<E>) -> Result<NumWithTracker<E>>
+    where CS: ConstraintSystem<E>
+    {   
+        let t0 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[a.sparse, b.sparse, c.sparse])?; 
+        let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[a.rot2, a.rot13, a.rot22])?;
 
-    //     let r0 = self.normalize(
-    //         cs, &t0, 
-    //         &self.sha256_maj_normalization_table,
-    //         maj_map_normalizer, 
-    //         SHA256_MAJORITY_BASE, 
-    //         self.maj_base_num_of_chunks,
-    //     )?;
-    //     let r1 = self.normalize(
-    //         cs, &t1, 
-    //         &self.sha256_maj_xor_table, 
-    //         maj_xor_normalizer,
-    //         SHA256_MAJORITY_BASE, 
-    //         self.maj_base_num_of_chunks
-    //     )?;
+        let (r0, _) = self.normalize(
+            cs, &t0, 
+            &self.sha256_maj_normalization_table,
+            false,
+            maj_ff_normalizer, 
+            SHA256_MAJORITY_SHEDULER_BASE as usize, 
+            self.maj_and_sheduler_num_of_chunks,
+            false,
+        )?;
 
-    //     let r0 : NumWithTracker<E> = r0.into();
-       
-    //     r0.add(cs, &r1)
-    // }
+        let (r1, _) = self.normalize(
+            cs, &t1, 
+            &self.sha256_maj_normalization_table,
+            true, 
+            maj_and_sheduler_xor_ff_normalizer,
+            SHA256_MAJORITY_SHEDULER_BASE as usize, 
+            self.maj_and_sheduler_num_of_chunks,
+            true,
+        )?;
 
-    // // one round of inner SHA256 cycle 
-    // // the hash for single block of 512 chunks requires 64 such cycles
-    // fn sha256_inner_block<CS: ConstraintSystem<E>>(
-    //     &self,
-    //     cs: &mut CS, 
-    //     regs: Sha256Registers<E>, 
-    //     inputs: &[NumWithTracker<E>], 
-    //     round_constants: &[E::Fr],
-    // ) -> Result<Sha256Registers<E>>
-    // {
-    //     let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
-    //     let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
-    //     let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
-    //     let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
-        
-    //     let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
-    //     let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
-    //     let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
-    //     let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
+        let r0 : NumWithTracker<E> = r0.into();
+        let r1 : NumWithTracker<E> = r1.into();
+        Ok(self.tracked_positioned_sum_mod32(cs, r0, NumWithTracker::default(), r1)?)
+    }
 
-    //     for i in 0..64 {
-    //         let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
-    //         let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
-            
-    //         // temp1 will be overflowed two much (4 bits in total), so we are going to reduce it in any case
-    //         // TODO: may be it is possible to optimize it somehow?
-    //         let rc = Num::Constant(round_constants[i]);
-    //         // ch overflow is no more than 1 bit
-    //         // ch + input + const = 3 bits of
-    //         // hence if h is overflowed, wo wan't catch this!
-            
-    //         let var_args = &[h.normal.num, ch.num, inputs[i].num.clone(), rc];
-    //         let of_vec = vec![
-    //             h.normal.overflow_tracker, ch.overflow_tracker, inputs[i].overflow_tracker, OverflowTracker::NoOverflow
-    //         ];
-    //         // TODO: use negative DIALATION for tmp2
-    //         //println!("QQQ");
-    //         let temp1 = NumWithTracker {
-    //             num: Num::sum(cs, var_args)?,
-    //             overflow_tracker: self.deduce_of(of_vec),
-    //         }; 
-    //         //let temp1 = self.extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
-
-    //         h = g;
-    //         g = f;
-    //         f = e;
-    //         let mut temp2 : NumWithTracker<E> = d.normal.into();
-    //         temp2 = temp2.add_tracked(cs, &temp1)?;
-    //         e = self.convert_into_sparse_chooser_form(cs, temp2)?;
-    //         d = c;
-    //         c = b;
-    //         b = a;
-    //         let temp3 = maj.add_tracked(cs, &temp1)?;
-    //         a =self.convert_into_sparse_majority_form(cs, temp3)?;
-    //     }
-
-    //     let regs = Sha256Registers {
-    //         a: regs.a.add_tracked(cs, &a.normal)?,
-    //         b: regs.b.add_tracked(cs, &b.normal)?,
-    //         c: regs.c.add_tracked(cs, &c.normal)?,
-    //         d: regs.d.add_tracked(cs, &d.normal)?,
-    //         e: regs.e.add_tracked(cs, &e.normal)?,
-    //         f: regs.f.add_tracked(cs, &f.normal)?,
-    //         g: regs.g.add_tracked(cs, &g.normal)?,
-    //         h: regs.h.add_tracked(cs, &h.normal)?,
-    //     };
-        
-    //     Ok(regs)
-    // }
+    // --------------------------------------------------------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------------------------------------
+    // convertion and normalization routines for message expansion (sheduling) 
+    // ---------------------------------------------------------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------------------------------------------------------
 
     // // computes sigma_0(x) = S_7(x) ^ S_18(x) ^ R_3(x)
     // // S_i and R_j are defined in the comments related to "message_expansion" function
@@ -1682,6 +1678,76 @@ impl<E: Engine> Sha256Gadget<E> {
     //     }
 
     //     Ok(res)
+    // }
+
+    // // one round of inner SHA256 cycle 
+    // // the hash for single block of 512 chunks requires 64 such cycles
+    // fn sha256_inner_block<CS: ConstraintSystem<E>>(
+    //     &self,
+    //     cs: &mut CS, 
+    //     regs: Sha256Registers<E>, 
+    //     inputs: &[NumWithTracker<E>], 
+    //     round_constants: &[E::Fr],
+    // ) -> Result<Sha256Registers<E>>
+    // {
+    //     let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
+    //     let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
+    //     let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
+    //     let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
+        
+    //     let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
+    //     let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
+    //     let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
+    //     let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
+
+    //     for i in 0..64 {
+    //         let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
+    //         let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
+            
+    //         // temp1 will be overflowed two much (4 bits in total), so we are going to reduce it in any case
+    //         // TODO: may be it is possible to optimize it somehow?
+    //         let rc = Num::Constant(round_constants[i]);
+    //         // ch overflow is no more than 1 bit
+    //         // ch + input + const = 3 bits of
+    //         // hence if h is overflowed, wo wan't catch this!
+            
+    //         let var_args = &[h.normal.num, ch.num, inputs[i].num.clone(), rc];
+    //         let of_vec = vec![
+    //             h.normal.overflow_tracker, ch.overflow_tracker, inputs[i].overflow_tracker, OverflowTracker::NoOverflow
+    //         ];
+    //         // TODO: use negative DIALATION for tmp2
+    //         //println!("QQQ");
+    //         let temp1 = NumWithTracker {
+    //             num: Num::sum(cs, var_args)?,
+    //             overflow_tracker: self.deduce_of(of_vec),
+    //         }; 
+    //         //let temp1 = self.extact_32_from_overflowed_num(cs, &temp1_unreduced)?;
+
+    //         h = g;
+    //         g = f;
+    //         f = e;
+    //         let mut temp2 : NumWithTracker<E> = d.normal.into();
+    //         temp2 = temp2.add_tracked(cs, &temp1)?;
+    //         e = self.convert_into_sparse_chooser_form(cs, temp2)?;
+    //         d = c;
+    //         c = b;
+    //         b = a;
+    //         let temp3 = maj.add_tracked(cs, &temp1)?;
+    //         a =self.convert_into_sparse_majority_form(cs, temp3)?;
+    //     }
+
+    //     let regs = Sha256Registers {
+    //         a: regs.a.add_tracked(cs, &a.normal)?,
+    //         b: regs.b.add_tracked(cs, &b.normal)?,
+    //         c: regs.c.add_tracked(cs, &c.normal)?,
+    //         d: regs.d.add_tracked(cs, &d.normal)?,
+    //         e: regs.e.add_tracked(cs, &e.normal)?,
+    //         f: regs.f.add_tracked(cs, &f.normal)?,
+    //         g: regs.g.add_tracked(cs, &g.normal)?,
+    //         h: regs.h.add_tracked(cs, &h.normal)?,
+    //     };
+        
+    //     Ok(regs)
     // }
 
     // fn optimized_extact_32_from_tracked_num<CS: ConstraintSystem<E>>(&self, cs: &mut CS, input: NumWithTracker<E>) -> Result<Num<E>> 

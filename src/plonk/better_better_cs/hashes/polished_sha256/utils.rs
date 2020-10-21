@@ -47,11 +47,11 @@ pub fn u64_exp_to_ff<Fr: PrimeField>(n: u64, exp: u64) -> Fr {
 }
 
 pub fn ff_to_u64<Fr: PrimeField>(fr: &Fr) -> u64 {
-    let repr = fr.into_repr().as_ref();
+    let repr = fr.into_repr();
     for i in 1..8 {
-        assert_eq!(repr[i], 0);
+        assert_eq!(repr.as_ref()[i], 0);
     }
-    repr[0]
+    repr.as_ref()[0]
 }
 
 fn biguint_to_ff<Fr: PrimeField>(value: &BigUint) -> Fr {
@@ -246,7 +246,7 @@ pub fn maj_and_sheduler_xor_ff_normalizer<Fr: PrimeField>(fr: Fr) -> Fr
 
 
 // returns closets upper integer to a / b
-fn round_up(a: usize, b : usize) -> usize {
+pub fn round_up(a: usize, b : usize) -> usize {
     let additional_chunks : usize = if a % b > 0 {1} else {0};
     a/b + additional_chunks
 }

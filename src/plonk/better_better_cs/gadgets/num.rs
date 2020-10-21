@@ -265,6 +265,71 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(())
     }
 
+    // given vector of coefs: [c0, c1, c2, c3],
+    // vector of vars: [var0, var1, var2, var3],
+    // check if var = c0 * var0 + c1 * var1 + c2 * var2
+    // NB: var0 will be put in a, var1 in b and so on, so that relative positioning will be preserved
+    // TODO: extend to use d_next
+    pub fn use_only_this<CS>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+        cnst: &E::Fr,
+    ) -> Result<(), SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), 4);
+        
+        // check if equality indeed holds
+        // TODO: only in debug mde!
+        match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value(), vars[3].get_value()) {
+            (Some(val0), Some(val1), Some(val2), Some(val3)) => {
+                let mut running_sum = val0;
+                running_sum.mul_assign(&coefs[0]);
+
+                let mut tmp = val1;
+                tmp.mul_assign(&coefs[1]);
+                running_sum.add_assign(&tmp);
+
+                let mut tmp = val2;
+                tmp.mul_assign(&coefs[2]);
+                running_sum.add_assign(&tmp);
+
+                let mut tmp = val3;
+                tmp.mul_assign(&coefs[3]);
+                running_sum.add_assign(&tmp);
+
+                running_sum.add_assign(&cnst);
+                assert_eq!(running_sum, E::Fr::zero())
+            }
+            (_, _ , _ , _) => {},
+        };
+
+        let dummy = Self::alloc_zero(cs)?;
+        let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
+        let mut gate_term = MainGateTerm::new();
+        let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.variable)?;
+        for (i, idx) in range_of_linear_terms.enumerate() {
+            local_coeffs[idx] = coefs[i].clone();
+        }
+          
+        let cnst_index = CS::MainGate::index_for_constant_term();
+        local_coeffs[cnst_index] = *cnst;
+
+        let mg = CS::MainGate::default();
+        local_vars = vec![vars[0].get_variable(), vars[1].get_variable(), vars[2].get_variable(), vars[3].get_variable()];
+
+        cs.new_single_gate_for_trace_step(
+            &mg,
+            &local_coeffs,
+            &local_vars,
+            &[]
+        )?;
+
+        Ok(())
+    }
+
     // given vector of coefs: [c0, c1, c2],
     // vector of vars: [var0, var1, var2],
     // and supposed result var,
@@ -576,12 +641,12 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(res_var)
     }
 
-    pub fn quartic_lc_eq<CS: ConstraintSystem<E>>(
+    pub fn garbage<CS: ConstraintSystem<E>>(
         cs: &mut CS,
         coefs: &[E::Fr],
         vars: &[Self],
         _total: &Self,
-    ) -> Result<Self, SynthesisError>
+    ) -> Result<(), SynthesisError>
     {
         assert_eq!(vars.len(), 4);
         assert_eq!(coefs.len(), 4);
@@ -610,7 +675,7 @@ impl<E: Engine> AllocatedNum<E> {
             &[]
         )?;
 
-        Ok(res_var)
+        Ok(())
     }
 
     // for given array of slices : [x0, x1, x2, ..., xn] of arbitrary length, base n and total accumulated x
@@ -667,6 +732,9 @@ impl<E: Engine> AllocatedNum<E> {
         let mut acc_fr = E::Fr::one();
         let mut coeffs = Vec::with_capacity(5);
         let mut current_vars = Vec::with_capacity(4);
+
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
        
         for (i, var) in vars.iter().enumerate() {
             if current_vars.len() < 4 {
@@ -685,7 +753,7 @@ impl<E: Engine> AllocatedNum<E> {
         }
 
         let use_d_next = if current_vars.len() == 4 {
-            AllocatedNum::quartic_lc_eq(cs, &coeffs[..], &current_vars[..], &total)?;
+            AllocatedNum::garbage(cs, &coeffs[..], &current_vars[..], &total)?;
             true
         }
         else {
