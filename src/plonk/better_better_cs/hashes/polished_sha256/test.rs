@@ -58,6 +58,8 @@ mod test {
                 }
             }
 
+            println!("init step: {}", cs.get_current_step_number());
+
             let sha256_gadget = Sha256Gadget::new(
                 cs, self.ch_base_num_of_chunks, self.maj_sheduler_base_num_of_chunks, false, false, 0, "",
             )?;

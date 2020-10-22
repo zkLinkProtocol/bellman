@@ -365,7 +365,7 @@ pub struct Width4MainGateWithDNext;
 
 impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
     fn name(&self) -> &'static str {
-        "main gate of width 4 with D_next (2)"
+        "main gate of width 4 with D_next"
     }
 
     fn degree(&self) -> usize {
@@ -394,7 +394,6 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
 
             PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
-            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(2), 1),
         ]
     }
 
@@ -409,7 +408,6 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             PolyIdentifier::GateSetupPolynomial(name, 4),
             PolyIdentifier::GateSetupPolynomial(name, 5),
             PolyIdentifier::GateSetupPolynomial(name, 6),
-            PolyIdentifier::GateSetupPolynomial(name, 7),
         ]
     }
 
@@ -437,7 +435,6 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
             PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)),
             PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 7)),
         ]
     }
 
@@ -466,7 +463,6 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let q_m = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 4), row);
         let q_const = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 5), row);
         let q_d_next = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 6), row);
-        let q_c_next = poly_storage.get_poly_at_step(PolyIdentifier::GateSetupPolynomial(name, 7), row);
 
         // println!("{}*A + {}*B + {}*C + {}*D + {} + {}*A*A + {}*D_next", q_a, q_b, q_c, q_d, q_const, q_m, q_d_next);
         let a_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(0), row);
@@ -475,12 +471,6 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
         let d_value = poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row);
         let d_next_value = if last_row == false {
             Some(poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(3), row+1))
-        } else {
-            None
-        }; 
-
-        let c_next_value = if last_row == false {
-            Some(poly_storage.get_poly_at_step(PolyIdentifier::VariablesPolynomial(2), row+1))
         } else {
             None
         }; 
@@ -511,15 +501,6 @@ impl<E: Engine> GateInternal<E> for Width4MainGateWithDNext {
             total.add_assign(&tmp);
         } else {
             assert!(q_d_next.is_zero());
-        }
-
-        if last_row == false {
-            let mut tmp = c_next_value.expect("must be able to get c_next");
-            tmp.mul_assign(&q_c_next);
-            //print!("q_c: {}", q_c_next);
-            total.add_assign(&tmp);
-        } else {
-            assert!(q_c_next.is_zero());
         }
 
         total
@@ -585,7 +566,7 @@ impl<E: Engine> Gate<E> for Width4MainGateWithDNext {
 impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
     const NUM_LINEAR_TERMS: usize = 4;
     const NUM_VARIABLES: usize = 4;
-    const NUM_VARIABLES_ON_NEXT_STEP: usize = 2;
+    const NUM_VARIABLES_ON_NEXT_STEP: usize = 1;
 
     fn range_of_multiplicative_term() -> std::ops::Range<usize> {
         0..2

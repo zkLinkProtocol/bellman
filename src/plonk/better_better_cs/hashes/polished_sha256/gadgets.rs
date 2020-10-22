@@ -614,7 +614,7 @@ impl<E: Engine> Sha256Gadget<E> {
                 let mut tmp = key.get_value().grab()?;
                 tmp.mul_assign(coef);
                 res.sub_assign(&tmp);
-                Ok(tmp)
+                Ok(res)
             })?
         }
         else {
@@ -631,11 +631,12 @@ impl<E: Engine> Sha256Gadget<E> {
 
         // new_acc = prev_acc - base * key
         // or: base * key + new_acc - prev_acc = 0;
-        let vars = [key.get_variable(), f_key.get_variable(), g_key.get_variable(), new_acc.get_variable()];
+        let vars = [key.get_variable(), f_key.get_variable(), g_key.get_variable(), acc.get_variable()];
         let coeffs = [coef.clone(), E::Fr::zero(), E::Fr::zero(), minus_one];
 
         cs.begin_gates_batch_for_step()?;
 
+        println!("step: {}", cs.get_current_step_number());
         cs.apply_single_lookup_gate(&vars[..table.width()], table.clone())?;
     
         let mut gate_term = MainGateTerm::new();
@@ -1175,6 +1176,7 @@ impl<E: Engine> Sha256Gadget<E> {
         let mut input_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
         let mut output_slices : Vec<AllocatedNum<E>> = Vec::with_capacity(num_slices);
         let input_slice_modulus = pow(base, num_chunks);
+        let output_slice_modulus = pow(BINARY_BASE as usize, num_chunks);
 
         match x.get_value() {
             None => {
@@ -1212,11 +1214,13 @@ impl<E: Engine> Sha256Gadget<E> {
             let (f_out_chunk, g_out_chunk) = self.query_table_acc(cs, table, input_chunk, &mut acc, &coef, is_last)?;
             coef.mul_assign(&input_base);
             let out_chunk = if !sel_flag { f_out_chunk } else { g_out_chunk };
+            println!("inp: {}, outp: {}", input_chunk.get_value().unwrap(), out_chunk.get_value().unwrap());
             output_slices.push(out_chunk);
         }
         
         let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
-        let output_base = u64_to_ff(BINARY_BASE << num_chunks);
+        let output_base = u64_to_ff(output_slice_modulus as u64);
+
         
         println!("x: {}, output: {}", x.get_value().unwrap(), output.get_value().unwrap());
         // TODO: use negative dialation for b_prev!
@@ -1234,7 +1238,7 @@ impl<E: Engine> Sha256Gadget<E> {
         };
         println!("after lc");
         
-        return Ok((Num::Allocated(output), d_next_actually_used))
+        Ok((Num::Allocated(output), d_next_actually_used))
     }
 
     fn choose<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>) -> Result<NumWithTracker<E>>
@@ -1356,6 +1360,8 @@ impl<E: Engine> Sha256Gadget<E> {
             }
             _ => {},
         }
+
+        
           
         // split our 32bit variable into 11-bit chunks:
         // there will be three chunks (low, mid, high) for 32bit number
@@ -1364,10 +1370,10 @@ impl<E: Engine> Sha256Gadget<E> {
         let high = self.allocate_converted_num(cs, &var, SHA256_GADGET_CHUNK_SIZE-1, 2 * SHA256_GADGET_CHUNK_SIZE, 0, 0, 0)?;
 
         let (sparse_low, sparse_low_rot7) = self.query_table_acc(cs, &self.sha256_base4_rot7_table, &low, &mut acc, &cf[0], false)?;
+        
         let (sparse_mid, sparse_mid_rot7) = self.query_table_acc(cs, &self.sha256_base4_rot7_table, &mid, &mut acc, &cf[1], false)?;
         let (sparse_high, _) = self.query_table_acc(cs, &self.sha256_base4_rot2_width10_table, &high, &mut acc, &cf[2], true)?;
 
-    println!("11");
 
         let full_sparse_rot7 = {
             // full_sparse_rot7 = low_sparse_rot7 + 4^(11-7) * sparse_mid + 4^(22-7) * sparse_high
@@ -1392,7 +1398,6 @@ impl<E: Engine> Sha256Gadget<E> {
             full_sparse_rot7
         };
 
-        println!("111");
 
         let full_sparse_rot18 = {
             // full_sparse_rot18 = sparse_mid_rot7 + 4^(22-11-7) * sparse_high + 4^(32-11-7) * sparse_low
@@ -1438,6 +1443,7 @@ impl<E: Engine> Sha256Gadget<E> {
             )?;
             full_sparse_shift3
         };
+
 
         // now we have all the components: 
         // S7 = full_sparse_rot7, S18 = full_sparse_rot18, R3 = full_sparse_shift3
@@ -1598,23 +1604,16 @@ impl<E: Engine> Sha256Gadget<E> {
 
         for i in 0..16 {
             res.push(message[i].clone().into());
+        }  
+
+        for j in 16..64 {
+            let (tmp1, _) = self.sigma_1(cs, &mut res[j - 2], true)?;
+            let mut sum = self.tracked_positioned_sum3_mod32(cs, res[j-7].clone(), res[j-16].clone(), tmp1.into())?;
+            let (tmp2, _) = self.sigma_0(cs, &mut res[j - 15], true)?;
+            sum = self.tracked_positioned_sum2_mod32(cs, sum, tmp2.into())?;
+
+            res.push(sum);
         }
-
-        let (tmp2, _) = self.sigma_0(cs, &mut res[16 - 15], false)?;
-            
-
-        // for j in 16..64 {
-        //     let (tmp1, _) = self.sigma_1(cs, &mut res[j - 2], true)?;
-        //     println!("1");
-        //     let mut sum = self.tracked_positioned_sum3_mod32(cs, res[j-7].clone(), res[j-16].clone(), tmp1.into())?;
-        //     println!("2");
-        //     let (tmp2, _) = self.sigma_0(cs, &mut res[j - 15], true)?;
-        //     println!("3");
-        //     sum = self.tracked_positioned_sum2_mod32(cs, sum, tmp2.into())?;
-        //     println!("4");
-
-        //     res.push(sum);
-        // }
 
         Ok(res)
     }
@@ -1633,56 +1632,62 @@ impl<E: Engine> Sha256Gadget<E> {
         round_constants: &[E::Fr],
     ) -> Result<Sha256Registers<E>>
     {
-        // let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
-        // println!("maj");
-        // let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
-        // let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
-        // let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
+        let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
+        println!("maj");
+        let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
+        let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
+        let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
         
-        // let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
-        // println!("choose");
-        // let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
-        // let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
-        // let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
+        let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
+        println!("choose");
+        let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
+        let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
+        let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
 
-        // for i in 0..64 {
-        //     println!("a");
-        //     let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
-        //     println!("b");
-        //     let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
-        //     println!("c");
+        for i in 0..64 {
+            if i== 1 {
+                return Ok(regs);
+            }
             
-        //     let rc = round_constants[i].clone();
-        //     let temp1 = self.tracked_positioned_sum3_with_cnst_mod32(cs, h.normal, ch, inputs[i].clone(), rc)?;
-        //     println!("cycle");
+            println!("a");
+            let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
             
-        //     h = g;
-        //     g = f;
-        //     f = e;
-        //     let temp2 = self.tracked_positioned_sum2_mod32(cs, d.normal.into(), temp1.clone())?;
-        //      println!("x");
-        //     e = self.convert_into_sparse_chooser_form(cs, temp2)?;
-        //     println!("y");
-        //     d = c;
-        //     c = b;
-        //     b = a;
-        //     println!("z");
-        //     let temp3 = self.tracked_positioned_sum2_mod32(cs, maj, temp1)?;
-        //     println!("zz");
-        //     a =self.convert_into_sparse_majority_form(cs, temp3)?;
-        //     println!("zzz");
-        // }
+            println!("b");
+            let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
+            
+            println!("c");
+            
+            let rc = round_constants[i].clone();
+            let temp1 = self.tracked_positioned_sum3_with_cnst_mod32(cs, h.normal, ch, inputs[i].clone(), rc)?;
+            println!("cycle");
+            
+            h = g;
+            g = f;
+            f = e;
+            let temp2 = self.tracked_positioned_sum2_mod32(cs, d.normal.into(), temp1.clone())?;
+            println!("x");
+            e = self.convert_into_sparse_chooser_form(cs, temp2)?;
+            println!("y");
+            d = c;
+            c = b;
+            b = a;
+            println!("z");
+            let temp3 = self.tracked_positioned_sum2_mod32(cs, maj, temp1)?;
+            println!("zz");
+            a =self.convert_into_sparse_majority_form(cs, temp3)?;
+            println!("zzz");
+        }
 
-        // let regs = Sha256Registers {
-        //     a: self.tracked_positioned_sum2_mod32(cs, regs.a, a.normal)?,
-        //     b: self.tracked_positioned_sum2_mod32(cs, regs.b, b.normal)?,
-        //     c: self.tracked_positioned_sum2_mod32(cs, regs.c, c.normal)?,
-        //     d: self.tracked_positioned_sum2_mod32(cs, regs.d, d.normal)?,
-        //     e: self.tracked_positioned_sum2_mod32(cs, regs.e, e.normal)?,
-        //     f: self.tracked_positioned_sum2_mod32(cs, regs.f, f.normal)?,
-        //     g: self.tracked_positioned_sum2_mod32(cs, regs.g, g.normal)?,
-        //     h: self.tracked_positioned_sum2_mod32(cs, regs.h, h.normal)?,
-        // };
+        let regs = Sha256Registers {
+            a: self.tracked_positioned_sum2_mod32(cs, regs.a, a.normal)?,
+            b: self.tracked_positioned_sum2_mod32(cs, regs.b, b.normal)?,
+            c: self.tracked_positioned_sum2_mod32(cs, regs.c, c.normal)?,
+            d: self.tracked_positioned_sum2_mod32(cs, regs.d, d.normal)?,
+            e: self.tracked_positioned_sum2_mod32(cs, regs.e, e.normal)?,
+            f: self.tracked_positioned_sum2_mod32(cs, regs.f, f.normal)?,
+            g: self.tracked_positioned_sum2_mod32(cs, regs.g, g.normal)?,
+            h: self.tracked_positioned_sum2_mod32(cs, regs.h, h.normal)?,
+        };
         
         Ok(regs)
     }
@@ -1716,16 +1721,22 @@ impl<E: Engine> Sha256Gadget<E> {
             }
         }
 
+        // let res = [
+        //     self.extact_32_bits_from_tracked_num(cs, regs.a)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.b)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.c)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.d)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.e)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.f)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.g)?,
+        //     self.extact_32_bits_from_tracked_num(cs, regs.h)?,
+        // ];
+
         let res = [
-            self.extact_32_bits_from_tracked_num(cs, regs.a)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.b)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.c)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.d)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.e)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.f)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.g)?,
-            self.extact_32_bits_from_tracked_num(cs, regs.h)?,
+            Num::default(), Num::default(), Num::default(), Num::default(), Num::default(), Num::default(), Num::default(),
+            Num::default(),
         ];
+
         Ok(res)
     }
 }
