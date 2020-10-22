@@ -411,7 +411,7 @@ impl<E: Engine> AllocatedNum<E> {
                 running_sum.add_assign(&tmp);
 
                 running_sum.add_assign(cnst);
-                assert_eq!(running_sum, res_val)
+                //assert_eq!(running_sum, res_val)
             }
             (_, _ , _ , _) => {},
         };

@@ -613,7 +613,7 @@ impl<E: Engine> Sha256Gadget<E> {
                 let mut res = acc.get_value().grab()?;
                 let mut tmp = key.get_value().grab()?;
                 tmp.mul_assign(coef);
-                res.sub_assign(&(f_key.get_value().grab())?);
+                res.sub_assign(&tmp);
                 Ok(tmp)
             })?
         }
@@ -1218,13 +1218,13 @@ impl<E: Engine> Sha256Gadget<E> {
         let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
         let output_base = u64_to_ff(BINARY_BASE << num_chunks);
         
-        println!("before lc");
+        println!("x: {}, output: {}", x.get_value().unwrap(), output.get_value().unwrap());
         // TODO: use negative dialation for b_prev!
         let d_next_actually_used = if use_d_next {
-            AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output)?;
+            //AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output)?;
             // println!("suucess");
-            // AllocatedNum::long_weighted_sum_eq_with_d_next(cs, &output_slices, &output_base, &output)?
-            false
+            AllocatedNum::long_weighted_sum_eq_with_d_next(cs, &output_slices, &output_base, &output)?
+            //false
         }
         else {
             println!("before op");
@@ -1259,7 +1259,7 @@ impl<E: Engine> Sha256Gadget<E> {
             self.ch_num_of_chunks,
             false,
         )?;
-
+        
         println!("before second normalize");
         
         let (r1, _) = self.normalize(
@@ -1600,18 +1600,21 @@ impl<E: Engine> Sha256Gadget<E> {
             res.push(message[i].clone().into());
         }
 
-        for j in 16..64 {
-            let (tmp1, _) = self.sigma_1(cs, &mut res[j - 2], true)?;
-            println!("1");
-            let mut sum = self.tracked_positioned_sum3_mod32(cs, res[j-7].clone(), res[j-16].clone(), tmp1.into())?;
-            println!("2");
-            let (tmp2, _) = self.sigma_0(cs, &mut res[j - 15], true)?;
-            println!("3");
-            sum = self.tracked_positioned_sum2_mod32(cs, sum, tmp2.into())?;
-            println!("4");
+        let (tmp2, _) = self.sigma_0(cs, &mut res[16 - 15], false)?;
+            
 
-            res.push(sum);
-        }
+        // for j in 16..64 {
+        //     let (tmp1, _) = self.sigma_1(cs, &mut res[j - 2], true)?;
+        //     println!("1");
+        //     let mut sum = self.tracked_positioned_sum3_mod32(cs, res[j-7].clone(), res[j-16].clone(), tmp1.into())?;
+        //     println!("2");
+        //     let (tmp2, _) = self.sigma_0(cs, &mut res[j - 15], true)?;
+        //     println!("3");
+        //     sum = self.tracked_positioned_sum2_mod32(cs, sum, tmp2.into())?;
+        //     println!("4");
+
+        //     res.push(sum);
+        // }
 
         Ok(res)
     }
@@ -1630,56 +1633,56 @@ impl<E: Engine> Sha256Gadget<E> {
         round_constants: &[E::Fr],
     ) -> Result<Sha256Registers<E>>
     {
-        let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
-        println!("maj");
-        let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
-        let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
-        let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
+        // let mut a = self.convert_into_sparse_majority_form(cs, regs.a.clone())?;
+        // println!("maj");
+        // let mut b = self.convert_into_sparse_majority_form(cs, regs.b.clone())?;
+        // let mut c = self.convert_into_sparse_majority_form(cs, regs.c.clone())?;
+        // let mut d = self.convert_into_sparse_majority_form(cs, regs.d.clone())?;
         
-        let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
-        println!("choose");
-        let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
-        let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
-        let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
+        // let mut e = self.convert_into_sparse_chooser_form(cs, regs.e.clone())?;
+        // println!("choose");
+        // let mut f = self.convert_into_sparse_chooser_form(cs, regs.f.clone())?;
+        // let mut g = self.convert_into_sparse_chooser_form(cs, regs.g.clone())?;
+        // let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
 
-        for i in 0..64 {
-            println!("a");
-            let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
-            println!("b");
-            let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
-            println!("c");
+        // for i in 0..64 {
+        //     println!("a");
+        //     let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
+        //     println!("b");
+        //     let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
+        //     println!("c");
             
-            let rc = round_constants[i].clone();
-            let temp1 = self.tracked_positioned_sum3_with_cnst_mod32(cs, h.normal, ch, inputs[i].clone(), rc)?;
-            println!("cycle");
+        //     let rc = round_constants[i].clone();
+        //     let temp1 = self.tracked_positioned_sum3_with_cnst_mod32(cs, h.normal, ch, inputs[i].clone(), rc)?;
+        //     println!("cycle");
             
-            h = g;
-            g = f;
-            f = e;
-            let temp2 = self.tracked_positioned_sum2_mod32(cs, d.normal.into(), temp1.clone())?;
-             println!("x");
-            e = self.convert_into_sparse_chooser_form(cs, temp2)?;
-            println!("y");
-            d = c;
-            c = b;
-            b = a;
-            println!("z");
-            let temp3 = self.tracked_positioned_sum2_mod32(cs, maj, temp1)?;
-            println!("zz");
-            a =self.convert_into_sparse_majority_form(cs, temp3)?;
-            println!("zzz");
-        }
+        //     h = g;
+        //     g = f;
+        //     f = e;
+        //     let temp2 = self.tracked_positioned_sum2_mod32(cs, d.normal.into(), temp1.clone())?;
+        //      println!("x");
+        //     e = self.convert_into_sparse_chooser_form(cs, temp2)?;
+        //     println!("y");
+        //     d = c;
+        //     c = b;
+        //     b = a;
+        //     println!("z");
+        //     let temp3 = self.tracked_positioned_sum2_mod32(cs, maj, temp1)?;
+        //     println!("zz");
+        //     a =self.convert_into_sparse_majority_form(cs, temp3)?;
+        //     println!("zzz");
+        // }
 
-        let regs = Sha256Registers {
-            a: self.tracked_positioned_sum2_mod32(cs, regs.a, a.normal)?,
-            b: self.tracked_positioned_sum2_mod32(cs, regs.b, b.normal)?,
-            c: self.tracked_positioned_sum2_mod32(cs, regs.c, c.normal)?,
-            d: self.tracked_positioned_sum2_mod32(cs, regs.d, d.normal)?,
-            e: self.tracked_positioned_sum2_mod32(cs, regs.e, e.normal)?,
-            f: self.tracked_positioned_sum2_mod32(cs, regs.f, f.normal)?,
-            g: self.tracked_positioned_sum2_mod32(cs, regs.g, g.normal)?,
-            h: self.tracked_positioned_sum2_mod32(cs, regs.h, h.normal)?,
-        };
+        // let regs = Sha256Registers {
+        //     a: self.tracked_positioned_sum2_mod32(cs, regs.a, a.normal)?,
+        //     b: self.tracked_positioned_sum2_mod32(cs, regs.b, b.normal)?,
+        //     c: self.tracked_positioned_sum2_mod32(cs, regs.c, c.normal)?,
+        //     d: self.tracked_positioned_sum2_mod32(cs, regs.d, d.normal)?,
+        //     e: self.tracked_positioned_sum2_mod32(cs, regs.e, e.normal)?,
+        //     f: self.tracked_positioned_sum2_mod32(cs, regs.f, f.normal)?,
+        //     g: self.tracked_positioned_sum2_mod32(cs, regs.g, g.normal)?,
+        //     h: self.tracked_positioned_sum2_mod32(cs, regs.h, h.normal)?,
+        // };
         
         Ok(regs)
     }
@@ -1704,10 +1707,13 @@ impl<E: Engine> Sha256Gadget<E> {
             h: Num::Constant(self.iv[7].clone()).into(),
         };
 
-        for block in message.chunks(16) {
-            let expanded_block = self.message_expansion(cs, block)?;
-            println!("here");
-            regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
+
+        for (i, block) in message.chunks(16).enumerate() {
+            if i == 0 {
+                let expanded_block = self.message_expansion(cs, block)?;
+                println!("here");
+                regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
+            }
         }
 
         let res = [
