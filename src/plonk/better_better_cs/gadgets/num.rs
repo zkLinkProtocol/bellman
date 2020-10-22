@@ -360,8 +360,7 @@ impl<E: Engine> AllocatedNum<E> {
                 tmp.mul_assign(&coefs[2]);
                 running_sum.add_assign(&tmp);
 
-                // TODO: uncomment!
-                //assert_eq!(running_sum, res_val)
+                assert_eq!(running_sum, res_val)
             }
             (_, _ , _ , _) => {},
         };
@@ -754,11 +753,13 @@ impl<E: Engine> AllocatedNum<E> {
         }
 
         let use_d_next = if current_vars.len() == 4 {
+            println!("garbage");
             AllocatedNum::garbage(cs, &coeffs[..], &current_vars[..], &total)?;
             true
         }
         else {
             // pad with dummy variables
+            println!("this way");
             for _i in current_vars.len()..3 {
                 current_vars.push(AllocatedNum::alloc_zero(cs)?);
                 coeffs.push(E::Fr::zero());

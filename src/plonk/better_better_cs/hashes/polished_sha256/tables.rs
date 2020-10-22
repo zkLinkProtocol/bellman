@@ -230,7 +230,7 @@ impl<E: Engine> LookupTableInternal<E> for MultiBaseNormalizationTable<E> {
         self.name
     }
     fn table_size(&self) -> usize {
-        1 << pow(self.input_base as usize, self.num_chunks)
+        pow(self.input_base as usize, self.num_chunks)
     }
     fn num_keys(&self) -> usize {
         1
@@ -297,8 +297,8 @@ pub struct Sha256ShedulerHelperTable<E: Engine> {
 impl<E: Engine> Sha256ShedulerHelperTable<E> {
     pub fn new(name: &'static str) -> Self {
         let bits = 11usize;
-        let shift = 9usize;
-        let rot = 3usize;
+        let shift = 3usize;
+        let rot = 9usize;
         let base = 4usize;
 
         let mut keys = Vec::with_capacity(1 << bits);

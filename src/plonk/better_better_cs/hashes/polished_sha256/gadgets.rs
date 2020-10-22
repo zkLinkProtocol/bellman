@@ -479,7 +479,7 @@ impl<E: Engine> Sha256Gadget<E> {
         // reduce our constant mod 2^32
         let repr = cnst.into_repr();
         let n = repr.as_ref()[0] & ((1 << SHA256_REG_WIDTH) - 1);
-        cnst = E::Fr::from_repr(repr).expect("should parse");
+        cnst = u64_to_ff(n);
     
         // calculation of the overflow
         let mut of_vec = Vec::with_capacity(4);
@@ -1221,10 +1221,15 @@ impl<E: Engine> Sha256Gadget<E> {
         println!("before lc");
         // TODO: use negative dialation for b_prev!
         let d_next_actually_used = if use_d_next {
-            AllocatedNum::long_weighted_sum_eq_with_d_next(cs, &output_slices, &output_base, &output)?
+            AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output)?;
+            // println!("suucess");
+            // AllocatedNum::long_weighted_sum_eq_with_d_next(cs, &output_slices, &output_base, &output)?
+            false
         }
         else {
+            println!("before op");
             AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output)?;
+            println!("after op");
             false
         };
         println!("after lc");
@@ -1362,6 +1367,8 @@ impl<E: Engine> Sha256Gadget<E> {
         let (sparse_mid, sparse_mid_rot7) = self.query_table_acc(cs, &self.sha256_base4_rot7_table, &mid, &mut acc, &cf[1], false)?;
         let (sparse_high, _) = self.query_table_acc(cs, &self.sha256_base4_rot2_width10_table, &high, &mut acc, &cf[2], true)?;
 
+    println!("11");
+
         let full_sparse_rot7 = {
             // full_sparse_rot7 = low_sparse_rot7 + 4^(11-7) * sparse_mid + 4^(22-7) * sparse_high
             let full_sparse_rot7 = self.allocate_converted_num(
@@ -1385,6 +1392,8 @@ impl<E: Engine> Sha256Gadget<E> {
             full_sparse_rot7
         };
 
+        println!("111");
+
         let full_sparse_rot18 = {
             // full_sparse_rot18 = sparse_mid_rot7 + 4^(22-11-7) * sparse_high + 4^(32-11-7) * sparse_low
             let full_sparse_rot18 = self.allocate_converted_num(
@@ -1402,6 +1411,8 @@ impl<E: Engine> Sha256Gadget<E> {
             )?;
             full_sparse_rot18
         };
+
+        println!("1111");
 
         let full_sparse_shift_3 = {
             let (r3, _) = self.query_table(cs, &self.sha256_sheduler_helper_table, &low)?;
@@ -1430,11 +1441,13 @@ impl<E: Engine> Sha256Gadget<E> {
 
         // now we have all the components: 
         // S7 = full_sparse_rot7, S18 = full_sparse_rot18, R3 = full_sparse_shift3
+        println!("end pf sigma");
         let t = Num::Allocated(full_sparse_rot7.add_two(cs, full_sparse_rot18, full_sparse_shift_3)?);      
+        println!("before norm");
         let (r, d_next_flag) = self.normalize(
             cs, &t, 
             &self.sha256_maj_sheduler_normalization_table,
-            false,
+            true,
             maj_and_sheduler_xor_ff_normalizer, 
             SHA256_MAJORITY_SHEDULER_BASE as usize, 
             self.maj_and_sheduler_num_of_chunks,
@@ -1558,7 +1571,7 @@ impl<E: Engine> Sha256Gadget<E> {
         let (r, d_next_flag) = self.normalize(
             cs, &t, 
             &self.sha256_maj_sheduler_normalization_table,
-            false,
+            true,
             maj_and_sheduler_xor_ff_normalizer, 
             SHA256_MAJORITY_SHEDULER_BASE as usize, 
             self.maj_and_sheduler_num_of_chunks,
@@ -1589,10 +1602,13 @@ impl<E: Engine> Sha256Gadget<E> {
 
         for j in 16..64 {
             let (tmp1, _) = self.sigma_1(cs, &mut res[j - 2], true)?;
+            println!("1");
             let mut sum = self.tracked_positioned_sum3_mod32(cs, res[j-7].clone(), res[j-16].clone(), tmp1.into())?;
-            
+            println!("2");
             let (tmp2, _) = self.sigma_0(cs, &mut res[j - 15], true)?;
+            println!("3");
             sum = self.tracked_positioned_sum2_mod32(cs, sum, tmp2.into())?;
+            println!("4");
 
             res.push(sum);
         }

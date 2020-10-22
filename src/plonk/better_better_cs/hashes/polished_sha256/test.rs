@@ -185,7 +185,7 @@ mod test {
     }
 
     #[test]
-    fn polished_sha256_gadget_const_propagation_test() 
+    fn polished_sha256_gadgetsss_const_propagation_test() 
     {
         const NUM_OF_BLOCKS: usize = 3;
         let mut rng = rand::thread_rng();
