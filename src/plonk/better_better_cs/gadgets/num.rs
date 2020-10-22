@@ -690,7 +690,6 @@ impl<E: Engine> AllocatedNum<E> {
         minus_one.negate();
 
         for var in vars.iter() {
-            //println!("next iter");
             if current_vars.len() < 4 {
                 coeffs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
@@ -753,13 +752,11 @@ impl<E: Engine> AllocatedNum<E> {
         }
 
         let use_d_next = if current_vars.len() == 4 {
-            println!("garbage");
             AllocatedNum::garbage(cs, &coeffs[..], &current_vars[..], &total)?;
             true
         }
         else {
             // pad with dummy variables
-            println!("this way");
             for _i in current_vars.len()..3 {
                 current_vars.push(AllocatedNum::alloc_zero(cs)?);
                 coeffs.push(E::Fr::zero());

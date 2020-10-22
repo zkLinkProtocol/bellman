@@ -58,8 +58,6 @@ mod test {
                 }
             }
 
-            println!("init step: {}", cs.get_current_step_number());
-
             let sha256_gadget = Sha256Gadget::new(
                 cs, self.ch_base_num_of_chunks, self.maj_sheduler_base_num_of_chunks, false, false, 0, "",
             )?;
@@ -110,7 +108,7 @@ mod test {
         let mut input_fr_arr = Vec::with_capacity(16);
         let mut output_fr_arr = [Fr::zero(); 8];
 
-        for (i, block) in input.chunks(4).enumerate() {
+        for block in input.chunks(4) {
             input_fr_arr.push(slice_to_ff::<Fr>(block));
         }
 
@@ -162,7 +160,7 @@ mod test {
         let mut input_fr_arr = Vec::with_capacity(16 * NUM_OF_BLOCKS);
         let mut output_fr_arr = [Fr::zero(); 8];
 
-        for (i, block) in input.chunks(4).enumerate() {
+        for block in input.chunks(4) {
             input_fr_arr.push(slice_to_ff::<Fr>(block));
         }
 
@@ -187,7 +185,7 @@ mod test {
     }
 
     #[test]
-    fn polished_sha256_gadgetsss_const_propagation_test() 
+    fn polished_sha256_gadget_const_propagation_test() 
     {
         const NUM_OF_BLOCKS: usize = 3;
         let mut rng = rand::thread_rng();
@@ -214,7 +212,7 @@ mod test {
         let mut input_fr_arr = Vec::with_capacity(16 * NUM_OF_BLOCKS);
         let mut output_fr_arr = [Fr::zero(); 8];
 
-        for (i, block) in input.chunks(4).enumerate() {
+        for block in input.chunks(4) {
             input_fr_arr.push(slice_to_ff::<Fr>(block));
         }
 
