@@ -1162,6 +1162,7 @@ impl<E: Engine> Sha256Gadget<E> {
         base: usize, 
         num_chunks: usize,
         use_d_next: bool,
+        fuck: bool,
     ) -> Result<(Num<E>, bool)>
     {
         if let Num::Constant(x) = input {
@@ -1221,6 +1222,9 @@ impl<E: Engine> Sha256Gadget<E> {
         let output = AllocatedNum::alloc(cs, || x.get_value().map(| fr | converter_func(fr)).grab())?;
         let output_base = u64_to_ff(output_slice_modulus as u64);
 
+        // if fuck {
+        //     return Ok((Num::Allocated(output), false))    
+        // }
         
         println!("x: {}, output: {}", x.get_value().unwrap(), output.get_value().unwrap());
         // TODO: use negative dialation for b_prev!
@@ -1241,7 +1245,9 @@ impl<E: Engine> Sha256Gadget<E> {
         Ok((Num::Allocated(output), d_next_actually_used))
     }
 
-    fn choose<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>) -> Result<NumWithTracker<E>>
+    fn choose<CS>(&self, cs: &mut CS, e: SparseChValue<E>, f: SparseChValue<E>, g: SparseChValue<E>,
+        fuck: bool,
+    ) -> Result<NumWithTracker<E>>
     where CS: ConstraintSystem<E>
     {
         let mut two = E::Fr::one();
@@ -1252,6 +1258,7 @@ impl<E: Engine> Sha256Gadget<E> {
         let t0 = Num::lc(cs, &[E::Fr::one(), two, three], &[e.sparse, f.sparse, g.sparse])?; 
         let t1 = Num::lc(cs, &[E::Fr::one(), E::Fr::one(), E::Fr::one()], &[e.rot6, e.rot11, e.rot25])?;
 
+        
         println!("before normalize");
 
         let (r0, _) = self.normalize(
@@ -1262,9 +1269,10 @@ impl<E: Engine> Sha256Gadget<E> {
             SHA256_CHOOSE_BASE as usize, 
             self.ch_num_of_chunks,
             false,
+            false,
         )?;
-        
-        println!("before second normalize");
+
+       
         
         let (r1, _) = self.normalize(
             cs, &t1, 
@@ -1274,7 +1282,13 @@ impl<E: Engine> Sha256Gadget<E> {
             SHA256_CHOOSE_BASE as usize, 
             self.ch_num_of_chunks,
             true,
+            fuck,
         )?;
+
+        
+        
+
+        println!("before second normalize");
 
         let r0 : NumWithTracker<E> = r0.into();
         let r1 : NumWithTracker<E> = r1.into();
@@ -1295,6 +1309,7 @@ impl<E: Engine> Sha256Gadget<E> {
             SHA256_MAJORITY_SHEDULER_BASE as usize, 
             self.maj_and_sheduler_num_of_chunks,
             false,
+            false,
         )?;
 
         let (r1, _) = self.normalize(
@@ -1305,6 +1320,7 @@ impl<E: Engine> Sha256Gadget<E> {
             SHA256_MAJORITY_SHEDULER_BASE as usize, 
             self.maj_and_sheduler_num_of_chunks,
             true,
+            false,
         )?;
 
         let r0 : NumWithTracker<E> = r0.into();
@@ -1458,6 +1474,7 @@ impl<E: Engine> Sha256Gadget<E> {
             SHA256_MAJORITY_SHEDULER_BASE as usize, 
             self.maj_and_sheduler_num_of_chunks,
             use_d_next,
+            false,
         )?;
 
         return Ok((r, d_next_flag));
@@ -1582,6 +1599,7 @@ impl<E: Engine> Sha256Gadget<E> {
             SHA256_MAJORITY_SHEDULER_BASE as usize, 
             self.maj_and_sheduler_num_of_chunks,
             use_d_next,
+            false,
         )?;
         
         return Ok((r, d_next_flag));
@@ -1645,12 +1663,10 @@ impl<E: Engine> Sha256Gadget<E> {
         let mut h = self.convert_into_sparse_chooser_form(cs, regs.h.clone())?;
 
         for i in 0..64 {
-            if i== 1 {
-                return Ok(regs);
-            }
+            
             
             println!("a");
-            let ch = self.choose(cs, e.clone(), f.clone(), g.clone())?;
+            let ch = self.choose(cs, e.clone(), f.clone(), g.clone(), false)?;
             
             println!("b");
             let maj = self.majority(cs, a.clone(), b.clone(), c.clone())?;
@@ -1676,6 +1692,8 @@ impl<E: Engine> Sha256Gadget<E> {
             println!("zz");
             a =self.convert_into_sparse_majority_form(cs, temp3)?;
             println!("zzz");
+
+            
         }
 
         let regs = Sha256Registers {
@@ -1714,28 +1732,26 @@ impl<E: Engine> Sha256Gadget<E> {
 
 
         for (i, block) in message.chunks(16).enumerate() {
-            if i == 0 {
                 let expanded_block = self.message_expansion(cs, block)?;
                 println!("here");
                 regs = self.sha256_inner_block(cs, regs, &expanded_block[..], &self.round_constants)?;
-            }
         }
 
-        // let res = [
-        //     self.extact_32_bits_from_tracked_num(cs, regs.a)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.b)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.c)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.d)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.e)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.f)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.g)?,
-        //     self.extact_32_bits_from_tracked_num(cs, regs.h)?,
-        // ];
-
         let res = [
-            Num::default(), Num::default(), Num::default(), Num::default(), Num::default(), Num::default(), Num::default(),
-            Num::default(),
+            self.extact_32_bits_from_tracked_num(cs, regs.a)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.b)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.c)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.d)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.e)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.f)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.g)?,
+            self.extact_32_bits_from_tracked_num(cs, regs.h)?,
         ];
+
+        // let res = [
+        //     Num::default(), Num::default(), Num::default(), Num::default(), Num::default(), Num::default(), Num::default(),
+        //     Num::default(),
+        // ];
 
         Ok(res)
     }

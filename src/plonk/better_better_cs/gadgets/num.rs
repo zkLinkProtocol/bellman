@@ -656,7 +656,7 @@ impl<E: Engine> AllocatedNum<E> {
         let (mut local_vars, mut local_coeffs) = CS::MainGate::format_term(gate_term, dummy.variable)?;
         
         let range_of_linear_terms = CS::MainGate::range_of_linear_terms();
-        for (i, idx) in range_of_linear_terms.enumerate() {
+        for (i, idx) in range_of_linear_terms.rev().enumerate() {
             local_coeffs[idx] = coefs[i];
         }
         
@@ -665,7 +665,7 @@ impl<E: Engine> AllocatedNum<E> {
         minus_one.negate();
         local_coeffs[next_row_coef_idx] = minus_one;
         
-        local_vars = vec![vars[0].get_variable(), vars[1].get_variable(), vars[2].get_variable(), vars[3].get_variable()];
+        local_vars = vec![vars[3].get_variable(), vars[2].get_variable(), vars[1].get_variable(), vars[0].get_variable()];
         let mg = CS::MainGate::default();
 
         cs.new_single_gate_for_trace_step(
@@ -736,7 +736,7 @@ impl<E: Engine> AllocatedNum<E> {
         let mut minus_one = E::Fr::one();
         minus_one.negate();
        
-        for (i, var) in vars.iter().enumerate() {
+        for var in vars.iter() {
             if current_vars.len() < 4 {
                 coeffs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
