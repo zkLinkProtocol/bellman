@@ -878,7 +878,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             total_powers_of_alpha_for_gates += g.num_quotient_terms();
         }
 
-        println!("Have {} terms from {} gates", total_powers_of_alpha_for_gates, self.sorted_gates.len());
+        // println!("Have {} terms from {} gates", total_powers_of_alpha_for_gates, self.sorted_gates.len());
 
         let mut current_alpha = E::Fr::one();
         let mut powers_of_alpha_for_gates = Vec::with_capacity(total_powers_of_alpha_for_gates);

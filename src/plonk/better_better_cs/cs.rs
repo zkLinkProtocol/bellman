@@ -54,7 +54,6 @@ pub trait Circuit<E: Engine> {
         Ok(
             vec![Self::MainGate::default().into_internal()]
         )
-        // unimplemented!("Circuits must declare used gates")
     }
 }
 
@@ -4601,11 +4600,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 return Err(SynthesisError::Unsatisfiable);
             }
         }
-
-
-        
-        // let mut copy_permutation_polynomials_queries = vec![];
-        // let mut copy_permutation_value_at_z_omega = E::Fr::zero();
 
         Ok(())
     }

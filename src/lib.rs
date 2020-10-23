@@ -1,8 +1,5 @@
-// #![feature(core_intrinsics)]
+#![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros ) ]
 
-#![allow(unused_imports)]
-#![allow(unused_macros)]
-#![allow(dead_code)]
 #[macro_use]
 
 extern crate cfg_if;
