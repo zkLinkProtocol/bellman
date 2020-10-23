@@ -1,4 +1,4 @@
-#![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments ) ]
+#![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments, unreachable_patterns ) ]
 
 #[macro_use]
 
@@ -54,7 +54,7 @@ cfg_if! {
 
         mod multicore;
         pub mod worker {
-            pub use crate::multicore::*;
+            pub use crate::worker::*;
         }
     } else {
         mod singlecore;

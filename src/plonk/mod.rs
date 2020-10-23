@@ -25,7 +25,7 @@ pub use self::better_cs::keys::{SetupPolynomials, SetupPolynomialsPrecomputation
 
 use crate::pairing::Engine;
 use crate::{SynthesisError, Circuit};
-use crate::multicore::Worker;
+use crate::worker::Worker;
 use crate::kate_commitment::*;
 use self::better_cs::cs::{PlonkCsWidth4WithNextStepParams, PlonkConstraintSystemParams};
 use crate::plonk::commitments::transcript::*;

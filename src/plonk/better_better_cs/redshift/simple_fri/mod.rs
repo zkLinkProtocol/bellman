@@ -4,7 +4,7 @@
 // pub mod precomputation;
 
 use crate::SynthesisError;
-use crate::multicore::Worker;
+use crate::worker::Worker;
 use crate::pairing::ff::{Field, PrimeField};
 use crate::pairing::Engine;
 use crate::plonk::commitments::transcript::*;

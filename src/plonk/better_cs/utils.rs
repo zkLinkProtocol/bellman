@@ -1,6 +1,6 @@
 use crate::ff::PrimeField;
 use crate::pairing::{Engine, CurveAffine};
-use crate::multicore::Worker;
+use crate::worker::Worker;
 use crate::SynthesisError;
 use crate::plonk::domains::Domain;
 use crate::plonk::polynomials::*;

@@ -1,6 +1,6 @@
 use crate::pairing::{Engine};
 use crate::pairing::ff::{PrimeField, PrimeFieldRepr};
-use crate::multicore::Worker;
+use crate::worker::Worker;
 use crate::plonk::commitments::transparent::utils::log2_floor;
 use super::*;
 use super::tree_hash::*;

@@ -2354,7 +2354,7 @@ fn transpile_xor_using_fma_adaptor() {
     use super::cs::PlonkCsWidth4WithNextStepParams;
     use super::generator::*;
     use super::prover::*;
-    use crate::multicore::Worker;
+    use crate::worker::Worker;
     use super::verifier::*;
     use crate::kate_commitment::*;
     use crate::plonk::commitments::transcript::*;

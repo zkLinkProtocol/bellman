@@ -1,7 +1,7 @@
 use crate::pairing::ff::PrimeField;
 use crate::plonk::domains::*;
 use crate::SynthesisError;
-use crate::multicore::*;
+use crate::worker::*;
 use crate::plonk::fft::*;
 use crate::plonk::fft::with_precomputation;
 use crate::plonk::fft::with_precomputation::FftPrecomputations;
