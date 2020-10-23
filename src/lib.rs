@@ -1,4 +1,4 @@
-#![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros ) ]
+#![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments ) ]
 
 #[macro_use]
 
