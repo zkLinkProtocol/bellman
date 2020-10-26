@@ -15,13 +15,12 @@ crate-type = ["cdylib", "lib", "staticlib"]
 [dependencies]
 rand = "0.4"
 bit-vec = "0.6"
-cfg-if = "0.1"
+cfg-if = "1.*"
 
-# pairing = {package = "pairing_ce", path = "../pairing" }
 pairing = {package = "pairing_ce", version = "0.24.*" }
 byteorder = "1"
 
-futures= {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
+futures = {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
 num_cpus = "1"
 crossbeam = {version = "0.7", optional = true}
 prefetch = {version = "0.2", optional = true}
@@ -43,7 +42,7 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 hex = "*"
 
 [features]
-default = ["plonk"]
+default = []
 multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []

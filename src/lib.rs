@@ -54,12 +54,12 @@ cfg_if! {
 
         mod multicore;
         pub mod worker {
-            pub use crate::worker::*;
+            pub use super::multicore::*;
         }
     } else {
         mod singlecore;
         pub mod worker {
-            pub use crate::singlecore::*;
+            pub use super::singlecore::*;
         }
     }
 }
