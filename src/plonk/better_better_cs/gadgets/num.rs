@@ -28,6 +28,9 @@ use super::assignment::{
 
 use std::ops::{Add, Sub};
 
+pub const STATE_WIDTH : usize = 4;
+
+
 pub struct AllocatedNum<E: Engine> {
     value: Option<E::Fr>,
     variable: Variable
@@ -341,7 +344,7 @@ impl<E: Engine> AllocatedNum<E> {
     ) -> Result<(), SynthesisError>
     {
         assert_eq!(coefs.len(), vars.len());
-        assert_eq!(coefs.len(), 4);
+        assert_eq!(coefs.len(), STATE_WIDTH);
         
         // check if equality indeed holds
         // TODO: do it only in debug mde!
@@ -425,11 +428,12 @@ impl<E: Engine> AllocatedNum<E> {
         vars: &[Self],
     ) -> Result<Self, SynthesisError>
     {
-        let res = AllocatedNum::alloc_from_lc(cs, coefs, vars, cnst)?;
+        let zero = E::Fr::zero();
+        let res = AllocatedNum::alloc_from_lc(cs, coefs, vars, &zero)?;
         let mut minus_one = E::Fr::one();
         minus_one.negate();
 
-        AllocatedNum::general_lc_gate(cs, coefs, vars, cnst, &minus_one, &res)?;
+        AllocatedNum::general_lc_gate(cs, coefs, vars, &zero, &minus_one, &res)?;
         Ok(res)
     }
 
@@ -453,7 +457,7 @@ impl<E: Engine> AllocatedNum<E> {
     ) -> Result<(), SynthesisError>
     {
         assert_eq!(coefs.len(), vars.len());
-        assert_eq!(coefs.len(), 3);
+        assert_eq!(coefs.len(), STATE_WIDTH-1);
 
         let mut minus_one = E::Fr::one();
         minus_one.negate();
@@ -464,10 +468,11 @@ impl<E: Engine> AllocatedNum<E> {
         
         let mut local_vars = vec![];
         local_vars.extend_from_slice(vars);
-        local_vars.push(*total);
+        local_vars.push(total.clone());
 
+        let dummy = AllocatedNum::alloc_zero(cs)?;
         AllocatedNum::general_lc_gate(
-            cs, &local_coefs[..], &local_vars[..], &E::Fr::zero(), &E::Fr::zero(), &AllocatedNum::alloc_zero(cs)?
+            cs, &local_coefs[..], &local_vars[..], &E::Fr::zero(), &E::Fr::zero(), &dummy,
         )
     }
 
@@ -479,7 +484,7 @@ impl<E: Engine> AllocatedNum<E> {
     ) -> Result<Self, SynthesisError>
     {
         assert_eq!(coefs.len(), vars.len());
-        assert_eq!(coefs.len(), 3);
+        assert_eq!(coefs.len(), STATE_WIDTH-1);
 
         let res = AllocatedNum::alloc_from_lc(cs, coefs, vars, cnst)?;
         let mut minus_one = E::Fr::one();
@@ -491,10 +496,11 @@ impl<E: Engine> AllocatedNum<E> {
 
         let mut local_vars = vec![];
         local_vars.extend_from_slice(vars);
-        local_vars.push(res);
+        local_vars.push(res.clone());
 
+        let dummy = AllocatedNum::alloc_zero(cs)?;
         AllocatedNum::general_lc_gate(
-            cs, &local_coefs[..], &local_vars[..], &E::Fr::zero(), &E::Fr::zero(), &AllocatedNum::alloc_zero(cs)?
+            cs, &local_coefs[..], &local_vars[..], &E::Fr::zero(), &E::Fr::zero(), &dummy
         )?;
 
         Ok(res)
@@ -513,92 +519,65 @@ impl<E: Engine> AllocatedNum<E> {
     ) -> Result<bool, SynthesisError>
     {
         let mut acc_fr = E::Fr::one();
-        let mut loc_coefs = Vec::with_capacity(4);
-        let mut loc_vars = Vec::with_capacity(4);
+        let mut loc_coefs = Vec::with_capacity(STATE_WIDTH);
+        let mut loc_vars = Vec::with_capacity(STATE_WIDTH);
         
         let mut minus_one = E::Fr::one();
         minus_one.negate();
+        let dummy = AllocatedNum::alloc_zero(cs)?;
 
         for var in vars.iter() {
-            if loc_vars.len() < 4 {
+            if loc_vars.len() < STATE_WIDTH {
                 loc_coefs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
                 loc_vars.push(var.clone());
             }
             else {
                 // we have filled in the whole vector!
-                let temp = AllocatedNum::quartic_lc_with_cnst(cs: &mut CS, coefs: &[E::Fr], vars: &[Self], cnst: &E::Fr)
-                .push(minus_one.clone());
-                let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
-                coeffs = vec![E::Fr::one(), acc_fr.clone()];
-                current_vars = vec![temp, var.clone()];
+                loc_coefs.reverse();
+                loc_vars.reverse();
+
+                let temp = AllocatedNum::quartic_lc(cs, &loc_coefs[..], &loc_vars[..])?;
+                loc_coefs = vec![E::Fr::one(), acc_fr.clone()];
+                loc_vars = vec![temp, var.clone()];
                 
                 acc_fr.mul_assign(&base);
             }
         }
 
-        if current_vars.len() == 4 {
-            // we have filled in the whole vector!
-            coeffs.push(minus_one.clone());
-            let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
-            coeffs = vec![E::Fr::one()];
-            current_vars = vec![temp];
-        }
+        if loc_vars.len() == STATE_WIDTH {
+            loc_coefs.reverse();
+            loc_vars.reverse();
+            
+            match use_d_next {
+                true => {
+                    AllocatedNum::quartic_lc_eq(cs, &loc_coefs[..], &loc_vars[..], &total);
+                    return Ok(true)
+                },
+                false => {
+                    // we have filled in the whole vector again!
+                    let temp = AllocatedNum::quartic_lc(cs, &loc_coefs[..], &loc_vars[..])?;
+                    loc_coefs = vec![E::Fr::one()];
+                    loc_vars = vec![temp];
+                }
+            }
 
+        }
+        
         // pad with dummy variables
-        for _i in current_vars.len()..3 {
-            current_vars.push(AllocatedNum::alloc_zero(cs)?);
-            coeffs.push(E::Fr::zero());
+        for _i in loc_vars.len()..(STATE_WIDTH-1) {
+            loc_vars.push(dummy.clone());
+            loc_coefs.push(E::Fr::zero());
         }
 
-        AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &current_vars[..], &E::Fr::zero(), total)?;
-        Ok(())
+        loc_vars.push(total.clone());
+        loc_coefs.push(minus_one);
+        loc_coefs.reverse();
+        loc_vars.reverse();
+
+        AllocatedNum::general_lc_gate(cs, &loc_coefs[..], &loc_vars[..], &E::Fr::zero(), &E::Fr::zero(), &dummy)?;
+        Ok(false)
     }
-
-    pub fn long_weighted_sum_eq_with_d_next<CS: ConstraintSystem<E>>(
-        cs: &mut CS, vars: &[Self], base: &E::Fr, total: &Self
-    ) -> Result<bool, SynthesisError>
-    {
-        let mut acc_fr = E::Fr::one();
-        let mut coeffs = Vec::with_capacity(5);
-        let mut current_vars = Vec::with_capacity(4);
-
-        let mut minus_one = E::Fr::one();
-        minus_one.negate();
-       
-        for var in vars.iter() {
-            if current_vars.len() < 4 {
-                coeffs.push(acc_fr.clone());
-                acc_fr.mul_assign(&base);
-                current_vars.push(var.clone());
-            }
-            else {
-                coeffs.push(minus_one.clone());
-                let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
-                coeffs = vec![E::Fr::one(), acc_fr.clone()];
-                current_vars = vec![temp, var.clone()];
-                
-                acc_fr.mul_assign(&base);
-            }
-        }
-
-        let use_d_next = if current_vars.len() == 4 {
-            AllocatedNum::garbage(cs, &coeffs[..], &current_vars[..], &total)?;
-            true
-        }
-        else {
-            // pad with dummy variables
-            for _i in current_vars.len()..3 {
-                current_vars.push(AllocatedNum::alloc_zero(cs)?);
-                coeffs.push(E::Fr::zero());
-            }
-
-            AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &current_vars[..], &E::Fr::zero(), total)?;
-            false
-        };
-
-        Ok(use_d_next)
-    }   
 }
 
 
@@ -839,14 +818,14 @@ impl<E: Engine> Num<E> {
 
         // okay, from now one we may be sure that we have at least one allocated term
         let mut constant_term = E::Fr::zero();
-        let mut vars = Vec::with_capacity(4);
-        let mut coeffs = Vec::with_capacity(5);
-        let mut res_var = AllocatedNum::alloc_zero(cs)?;
+        let mut vars = Vec::with_capacity(STATE_WIDTH);
+        let mut coeffs = Vec::with_capacity(STATE_WIDTH);
 
         // Note: the whole thing may be a little more efficient with the use of custom gates
         // exploiting (d_next)
         let mut minus_one = E::Fr::one();
         minus_one.negate();
+        let dummy = AllocatedNum::alloc_zero(cs)?;
 
         for (x, coef) in inputs.iter().zip(input_coeffs.iter()) {
             match x {
@@ -856,35 +835,36 @@ impl<E: Engine> Num<E> {
                     constant_term.add_assign(&temp);
                 },
                 Num::Allocated(x) => {
-                    if vars.len() < 4 
+                    if vars.len() < STATE_WIDTH
                     {
                         vars.push(x.clone());
                         coeffs.push(coef.clone());
                     }
                     else {
-                        coeffs.push(minus_one.clone());
-                        res_var = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
+                        coeffs.reverse();
+                        vars.reverse();
+                        let tmp = AllocatedNum::quartic_lc_with_cnst(cs, &coeffs[..], &vars[..], &constant_term)?;
 
                         constant_term = E::Fr::zero();
-                        vars = vec![res_var, x.clone()];
+                        vars = vec![tmp, x.clone()];
                         coeffs = vec![E::Fr::one(), coef.clone()];
                     }
                 }
             }
         }
 
-        if vars.len() == 4 {
-            //println!("OPTIMIZE2");
-            coeffs.push(minus_one.clone());
-            res_var = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &vars[..], &constant_term)?;
+        if vars.len() == STATE_WIDTH {
+            coeffs.reverse();
+            vars.reverse();
+            let tmp = AllocatedNum::quartic_lc_with_cnst(cs, &coeffs[..], &vars[..], &constant_term)?;
 
             constant_term = E::Fr::zero();
-            vars = vec![res_var];
+            vars = vec![tmp];
             coeffs = vec![E::Fr::one()];
         }
 
         // pad with dummy variables
-        for _i in vars.len()..3 {
+        for _i in vars.len()..(STATE_WIDTH-1) {
             vars.push(AllocatedNum::alloc_zero(cs)?);
             coeffs.push(E::Fr::zero());
         }
@@ -898,8 +878,13 @@ impl<E: Engine> Num<E> {
             }
             Ok(cur)
         })?;
+
+        vars.push(res_var.clone());
+        coeffs.push(minus_one);
+        coeffs.reverse();
+        vars.reverse();
         
-        AllocatedNum::ternary_lc_with_const_eq_with_positions(cs, &coeffs[..], &vars[..], &constant_term, &res_var)?;
+        AllocatedNum::general_lc_gate(cs, &coeffs[..], &vars[..], &constant_term, &E::Fr::zero(), &dummy)?;
         Ok(Num::Allocated(res_var))
     }
 

@@ -514,9 +514,11 @@ impl<E: Engine> Sha256Gadget<E> {
         // definitely, num module should be refactored!
         AllocatedNum::general_lc_gate(
             cs,
-            &[minus_one, one.clone(), one.clone(), one, zero],
-            &[a_var.clone(), b_var, c_var, d_var, dummy],
+            &[minus_one, one.clone(), one.clone(), one],
+            &[a_var.clone(), b_var, c_var, d_var],
             &cnst,
+            &zero,
+            &dummy,
         )?;
 
         let res = NumWithTracker {
