@@ -601,7 +601,7 @@ impl<E: Engine, B: Binop> LookupTableInternal<E> for TwoKeysOneValueBinopTable<E
 }
 
 
-fn table_id_from_string<F: PrimeField>(
+pub fn table_id_from_string<F: PrimeField>(
     s: &str
 ) -> F {
     let mut h = tiny_keccak::keccak256(s.as_bytes());
