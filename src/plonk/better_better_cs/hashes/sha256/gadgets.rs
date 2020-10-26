@@ -1942,7 +1942,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                 // TODO: use negative dialation for A!
                 //println!("OPTIMIZE");
                 let input_base = Self::u64_to_ff(input_slice_modulus as u64);
-                AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x)?;
+                AllocatedNum::long_weighted_sum_eq(cs, &input_slices[..], &input_base, x, false)?;
                 
                 return Ok(Num::Allocated(output_acc));
             }
@@ -2381,7 +2381,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
                             let dummy = AllocatedNum::alloc_zero(cs)?;
 
                             let y_coef = Self::u64_to_ff(1 << 1);
-                            let tmp = AllocatedNum::ternary_lc_with_const(
+                            let tmp = AllocatedNum::ternary_lc_with_cnst(
                                 cs, 
                                 &[E::Fr::one(), y_coef, E::Fr::zero()],
                                 &[hb_normal, y_normal, dummy.clone()],

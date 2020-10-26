@@ -663,12 +663,12 @@ impl<E: Engine> KeccakGadget<E> {
                 // we have filled in the whole vector!
                 if !is_last {
                     let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), minus_one.clone()];
-                    let temp = AllocatedNum::quartic_lc(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+                    let temp = AllocatedNum::quartic_lc_with_cnst(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
                     gate_vars = vec![temp, elem.clone()];
                 }
                 else {
                     let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), one.clone()];
-                    AllocatedNum::quartic_lc(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+                    AllocatedNum::quartic_lc_with_cnst(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
                     res = Some(elem.clone());
                     gate_vars = vec![];
                 }
@@ -683,7 +683,7 @@ impl<E: Engine> KeccakGadget<E> {
             }
             
             let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), E::Fr::zero()];
-            AllocatedNum::quartic_lc(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+            AllocatedNum::quartic_lc_with_cnst(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
         }
 
         Ok(res)

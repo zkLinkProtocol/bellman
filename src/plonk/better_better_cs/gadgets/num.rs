@@ -323,8 +323,9 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(())
     }
 
-    // given vector of coefs: [c0, c1, c2, c3, c4],
-    // vector of vars: [var0, var1, var2, var3, var4],
+    // given vector of coefs: [c0, c1, c2, c3],
+    // vector of vars: [var0, var1, var2, var3],
+    // next row var and coef: c4 and var4
     // and additional constant: cnst
     // constrcut the gate asserting that: 
     // c0 * var0 + c1 * var1 + c2 * var3 + c4 * var4 + cnst = 0
@@ -335,6 +336,8 @@ impl<E: Engine> AllocatedNum<E> {
         coefs: &[E::Fr],
         vars: &[Self],
         cnst: &E::Fr,
+        next_row_coef: &E::Fr,
+        next_row_var: &Self,
     ) -> Result<(), SynthesisError>
     {
         assert_eq!(coefs.len(), vars.len());
@@ -342,7 +345,7 @@ impl<E: Engine> AllocatedNum<E> {
         
         // check if equality indeed holds
         // TODO: do it only in debug mde!
-        match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value(), vars[3].get_value(), vars[4].get_value()) {
+        match (vars[0].get_value(), vars[1].get_value(), vars[2].get_value(), vars[3].get_value(), next_row_var.get_value()) {
             (Some(val0), Some(val1), Some(val2), Some(val3), Some(val4)) => {
                 let mut running_sum = val0;
                 running_sum.mul_assign(&coefs[0]);
@@ -360,7 +363,7 @@ impl<E: Engine> AllocatedNum<E> {
                 running_sum.add_assign(&tmp);
 
                 let mut tmp = val4;
-                tmp.mul_assign(&coefs[4]);
+                tmp.mul_assign(&next_row_coef);
                 running_sum.add_assign(&tmp);
 
                 running_sum.add_assign(&cnst);
@@ -381,7 +384,7 @@ impl<E: Engine> AllocatedNum<E> {
         local_coeffs[cnst_index] = *cnst;
 
         let next_row_term_idx = CS::MainGate::range_of_next_step_linear_terms().last().unwrap();
-        local_coeffs[next_row_term_idx] = coefs.last().unwrap();
+        local_coeffs[next_row_term_idx] = next_row_coef.clone();
 
         let mg = CS::MainGate::default();
         local_vars = vec![vars[0].get_variable(), vars[1].get_variable(), vars[2].get_variable(), vars[3].get_variable()];
@@ -401,14 +404,45 @@ impl<E: Engine> AllocatedNum<E> {
     // and additional constant: cnst
     // allocate new variable res equal to c0 * var0 + c1 * var1 + c2 * var2 + c3 * var3
     // assuming res is placed in d register of the next row
-    pub fn quartic_lc<CS: ConstraintSystem<E>>(
+    pub fn quartic_lc_with_cnst<CS: ConstraintSystem<E>>(
         cs: &mut CS,
         coefs: &[E::Fr],
         vars: &[Self],
         cnst: &E::Fr,
     ) -> Result<Self, SynthesisError>
     {
-        AllocatedNum::alloc_zero(cs)
+        let res = AllocatedNum::alloc_from_lc(cs, coefs, vars, cnst)?;
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        AllocatedNum::general_lc_gate(cs, coefs, vars, cnst, &minus_one, &res)?;
+        Ok(res)
+    }
+
+    pub fn quartic_lc<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+    ) -> Result<Self, SynthesisError>
+    {
+        let res = AllocatedNum::alloc_from_lc(cs, coefs, vars, cnst)?;
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        AllocatedNum::general_lc_gate(cs, coefs, vars, cnst, &minus_one, &res)?;
+        Ok(res)
+    }
+
+    pub fn quartic_lc_eq<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+        total: &Self,
+    ) -> Result<(), SynthesisError>
+    {
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+        AllocatedNum::general_lc_gate(cs, coefs, vars, &E::Fr::zero(), &minus_one, &total)
     }
 
     pub fn ternary_lc_eq<CS: ConstraintSystem<E>>(
@@ -418,7 +452,52 @@ impl<E: Engine> AllocatedNum<E> {
         total: &Self,
     ) -> Result<(), SynthesisError>
     {
-        Ok(())
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), 3);
+
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        let mut local_coefs = vec![];
+        local_coefs.extend_from_slice(coefs);
+        local_coefs.push(minus_one);
+        
+        let mut local_vars = vec![];
+        local_vars.extend_from_slice(vars);
+        local_vars.push(*total);
+
+        AllocatedNum::general_lc_gate(
+            cs, &local_coefs[..], &local_vars[..], &E::Fr::zero(), &E::Fr::zero(), &AllocatedNum::alloc_zero(cs)?
+        )
+    }
+
+    pub fn ternary_lc_with_cnst<CS: ConstraintSystem<E>>(
+        cs: &mut CS,
+        coefs: &[E::Fr],
+        vars: &[Self],
+        cnst: &E::Fr,
+    ) -> Result<Self, SynthesisError>
+    {
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), 3);
+
+        let res = AllocatedNum::alloc_from_lc(cs, coefs, vars, cnst)?;
+        let mut minus_one = E::Fr::one();
+        minus_one.negate();
+
+        let mut local_coefs = vec![];
+        local_coefs.extend_from_slice(coefs);
+        local_coefs.push(minus_one);
+
+        let mut local_vars = vec![];
+        local_vars.extend_from_slice(vars);
+        local_vars.push(res);
+
+        AllocatedNum::general_lc_gate(
+            cs, &local_coefs[..], &local_vars[..], &E::Fr::zero(), &E::Fr::zero(), &AllocatedNum::alloc_zero(cs)?
+        )?;
+
+        Ok(res)
     }
 
     // for given array of slices : [x0, x1, x2, ..., xn] of arbitrary length, base n and total accumulated x
@@ -434,20 +513,22 @@ impl<E: Engine> AllocatedNum<E> {
     ) -> Result<bool, SynthesisError>
     {
         let mut acc_fr = E::Fr::one();
-        let mut coeffs = Vec::with_capacity(5);
-        let mut current_vars = Vec::with_capacity(4);
+        let mut loc_coefs = Vec::with_capacity(4);
+        let mut loc_vars = Vec::with_capacity(4);
+        
         let mut minus_one = E::Fr::one();
         minus_one.negate();
 
         for var in vars.iter() {
-            if current_vars.len() < 4 {
-                coeffs.push(acc_fr.clone());
+            if loc_vars.len() < 4 {
+                loc_coefs.push(acc_fr.clone());
                 acc_fr.mul_assign(&base);
-                current_vars.push(var.clone());
+                loc_vars.push(var.clone());
             }
             else {
                 // we have filled in the whole vector!
-                coeffs.push(minus_one.clone());
+                let temp = AllocatedNum::quartic_lc_with_cnst(cs: &mut CS, coefs: &[E::Fr], vars: &[Self], cnst: &E::Fr)
+                .push(minus_one.clone());
                 let temp = AllocatedNum::quartic_lc_with_const(cs, &coeffs[..], &current_vars[..], &E::Fr::zero())?;
                 coeffs = vec![E::Fr::one(), acc_fr.clone()];
                 current_vars = vec![temp, var.clone()];
