@@ -854,7 +854,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         range_check(&of, 0); 
 
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
-        AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted)?;
+        AllocatedNum::long_weighted_sum_eq(cs, &chunks[..], &chunk_size, &extracted, false)?;
 
         // check that extracted + of * 32 = input
         let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);
@@ -928,7 +928,7 @@ impl<E: Engine> Sha256GadgetParams<E> {
         range_check(&of, false);
                       
         let chunk_size = Self::u64_to_ff(1 << chunk_bitlen);
-        AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted)?;
+        AllocatedNum::long_weighted_sum_eq(cs, &[low, mid, high], &chunk_size, &extracted, false)?;
 
         // check that extracted + of * 32 = input
         let full_reg_size = Self::u64_to_ff(1 << SHA256_REG_WIDTH);

@@ -325,7 +325,7 @@ impl<E: Engine> NaiveBlake2sGadget<E> {
                             }
                         }
                     }
-                    AllocatedNum::long_weighted_sum_eq(cs, &temp_vars[..], &u64_to_ff(1 << 8), var)?;
+                    AllocatedNum::long_weighted_sum_eq(cs, &temp_vars[..], &u64_to_ff(1 << 8), var, false)?;
                 }
             }
         }

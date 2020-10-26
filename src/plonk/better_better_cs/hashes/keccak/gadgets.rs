@@ -595,7 +595,7 @@ impl<E: Engine> KeccakGadget<E> {
                             Ok(keccak_ff_second_converter(fr, KECCAK_FIRST_SPARSE_BASE))
                         })?;
 
-                        AllocatedNum::long_weighted_sum_eq(cs, &output1_slices[..], &output1_slice_modulus_fr, &output1_total)?;
+                        AllocatedNum::long_weighted_sum_eq(cs, &output1_slices[..], &output1_slice_modulus_fr, &output1_total, false)?;
                         new_state[(i, j)] = Num::Allocated(output1_total);
                     }
 
@@ -605,7 +605,7 @@ impl<E: Engine> KeccakGadget<E> {
                             Ok(keccak_ff_second_converter(fr, BINARY_BASE))
                         })?;
 
-                        AllocatedNum::long_weighted_sum_eq(cs, &output2_slices[..], &output2_slice_modulus_fr, &output2_total)?;
+                        AllocatedNum::long_weighted_sum_eq(cs, &output2_slices[..], &output2_slice_modulus_fr, &output2_total, false)?;
                         squeezed.push(Num::Allocated(output2_total));
                     }
                 }
@@ -663,12 +663,12 @@ impl<E: Engine> KeccakGadget<E> {
                 // we have filled in the whole vector!
                 if !is_last {
                     let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), minus_one.clone()];
-                    let temp = AllocatedNum::quartic_lc_with_const(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+                    let temp = AllocatedNum::quartic_lc(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
                     gate_vars = vec![temp, elem.clone()];
                 }
                 else {
                     let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), one.clone()];
-                    AllocatedNum::quartic_lc_with_const(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+                    AllocatedNum::quartic_lc(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
                     res = Some(elem.clone());
                     gate_vars = vec![];
                 }
@@ -683,7 +683,7 @@ impl<E: Engine> KeccakGadget<E> {
             }
             
             let gate_coefs = [one.clone(), one.clone(), one.clone(), one.clone(), E::Fr::zero()];
-            AllocatedNum::quartic_lc_with_const(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
+            AllocatedNum::quartic_lc(cs, &gate_coefs[..], &gate_vars[..], &cnst)?;
         }
 
         Ok(res)
@@ -904,7 +904,7 @@ impl<E: Engine> KeccakGadget<E> {
                         is_first_iter = false; 
                     }
 
-                    AllocatedNum::lc_eq(cs, &output_slices[..], &output_coefs[..], &output_total)?;
+                    //AllocatedNum::lc_eq(cs, &output_slices[..], &output_coefs[..], &output_total)?;
                     Num::Allocated(output_total)
                 },
             };
@@ -1041,7 +1041,7 @@ impl<E: Engine> KeccakGadget<E> {
                     Ok(general_ff_converter(fr, BINARY_BASE, output_base, |x| { x }))
                 })?;
 
-                AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_slice_modulus_fr, &output_total)?;
+                AllocatedNum::long_weighted_sum_eq(cs, &output_slices[..], &output_slice_modulus_fr, &output_total, false)?;
                 Num::Allocated(output_total)
             },
         };

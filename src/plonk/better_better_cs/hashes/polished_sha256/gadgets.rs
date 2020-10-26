@@ -451,6 +451,7 @@ impl<E: Engine> Sha256Gadget<E> {
         let mut minus_one = E::Fr::one();
         minus_one.negate();
         let one = E::Fr::one();
+        let zero = E::Fr::zero();
 
         let b_var = match &b.num {
             Num::Constant(fr) => {
@@ -511,10 +512,10 @@ impl<E: Engine> Sha256Gadget<E> {
         })?; 
 
         // definitely, num module should be refactored!
-        AllocatedNum::use_only_this(
+        AllocatedNum::general_lc_gate(
             cs,
-            &[minus_one, one.clone(), one.clone(), one],
-            &[a_var.clone(), b_var, c_var, d_var],
+            &[minus_one, one.clone(), one.clone(), one, zero],
+            &[a_var.clone(), b_var, c_var, d_var, dummy],
             &cnst,
         )?;
 
@@ -1220,14 +1221,7 @@ impl<E: Engine> Sha256Gadget<E> {
         let output_base = u64_to_ff(output_slice_modulus as u64);
 
         // TODO: use negative dialation for b_prev!
-        let d_next_actually_used = if use_d_next {
-            AllocatedNum::long_weighted_sum_eq_with_d_next(cs, &output_slices, &output_base, &output)?
-        }
-        else {
-            AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output)?;
-            false
-        };
-        
+        let d_next_actually_used = AllocatedNum::long_weighted_sum_eq(cs, &output_slices, &output_base, &output, use_d_next)?;        
         Ok((Num::Allocated(output), d_next_actually_used))
     }
 
