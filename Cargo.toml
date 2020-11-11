@@ -42,7 +42,7 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 hex = "*"
 
 [features]
-default = []
+default = ["multicore", "plonk"]
 multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []

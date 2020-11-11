@@ -1510,15 +1510,15 @@ pub(crate) mod test {
 
                 // println!("Dense unrolled multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
-                let subtime = Instant::now();
+                // let subtime = Instant::now();
 
-                let _ = multiexp::dense_multiexp_uniform::<E::G1Affine>(
-                    &subworker,
-                    &g,
-                    &scalars_repr
-                ).unwrap();
+                // let _ = multiexp::dense_multiexp_uniform::<E::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
 
-                println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                // println!("Dense uniform multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 // let subtime = Instant::now();
 
@@ -1530,15 +1530,15 @@ pub(crate) mod test {
 
                 // println!("Dense stack multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
-                let subtime = Instant::now();
+                // let subtime = Instant::now();
 
-                let _ = multiexp::map_reduce_multiexp::<E::G1Affine>(
-                    &subworker,
-                    &g,
-                    &scalars_repr
-                ).unwrap();
+                // let _ = multiexp::map_reduce_multiexp::<E::G1Affine>(
+                //     &subworker,
+                //     &g,
+                //     &scalars_repr
+                // ).unwrap();
 
-                println!("Map reduce multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
+                // println!("Map reduce multiexp of size {} taken {:?} on {} cpus", size, subtime.elapsed(), cpus);
 
                 // let subtime = Instant::now();
 
@@ -1586,300 +1586,300 @@ pub(crate) mod test {
         }
     }
 
-    fn test_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use crate::pairing::bn256::Bn256;
-        test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
-    }
+    // fn test_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+    //     use crate::pairing::bn256::Bn256;
+    //     test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    // }
 
-    fn test_multiexps_over_window_sizes_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use crate::pairing::compact_bn256::Bn256;
-        test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
-    }
+    // fn test_multiexps_over_window_sizes_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+    //     use crate::pairing::compact_bn256::Bn256;
+    //     test_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    // }
 
-    fn test_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use std::time::Instant;
-        use std::sync::Arc;
+    // fn test_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+    //     use std::time::Instant;
+    //     use std::sync::Arc;
 
-        let worker = Worker::new();
+    //     let worker = Worker::new();
 
-        println!("Generating scalars");
-        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
-        println!("Generating points");
-        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
-        println!("Done");
+    //     println!("Generating scalars");
+    //     let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+    //     println!("Generating points");
+    //     let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+    //     println!("Done");
 
-        for size in sizes {
-            for &cpus in &num_cpus {
-                let mut subresults = vec![];
-                for &window in &windows {
-                    let s = &scalars[..size];
-                    let g = points[..size].to_vec();
+    //     for size in sizes {
+    //         for &cpus in &num_cpus {
+    //             let mut subresults = vec![];
+    //             for &window in &windows {
+    //                 let s = &scalars[..size];
+    //                 let g = points[..size].to_vec();
 
-                    let subworker = Worker::new_with_cpus(cpus);
+    //                 let subworker = Worker::new_with_cpus(cpus);
 
-                    let scalars_repr = super::elements_into_representations::<E>(
-                        &subworker,
-                        s
-                    ).unwrap();
+    //                 let scalars_repr = super::elements_into_representations::<E>(
+    //                     &subworker,
+    //                     s
+    //                 ).unwrap();
 
-                    let subtime = Instant::now();
+    //                 let subtime = Instant::now();
 
-                    let window = window as u32;
+    //                 let window = window as u32;
 
-                    let _ = multiexp::map_reduce_multiexp_over_fixed_window::<E::G1Affine>(
-                        &subworker,
-                        &g,
-                        &scalars_repr,
-                        window
-                    ).unwrap();
+    //                 let _ = multiexp::map_reduce_multiexp_over_fixed_window::<E::G1Affine>(
+    //                     &subworker,
+    //                     &g,
+    //                     &scalars_repr,
+    //                     window
+    //                 ).unwrap();
 
-                    subresults.push((window, subtime.elapsed().as_millis()));
+    //                 subresults.push((window, subtime.elapsed().as_millis()));
 
-                    // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
-                }
+    //                 // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+    //             }
 
-                subresults.sort_by(|a, b| {
-                    a.1.cmp(&b.1)
-                });
+    //             subresults.sort_by(|a, b| {
+    //                 a.1.cmp(&b.1)
+    //             });
 
-                println!("Map reduce multiexp of size {} on {} CPUs:", size, cpus);
-                for (window, time_ms) in &subresults[0..3] {
-                    println!("Window = {}, time = {} ms", window, time_ms);
-                }
-            }
-        }
-    }
+    //             println!("Map reduce multiexp of size {} on {} CPUs:", size, cpus);
+    //             for (window, time_ms) in &subresults[0..3] {
+    //                 println!("Window = {}, time = {} ms", window, time_ms);
+    //             }
+    //         }
+    //     }
+    // }
 
-    fn test_buffered_multiexps_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
-        use crate::pairing::compact_bn256::Bn256;
-        test_buffered_multiexp::<Bn256>(max_size, sizes, num_cpus, windows, buffer_sizes);
-    }
+    // fn test_buffered_multiexps_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
+    //     use crate::pairing::compact_bn256::Bn256;
+    //     test_buffered_multiexp::<Bn256>(max_size, sizes, num_cpus, windows, buffer_sizes);
+    // }
 
-    fn test_buffered_multiexp<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
-        use std::time::Instant;
-        use std::sync::Arc;
+    // fn test_buffered_multiexp<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
+    //     use std::time::Instant;
+    //     use std::sync::Arc;
 
-        let worker = Worker::new();
+    //     let worker = Worker::new();
 
-        println!("Generating scalars");
-        let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
-        println!("Generating points");
-        let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
-        println!("Done");
+    //     println!("Generating scalars");
+    //     let scalars = make_random_field_elements::<E::Fr>(&worker, max_size);
+    //     println!("Generating points");
+    //     let points = make_random_g1_points::<E::G1Affine>(&worker, max_size);
+    //     println!("Done");
 
-        for size in sizes {
-            for &cpus in &num_cpus {
-                for &buffer_size in &buffer_sizes {
-                    let mut subresults = vec![];
-                    for &window in &windows {
-                        let s = &scalars[..size];
-                        let g = points[..size].to_vec();
+    //     for size in sizes {
+    //         for &cpus in &num_cpus {
+    //             for &buffer_size in &buffer_sizes {
+    //                 let mut subresults = vec![];
+    //                 for &window in &windows {
+    //                     let s = &scalars[..size];
+    //                     let g = points[..size].to_vec();
 
-                        let subworker = Worker::new_with_cpus(cpus);
+    //                     let subworker = Worker::new_with_cpus(cpus);
 
-                        let scalars_repr = super::elements_into_representations::<E>(
-                            &subworker,
-                            s
-                        ).unwrap();
+    //                     let scalars_repr = super::elements_into_representations::<E>(
+    //                         &subworker,
+    //                         s
+    //                     ).unwrap();
 
-                        let subtime = Instant::now();
+    //                     let subtime = Instant::now();
 
-                        let window = window as u32;
+    //                     let window = window as u32;
 
-                        let _ = multiexp::buffered_multiexp_over_fixed_window_and_buffer_size::<E::G1Affine>(
-                            &subworker,
-                            &g,
-                            &scalars_repr,
-                            window,
-                            buffer_size
-                        ).unwrap();
+    //                     let _ = multiexp::buffered_multiexp_over_fixed_window_and_buffer_size::<E::G1Affine>(
+    //                         &subworker,
+    //                         &g,
+    //                         &scalars_repr,
+    //                         window,
+    //                         buffer_size
+    //                     ).unwrap();
 
-                        subresults.push((window, subtime.elapsed().as_millis()));
+    //                     subresults.push((window, subtime.elapsed().as_millis()));
 
-                        // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
-                    }
+    //                     // println!("Map reduce multiexp of size {} taken {:?} on {} cpus with window size = {}", size, subtime.elapsed(), cpus, window);
+    //                 }
 
-                    subresults.sort_by(|a, b| {
-                        a.1.cmp(&b.1)
-                    });
+    //                 subresults.sort_by(|a, b| {
+    //                     a.1.cmp(&b.1)
+    //                 });
 
-                    println!("Map reduce multiexp of size {} on {} CPUs with buffer size {}:", size, cpus, buffer_size);
-                    for (window, time_ms) in &subresults[0..3] {
-                        println!("Window = {}, time = {} ms", window, time_ms);
-                    }
-                }
-            }
-        }
-    }
+    //                 println!("Map reduce multiexp of size {} on {} CPUs with buffer size {}:", size, cpus, buffer_size);
+    //                 for (window, time_ms) in &subresults[0..3] {
+    //                     println!("Window = {}, time = {} ms", window, time_ms);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
-    fn test_future_based_multiexps_over_window_sizes_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use crate::pairing::compact_bn256::Bn256;
-        test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
-    }
+    // fn test_future_based_multiexps_over_window_sizes_bn254_compact(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+    //     use crate::pairing::compact_bn256::Bn256;
+    //     test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    // }
 
-    fn test_future_based_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use crate::pairing::bn256::Bn256;
-        test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
-    }
+    // fn test_future_based_multiexps_over_window_sizes_bn254(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
+    //     use crate::pairing::bn256::Bn256;
+    //     test_future_based_multiexps_over_window_sizes::<Bn256>(max_size, sizes, num_cpus, windows);
+    // }
 
-    #[ignore]
-    #[test]
-    fn test_optimal_bn254_multiexp() {
-        // use crate::pairing::bn256::Bn256;
-        use crate::pairing::compact_bn256::Bn256;
-        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
-        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, false);
-        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
-        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, false);
-    }
+    // #[ignore]
+    // #[test]
+    // fn test_optimal_bn254_multiexp() {
+    //     // use crate::pairing::bn256::Bn256;
+    //     use crate::pairing::compact_bn256::Bn256;
+    //     test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
+    //     test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, false);
+    //     test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, true);
+    //     test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 11, false);
+    // }
 
-    fn test_optimal_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize, same_base: bool) {
-        use futures::executor::block_on;
-        use futures::future::join_all;
+    // fn test_optimal_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize, same_base: bool) {
+    //     use futures::executor::block_on;
+    //     use futures::future::join_all;
 
-        use std::time::Instant;
-        use std::sync::Arc;
-        use crate::source::FullDensity;
+    //     use std::time::Instant;
+    //     use std::sync::Arc;
+    //     use crate::source::FullDensity;
 
-        let mut bases = vec![];
-        let mut scalars = vec![];
-        let worker = Worker::new();
+    //     let mut bases = vec![];
+    //     let mut scalars = vec![];
+    //     let worker = Worker::new();
 
-        assert!(max_parallel_jobs >= 1);
+    //     assert!(max_parallel_jobs >= 1);
 
-        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    //     use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
-        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+    //     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
         
-        for _ in 0..max_parallel_jobs {
-            let seed: [u32; 4] = rng.gen();
-            let mut subrng = ChaChaRng::from_seed(&seed);
+    //     for _ in 0..max_parallel_jobs {
+    //         let seed: [u32; 4] = rng.gen();
+    //         let mut subrng = ChaChaRng::from_seed(&seed);
 
-            let sc = make_random_field_elements_for_rng::<E::Fr, _>(&worker, max_size, &mut subrng);
-            let p = make_random_g1_points_for_rng::<E::G1Affine, _>(&worker, max_size, &mut subrng);
-            let s = super::elements_into_representations::<E>(
-                &worker,
-                &sc
-            ).unwrap();
+    //         let sc = make_random_field_elements_for_rng::<E::Fr, _>(&worker, max_size, &mut subrng);
+    //         let p = make_random_g1_points_for_rng::<E::G1Affine, _>(&worker, max_size, &mut subrng);
+    //         let s = super::elements_into_representations::<E>(
+    //             &worker,
+    //             &sc
+    //         ).unwrap();
 
-            bases.push(Arc::from(p));
-            scalars.push(Arc::from(s));
-        }
+    //         bases.push(Arc::from(p));
+    //         scalars.push(Arc::from(s));
+    //     }
 
-        for num_jobs in 1..=max_parallel_jobs {
-            let mut jobs = vec![];
-            let subworker = Worker::new_with_cpus(cpus_per_job * num_jobs);
-            let subtime = Instant::now();
-            let window = window as u32;
+    //     for num_jobs in 1..=max_parallel_jobs {
+    //         let mut jobs = vec![];
+    //         let subworker = Worker::new_with_cpus(cpus_per_job * num_jobs);
+    //         let subtime = Instant::now();
+    //         let window = window as u32;
 
-            for idx in 0..num_jobs {
-                let id = if same_base {
-                    0
-                } else {
-                    idx
-                };
-                let p = Arc::clone(&bases[id]);
-                let s = Arc::clone(&scalars[idx]);
+    //         for idx in 0..num_jobs {
+    //             let id = if same_base {
+    //                 0
+    //             } else {
+    //                 idx
+    //             };
+    //             let p = Arc::clone(&bases[id]);
+    //             let s = Arc::clone(&scalars[idx]);
 
-                let job = multiexp::future_based_dense_multiexp_over_fixed_width_windows(
-                    &subworker,
-                    p,
-                    s,
-                    window
-                );
+    //             let job = multiexp::future_based_dense_multiexp_over_fixed_width_windows(
+    //                 &subworker,
+    //                 p,
+    //                 s,
+    //                 window
+    //             );
 
-                // let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
-                //     &subworker,
-                //     (p, 0),
-                //     FullDensity,
-                //     s,
-                //     window
-                // );
+    //             // let job = multiexp::multiexp_with_fixed_width::<_, _, _, _>(
+    //             //     &subworker,
+    //             //     (p, 0),
+    //             //     FullDensity,
+    //             //     s,
+    //             //     window
+    //             // );
 
-                jobs.push(job);
-            }
+    //             jobs.push(job);
+    //         }
 
-            let joiner = join_all(jobs);
+    //         let joiner = join_all(jobs);
 
-            let _ = block_on(joiner);
+    //         let _ = block_on(joiner);
 
-            let elapsed = subtime.elapsed();
-            if same_base {
-                print!("For same bases: ");
-            } else {
-                print!("For different bases: ");
-            }
-            println!("{} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", num_jobs, max_size, cpus_per_job, window, elapsed);
-        }
-    }
+    //         let elapsed = subtime.elapsed();
+    //         if same_base {
+    //             print!("For same bases: ");
+    //         } else {
+    //             print!("For different bases: ");
+    //         }
+    //         println!("{} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", num_jobs, max_size, cpus_per_job, window, elapsed);
+    //     }
+    // }
 
-    #[ignore]
-    #[test]
-    fn test_l3_shared_multiexp_bn254() {
-        // use crate::pairing::bn256::Bn256;
-        use crate::pairing::compact_bn256::Bn256;
-        test_l3_shared_multiexp::<Bn256>(4, 1 << 24, 24, 12);
-        test_l3_shared_multiexp::<Bn256>(4, 1 << 25, 24, 12);
-        test_optimal_multiexp::<Bn256>(1, 1 << 24, 24, 12, true);
-        test_optimal_multiexp::<Bn256>(1, 1 << 25, 24, 12, true);
-        test_optimal_multiexp::<Bn256>(1, 1 << 24, 16, 16, true);
-        test_optimal_multiexp::<Bn256>(1, 1 << 25, 16, 16, true);
-        test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
-        test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 12, true);
-        test_optimal_multiexp::<Bn256>(3, 1 << 24, 16, 16, true);
-        test_optimal_multiexp::<Bn256>(3, 1 << 25, 16, 16, true);
-        test_optimal_multiexp::<Bn256>(4, 1 << 24, 16, 16, true);
-        test_optimal_multiexp::<Bn256>(4, 1 << 25, 16, 16, true);
-    }
+    // #[ignore]
+    // #[test]
+    // fn test_l3_shared_multiexp_bn254() {
+    //     // use crate::pairing::bn256::Bn256;
+    //     use crate::pairing::compact_bn256::Bn256;
+    //     test_l3_shared_multiexp::<Bn256>(4, 1 << 24, 24, 12);
+    //     test_l3_shared_multiexp::<Bn256>(4, 1 << 25, 24, 12);
+    //     test_optimal_multiexp::<Bn256>(1, 1 << 24, 24, 12, true);
+    //     test_optimal_multiexp::<Bn256>(1, 1 << 25, 24, 12, true);
+    //     test_optimal_multiexp::<Bn256>(1, 1 << 24, 16, 16, true);
+    //     test_optimal_multiexp::<Bn256>(1, 1 << 25, 16, 16, true);
+    //     test_optimal_multiexp::<Bn256>(2, 1 << 24, 24, 12, true);
+    //     test_optimal_multiexp::<Bn256>(2, 1 << 25, 24, 12, true);
+    //     test_optimal_multiexp::<Bn256>(3, 1 << 24, 16, 16, true);
+    //     test_optimal_multiexp::<Bn256>(3, 1 << 25, 16, 16, true);
+    //     test_optimal_multiexp::<Bn256>(4, 1 << 24, 16, 16, true);
+    //     test_optimal_multiexp::<Bn256>(4, 1 << 25, 16, 16, true);
+    // }
 
-    fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
-        use std::time::Instant;
+    // fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
+    //     use std::time::Instant;
         
-        let mut bases = vec![];
-        let mut scalars = vec![];
-        let worker = Worker::new();
+    //     let mut bases = vec![];
+    //     let mut scalars = vec![];
+    //     let worker = Worker::new();
 
-        use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
+    //     use rand::{XorShiftRng, SeedableRng, Rand, Rng, ChaChaRng};
     
-        let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+    //     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
         
-        for _ in 0..max_parallel_jobs {
-            let seed: [u32; 4] = rng.gen();
-            let mut subrng = ChaChaRng::from_seed(&seed);
+    //     for _ in 0..max_parallel_jobs {
+    //         let seed: [u32; 4] = rng.gen();
+    //         let mut subrng = ChaChaRng::from_seed(&seed);
 
-            let sc = make_random_field_elements_for_rng::<E::Fr, _>(&worker, max_size, &mut subrng);
-            let p = make_random_g1_points_for_rng::<E::G1Affine, _>(&worker, max_size, &mut subrng);
-            let s = super::elements_into_representations::<E>(
-                &worker,
-                &sc
-            ).unwrap();
+    //         let sc = make_random_field_elements_for_rng::<E::Fr, _>(&worker, max_size, &mut subrng);
+    //         let p = make_random_g1_points_for_rng::<E::G1Affine, _>(&worker, max_size, &mut subrng);
+    //         let s = super::elements_into_representations::<E>(
+    //             &worker,
+    //             &sc
+    //         ).unwrap();
 
-            bases.push(p);
-            scalars.push(s);
-        }
+    //         bases.push(p);
+    //         scalars.push(s);
+    //     }
 
-        for j in 1..=max_parallel_jobs {
-            let subworker = Worker::new_with_cpus(cpus_per_job * j);
+    //     for j in 1..=max_parallel_jobs {
+    //         let subworker = Worker::new_with_cpus(cpus_per_job * j);
 
-            let subtime = Instant::now();
+    //         let subtime = Instant::now();
 
-            let mut exps = vec![];
-            for i in 0..j {
-                exps.push(&scalars[i][..]);
-            }
+    //         let mut exps = vec![];
+    //         for i in 0..j {
+    //             exps.push(&scalars[i][..]);
+    //         }
 
-            println!("Running for {} parallel job", j);
-            let _ = multiexp::l3_shared_multexp(
-                &subworker,
-                &bases[0][..],
-                &exps[..],
-            ).unwrap();
+    //         println!("Running for {} parallel job", j);
+    //         let _ = multiexp::l3_shared_multexp(
+    //             &subworker,
+    //             &bases[0][..],
+    //             &exps[..],
+    //         ).unwrap();
     
-            let elapsed = subtime.elapsed();
+    //         let elapsed = subtime.elapsed();
     
-            println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", j, max_size, cpus_per_job, window, elapsed);
-        }
-    }
+    //         println!("L3 shared multiexp for {} jobs of size {} with {} CPUs per job and {} bits window taken {:?}", j, max_size, cpus_per_job, window, elapsed);
+    //     }
+    // }
 
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
         use std::time::Instant;
@@ -1980,62 +1980,62 @@ pub(crate) mod test {
         test_multiexp_bn254_compact(max_size, sizes, cpus);
     }
 
-    #[test]
-    #[ignore]
-    fn test_small_data_different_windows() {
-        let max_size = 1 << 20;
+    // #[test]
+    // #[ignore]
+    // fn test_small_data_different_windows() {
+    //     let max_size = 1 << 20;
         
-        let sizes = vec![1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20];
-        let cpus = vec![3, 4, 6];
-        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
-        test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
-    }
+    //     let sizes = vec![1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20];
+    //     let cpus = vec![3, 4, 6];
+    //     let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    //     test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    // }
 
-    #[test]
-    #[ignore]
-    fn test_large_data_different_windows_multiexp() {
-        let max_size = 1 << 26;
-        let worker = Worker::new();
+    // #[test]
+    // #[ignore]
+    // fn test_large_data_different_windows_multiexp() {
+    //     let max_size = 1 << 26;
+    //     let worker = Worker::new();
 
-        assert!(worker.cpus >= 16, "should be tested only on large machines");
+    //     assert!(worker.cpus >= 16, "should be tested only on large machines");
         
-        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
-        let cpus = vec![8, 12, 16, 24, 32, 48];
-        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
-        // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
-        test_multiexps_over_window_sizes_bn254_compact(max_size, sizes, cpus, windows);
-    }
+    //     let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
+    //     let cpus = vec![8, 12, 16, 24, 32, 48];
+    //     let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    //     // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    //     test_multiexps_over_window_sizes_bn254_compact(max_size, sizes, cpus, windows);
+    // }
 
-    #[test]
-    #[ignore]
-    fn test_large_data_buffered_multiexp() {
-        let max_size = 1 << 26;
-        let worker = Worker::new();
+    // #[test]
+    // #[ignore]
+    // fn test_large_data_buffered_multiexp() {
+    //     let max_size = 1 << 26;
+    //     let worker = Worker::new();
 
-        assert!(worker.cpus >= 16, "should be tested only on large machines");
+    //     assert!(worker.cpus >= 16, "should be tested only on large machines");
         
-        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
-        let cpus = vec![8, 12, 16, 24, 32, 48];
-        let windows = vec![10, 11, 12, 13, 14, 15, 16];
-        let buffer_sizes = vec![4, 8, 16, 32, 64, 128];
-        // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
-        test_buffered_multiexps_bn254_compact(max_size, sizes, cpus, windows, buffer_sizes);
-    }
+    //     let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
+    //     let cpus = vec![8, 12, 16, 24, 32, 48];
+    //     let windows = vec![10, 11, 12, 13, 14, 15, 16];
+    //     let buffer_sizes = vec![4, 8, 16, 32, 64, 128];
+    //     // test_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    //     test_buffered_multiexps_bn254_compact(max_size, sizes, cpus, windows, buffer_sizes);
+    // }
 
-    #[test]
-    #[ignore]
-    fn future_based_test_large_data_different_windows() {
-        let max_size = 1 << 26;
-        let worker = Worker::new();
+    // #[test]
+    // #[ignore]
+    // fn future_based_test_large_data_different_windows() {
+    //     let max_size = 1 << 26;
+    //     let worker = Worker::new();
 
-        assert!(worker.cpus >= 16, "should be tested only on large machines");
+    //     assert!(worker.cpus >= 16, "should be tested only on large machines");
         
-        let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
-        let cpus = vec![8, 12, 16, 24, 32, 48];
-        let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
-        // test_future_based_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
-        test_future_based_multiexps_over_window_sizes_bn254_compact(max_size, sizes, cpus, windows);
-    }
+    //     let sizes = vec![1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26];
+    //     let cpus = vec![8, 12, 16, 24, 32, 48];
+    //     let windows = vec![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    //     // test_future_based_multiexps_over_window_sizes_bn254(max_size, sizes, cpus, windows);
+    //     test_future_based_multiexps_over_window_sizes_bn254_compact(max_size, sizes, cpus, windows);
+    // }
 
     fn make_random_points_with_unknown_discrete_log<E: Engine>(
         dst: &[u8],
@@ -2112,6 +2112,53 @@ pub(crate) mod test {
             serialize_affine_points_for_fpga::<Bls12, _>(&points, &mut points_file).unwrap();
             serialize_scalars_for_fpga::<Bls12, _>(&scalars, &mut scalars_file).unwrap();
             serialize_projective_points_for_fpga::<Bls12, _>(&buckets, &mut buckets_file).unwrap();
+        }
+    }
+
+    #[test]
+    fn produce_bn254_fpga_test_vectors() {
+        use crate::pairing::ff::ScalarEngine;
+        use crate::pairing::bn256::Bn256;
+
+        let bucket_width = 16;
+        let worker = crate::worker::Worker::new();
+
+        let random_point = make_random_points_with_unknown_discrete_log::<Bn256>(
+            &b"fpga_dst"[..], 
+            &hex::decode(crate::constants::ETH_BLOCK_10_000_000_HASH).unwrap(), 
+            1
+        )[0];
+
+        let (x, y) = random_point.into_xy_unchecked();
+        println!("Random point in Montgomery form: X = {}, Y = {}", x.into_raw_repr(), y.into_raw_repr());
+
+        let base_path = std::path::Path::new("./");
+    
+        for n in vec![6, 7, 20] {
+            let points_path = base_path.join(&format!("bn_254_input_points_2^{}_width_{}.key", n, bucket_width));
+            let scalars_path = base_path.join(&format!("bn_254_input_scalars_2^{}_width_{}.key", n, bucket_width));
+            let buckets_path = base_path.join(&format!("bn_254_output_buckets_2^{}_width_{}.key", n, bucket_width));
+
+            println!("Opening {}", points_path.to_string_lossy());
+
+            let file = std::fs::File::create(points_path).unwrap();
+            let mut points_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(scalars_path).unwrap();
+            let mut scalars_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let file = std::fs::File::create(buckets_path).unwrap();
+            let mut buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
+            let size = 1 << n;
+
+            let scalars = make_random_field_elements::<<Bn256 as ScalarEngine>::Fr>(&worker, size);
+            let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, size);
+            let buckets = simulate_first_buckets::<Bn256>(&points, &scalars, bucket_width, random_point);
+
+            serialize_affine_points_for_fpga::<Bn256, _>(&points, &mut points_file).unwrap();
+            serialize_scalars_for_fpga::<Bn256, _>(&scalars, &mut scalars_file).unwrap();
+            serialize_projective_points_for_fpga::<Bn256, _>(&buckets, &mut buckets_file).unwrap();
         }
     }
 

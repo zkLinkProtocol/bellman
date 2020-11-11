@@ -501,4 +501,12 @@ impl CurveAffine for Fr {
     fn from_xy_checked(_x: Self::Base, _y: Self::Base) -> Result<Self, GroupDecodingError> {
         Ok(<Fr as Field>::zero())
     }
+
+    fn a_coeff() -> <Self as pairing::CurveAffine>::Base { 
+        <Fr as Field>::zero()
+    }
+
+    fn b_coeff() -> <Self as pairing::CurveAffine>::Base { 
+        <Fr as Field>::zero()
+    }
 }
