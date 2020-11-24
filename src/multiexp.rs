@@ -881,7 +881,7 @@ mod test {
         use rand::{self, Rand};
         use crate::pairing::bn256::Bn256;
 
-        const SAMPLES: usize = 1 << 14;
+        const SAMPLES: usize = 1 << 22;
 
         let pool = Worker::new();
 

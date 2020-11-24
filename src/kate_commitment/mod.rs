@@ -2118,7 +2118,7 @@ pub(crate) mod test {
     #[test]
     fn produce_bn254_fpga_test_vectors() {
         use crate::pairing::ff::ScalarEngine;
-        use crate::pairing::bn256::Bn256;
+        use crate::pairing::bn256::{Bn256, Fr};
 
         let bucket_width = 16;
         let worker = crate::worker::Worker::new();
@@ -2133,10 +2133,16 @@ pub(crate) mod test {
         println!("Random point in Montgomery form: X = {}, Y = {}", x.into_raw_repr(), y.into_raw_repr());
 
         let base_path = std::path::Path::new("./");
+
+        let mut num_buckets = (Fr::NUM_BITS as usize) / bucket_width;
+        if (Fr::NUM_BITS as usize) % bucket_width != 0 {
+            num_buckets += 1;
+        }
     
         for n in vec![6, 7, 20] {
             let points_path = base_path.join(&format!("bn_254_input_points_2^{}_width_{}.key", n, bucket_width));
             let scalars_path = base_path.join(&format!("bn_254_input_scalars_2^{}_width_{}.key", n, bucket_width));
+            let initial_buckets_path = base_path.join(&format!("bn_254_input_buckets_2^{}_width_{}.key", n, bucket_width));
             let buckets_path = base_path.join(&format!("bn_254_output_buckets_2^{}_width_{}.key", n, bucket_width));
 
             println!("Opening {}", points_path.to_string_lossy());
@@ -2147,6 +2153,9 @@ pub(crate) mod test {
             let file = std::fs::File::create(scalars_path).unwrap();
             let mut scalars_file = std::io::BufWriter::with_capacity(1 << 24, file);
 
+            let file = std::fs::File::create(initial_buckets_path).unwrap();
+            let mut initial_buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
+
             let file = std::fs::File::create(buckets_path).unwrap();
             let mut buckets_file = std::io::BufWriter::with_capacity(1 << 24, file);
 
@@ -2154,10 +2163,12 @@ pub(crate) mod test {
 
             let scalars = make_random_field_elements::<<Bn256 as ScalarEngine>::Fr>(&worker, size);
             let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&worker, size);
+            let initial_buckets = vec![random_point.into_projective(); num_buckets * (1 << bucket_width)];
             let buckets = simulate_first_buckets::<Bn256>(&points, &scalars, bucket_width, random_point);
 
             serialize_affine_points_for_fpga::<Bn256, _>(&points, &mut points_file).unwrap();
             serialize_scalars_for_fpga::<Bn256, _>(&scalars, &mut scalars_file).unwrap();
+            serialize_projective_points_for_fpga::<Bn256, _>(&initial_buckets, &mut initial_buckets_file).unwrap();
             serialize_projective_points_for_fpga::<Bn256, _>(&buckets, &mut buckets_file).unwrap();
         }
     }
