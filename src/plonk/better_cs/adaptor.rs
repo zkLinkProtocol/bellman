@@ -1027,7 +1027,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     }
                 }
 
-                let mut free_constant_term = a_constant_term;
+                let mut free_constant_term = if a_is_constant {
+                    a_constant_term
+                } else if b_is_constant {
+                    b_constant_term
+                } else {
+                    unreachable!()
+                };
                 free_constant_term.mul_assign(&multiplier);
                 free_constant_term.sub_assign(&c_constant_term);
 
