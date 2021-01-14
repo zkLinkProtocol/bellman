@@ -2457,6 +2457,8 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
 #[cfg(test)]
 mod test {
+    use core::num;
+
 
     #[test]
     fn test_shifted_grand_product() {
@@ -2610,6 +2612,58 @@ mod test {
 
                 println!("Total FFT time time for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
             }
+        }
+    }
+
+    #[test]
+    fn test_lde_explicit_multicore_validity() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        if cfg!(debug_assertions) {
+            println!("Will be too slow to run in test mode, abort");
+            return;
+        }
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+
+        let size = 1 << 21;
+        let worker = Worker::new();
+    
+        let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, size);
+        let poly = Polynomial::from_coeffs(scalars).unwrap();
+        let omegas_bitreversed = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
+        use crate::plonk::fft::cooley_tukey_ntt::*;
+
+        let mut reference: Option<Polynomial<_, _>> = None;
+
+        for num_cpus in 1..=32 {
+            let subworker = Worker::new_with_cpus(num_cpus);
+            let poly = poly.clone();
+
+            // let candidate = poly.fft_using_bitreversed_ntt_output_bitreversed(
+            //     &subworker,
+            //     &omegas_bitreversed,
+            //     // &Fr::one()
+            //     &Fr::multiplicative_generator()
+            // ).unwrap();
+
+            let candidate = poly.bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                4, 
+                &omegas_bitreversed, 
+                &Fr::multiplicative_generator()
+            ).unwrap();
+
+            if let Some(to_compare) = reference.take() {
+                assert_eq!(candidate.as_ref(), to_compare.as_ref(), "mismatch for {} cpus", num_cpus);
+            } else {
+                reference = Some(candidate);
+            }
+
+            println!("Completed for {} cpus", num_cpus);
         }
     }
 }
