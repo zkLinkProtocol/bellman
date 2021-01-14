@@ -254,3 +254,40 @@ pub fn commit_point_as_xy<E: Engine, T: Transcript<E::Fr>>(
         transcript.commit_fe(&y);
     }
 }
+
+
+#[cfg(test)]
+    mod test {
+    #[test]
+    fn test_lagrange_poly_explicit_multicore_validity() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        if cfg!(debug_assertions) {
+            println!("Will be too slow to run in test mode, abort");
+            return;
+        }
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+
+        let size: usize = 1 << 21;
+        let worker = Worker::new();
+
+        let mut reference: Option<Polynomial<_, _>> = None;
+
+        for num_cpus in 1..=32 {
+            let subworker = Worker::new_with_cpus(num_cpus);
+            let candidate = calculate_lagrange_poly::<Fr>(&worker, size.next_power_of_two(), 0).unwrap();
+
+            if let Some(to_compare) = reference.take() {
+                assert_eq!(candidate.as_ref(), to_compare.as_ref(), "mismatch for {} cpus", num_cpus);
+            } else {
+                reference = Some(candidate);
+            }
+
+            println!("Completed for {} cpus", num_cpus);
+        }
+    }
+}
