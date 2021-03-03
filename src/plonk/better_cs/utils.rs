@@ -277,17 +277,19 @@ pub fn commit_point_as_xy<E: Engine, T: Transcript<E::Fr>>(
 
         let mut reference: Option<Polynomial<_, _>> = None;
 
-        for num_cpus in 1..=32 {
-            let subworker = Worker::new_with_cpus(num_cpus);
-            let candidate = calculate_lagrange_poly::<Fr>(&worker, size.next_power_of_two(), 0).unwrap();
+        for _ in 0..100 {
+            for num_cpus in 1..=32 {
+                let subworker = Worker::new_with_cpus(num_cpus);
+                let candidate = calculate_lagrange_poly::<Fr>(&subworker, size.next_power_of_two(), 0).unwrap();
 
-            if let Some(to_compare) = reference.take() {
-                assert_eq!(candidate.as_ref(), to_compare.as_ref(), "mismatch for {} cpus", num_cpus);
-            } else {
-                reference = Some(candidate);
+                if let Some(to_compare) = reference.take() {
+                    assert_eq!(candidate.as_ref(), to_compare.as_ref(), "mismatch for {} cpus", num_cpus);
+                } else {
+                    reference = Some(candidate);
+                }
+
+                println!("Completed for {} cpus", num_cpus);
             }
-
-            println!("Completed for {} cpus", num_cpus);
         }
     }
 }
