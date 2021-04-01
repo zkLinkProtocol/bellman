@@ -18,6 +18,7 @@ bit-vec = "0.6"
 cfg-if = "1.*"
 
 pairing = {package = "pairing_ce", version = "0.25.*" }
+# pairing = {package = "pairing_ce", path = "../pairing"}
 byteorder = "1"
 
 futures = {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
