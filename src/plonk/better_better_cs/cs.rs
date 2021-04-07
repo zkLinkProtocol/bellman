@@ -1781,7 +1781,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<Arc<LookupTableApplication<E>>, SynthesisError> {
         assert!(table.applies_over().len() == 3, "only support tables of width 3");
         assert!(table.can_be_combined(), "can only add tables that are combinable");
-        assert!(!self.known_table_ids.contains(&table.table_id()), "can not add a duplicate table");
+        assert!(!self.known_table_ids.contains(&table.table_id()), "can not add a duplicate table for name {}", table.functional_name());
         let table_name = table.functional_name();
         let table_id = table.table_id();
         let number_of_entries = table.size();
