@@ -124,6 +124,9 @@ fn multiexp_inner<Q, D, G, S>(
                     }
                 }
             }
+            
+            // also measure this cycle:
+            let start = std::time::Instant::now();
 
             // Summation by parts
             // e.g. 3a + 2b + 1c = a +
@@ -133,6 +136,11 @@ fn multiexp_inner<Q, D, G, S>(
             for exp in buckets.into_iter().rev() {
                 running_sum.add_assign(&exp);
                 acc.add_assign(&running_sum);
+            }
+
+            if skip == 0 {
+                let duration_ns = start.elapsed().as_nanos() as f64;
+                println!("Elapsed {} ns for special loop", duration_ns);
             }
 
             Ok(acc)
@@ -1001,5 +1009,86 @@ mod test {
                 calculate_parameters(size, core, 254);
             }
         }
+    }
+
+    #[test]
+    fn bench_bls_addition() {
+        use rand::{self, Rand};
+        use crate::pairing::bls12_381::Bls12;
+
+        let size = 100000u32;
+        let rng = &mut rand::thread_rng();
+
+        let A = (0..size).map(|_| <Bls12 as Engine>::G1::rand(rng)).collect::<Vec<_>>();
+        let B = (0..size).map(|_| <Bls12 as Engine>::G1::rand(rng)).collect::<Vec<_>>();
+
+        let start = std::time::Instant::now();
+
+        let C = (0..size).map(|i| {
+            let mut temp = A[i as usize];
+            temp.add_assign(&B[i as usize]);
+            temp
+        }).collect::<Vec<_>>();
+
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("Elapsed {} ns for {} samples", duration_ns, size);
+        let time_per_sample = duration_ns/(size as f64);
+        println!("Elapsed {} ns per sample", time_per_sample);
+    }
+    
+    #[test]
+    fn bench_bls_doubling() {
+        use rand::{self, Rand};
+        use crate::pairing::bls12_381::Bls12;
+
+        let size = 100000u32;
+        let rng = &mut rand::thread_rng();
+
+        let A = (0..size).map(|_| <Bls12 as Engine>::G1::rand(rng)).collect::<Vec<_>>();
+
+        let start = std::time::Instant::now();
+
+        let B = (0..size).map(|i| {
+            let mut temp = A[i as usize];
+            temp.double();
+            temp
+        }).collect::<Vec<_>>();
+
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("Elapsed {} ns for {} samples", duration_ns, size);
+        let time_per_sample = duration_ns/(size as f64);
+        println!("Elapsed {} ns per sample", time_per_sample);
+    }
+
+    #[test]
+    fn bench_Pippenger_with_small_chunk() {
+        use rand::{self, Rand};
+        use crate::pairing::bls12_381::Bls12;
+
+        let size = 1000000u32;
+        let rng = &mut rand::thread_rng();
+
+        let v = Arc::new((0..size).map(|_| <Bls12 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>());
+        let g = Arc::new((0..size).map(|_| <Bls12 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
+
+        let pool = Worker::new();
+        println!("loading {} cpus", pool.cpus);
+
+        let start = std::time::Instant::now();
+
+        let fast = block_on(
+            multiexp(
+                &pool,
+                (g, 0),
+                FullDensity,
+                v
+            )
+        ).unwrap();
+
+        let duration_ns = start.elapsed().as_nanos() as f64;
+        println!("Elapsed {} ns for Pippenger", duration_ns);
+        let time_per_sample = duration_ns/(size as f64);
+        println!("Elapsed {} ns per sample", time_per_sample);
+
     }
 }
