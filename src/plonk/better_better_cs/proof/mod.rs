@@ -1,7 +1,7 @@
 use super::cs::*;
 use super::data_structures::{self, *};
 use crate::pairing::ff::*;
-use crate::pairing::*;
+use crate::pairing::{Engine, CurveAffine, CurveProjective};
 use crate::plonk::polynomials::*;
 use std::collections::HashMap;
 

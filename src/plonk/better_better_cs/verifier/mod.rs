@@ -1,5 +1,5 @@
 use crate::pairing::ff::*;
-use crate::pairing::*;
+use crate::pairing::{Engine, CurveAffine, CurveProjective};
 
 use super::setup::VerificationKey;
 use super::proof::{Proof, sort_queries_for_linearization};
@@ -27,6 +27,8 @@ pub fn verify<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     if !success {
         return Ok(false)
     }
+
+    use crate::pairing::CurveAffine;
 
     let valid = E::final_exponentiation(
         &E::miller_loop(&[

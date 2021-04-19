@@ -2639,31 +2639,33 @@ mod test {
 
         let mut reference: Option<Polynomial<_, _>> = None;
 
-        for num_cpus in 1..=32 {
-            let subworker = Worker::new_with_cpus(num_cpus);
-            let poly = poly.clone();
+        for _ in 0..100 {
+            for num_cpus in 1..=32 {
+                let subworker = Worker::new_with_cpus(num_cpus);
+                let poly = poly.clone();
 
-            // let candidate = poly.fft_using_bitreversed_ntt_output_bitreversed(
-            //     &subworker,
-            //     &omegas_bitreversed,
-            //     // &Fr::one()
-            //     &Fr::multiplicative_generator()
-            // ).unwrap();
+                // let candidate = poly.fft_using_bitreversed_ntt_output_bitreversed(
+                //     &subworker,
+                //     &omegas_bitreversed,
+                //     // &Fr::one()
+                //     &Fr::multiplicative_generator()
+                // ).unwrap();
 
-            let candidate = poly.bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                4, 
-                &omegas_bitreversed, 
-                &Fr::multiplicative_generator()
-            ).unwrap();
+                let candidate = poly.bitreversed_lde_using_bitreversed_ntt(
+                    &subworker, 
+                    4, 
+                    &omegas_bitreversed, 
+                    &Fr::multiplicative_generator()
+                ).unwrap();
 
-            if let Some(to_compare) = reference.take() {
-                assert_eq!(candidate.as_ref(), to_compare.as_ref(), "mismatch for {} cpus", num_cpus);
-            } else {
-                reference = Some(candidate);
+                if let Some(to_compare) = reference.take() {
+                    assert_eq!(candidate.as_ref(), to_compare.as_ref(), "mismatch for {} cpus", num_cpus);
+                } else {
+                    reference = Some(candidate);
+                }
+
+                println!("Completed for {} cpus", num_cpus);
             }
-
-            println!("Completed for {} cpus", num_cpus);
         }
     }
 }
