@@ -4,7 +4,7 @@ use super::*;
 pub struct Width4MainGateWithDNext;
 
 impl Width4MainGateWithDNext {
-    pub const AB_MULTIPLICATION_TERM_COEFF_INDEX: usize = 0;
+    pub const AB_MULTIPLICATION_TERM_COEFF_INDEX: usize = 4;
     pub const CONSTANT_TERM_COEFF_INDEX: usize = 5;
     pub const D_NEXT_TERM_COEFF_INDEX: usize = 6;
 }

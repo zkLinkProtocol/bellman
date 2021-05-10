@@ -159,6 +159,11 @@ impl<E: Engine> GateInternal<E> for SelectorOptimizedWidth4MainGateWithDNext {
             assert!(q_d_next.is_zero());
         }
 
+        if !total.is_zero() {
+            println!("{}*A + {}*B + {}*C + {}*D + {} + {}*A*B + {}*A*C + {}*D_next", q_a, q_b, q_c, q_d, q_const, q_m_ab, q_m_ac, q_d_next);
+            println!("A = {}, B = {}, C = {}, D = {}, D_Next = {:?}", a_value, b_value, c_value, d_value, d_next_value);
+        }
+
         total
     }
 
