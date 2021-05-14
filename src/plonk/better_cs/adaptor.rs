@@ -995,7 +995,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                         self,
                         c_lc,
                         one_fr,
-                        zero_fr,
+                        c_constant_term,
                         false,
                         &mut space
                     ).expect("must allocate LCs as gates for constraint like 0 = LC_C");
@@ -1062,8 +1062,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 // const * const = LC
                 // A and B are some constants
                 // also strange one, but we cover all the options exhaustively
-                let mut free_constant_term = a_constant_term;
-                free_constant_term.mul_assign(&b_constant_term);
+                let mut tmp = a_constant_term;
+                tmp.mul_assign(&b_constant_term);
+
+                let mut free_constant_term = c_constant_term;
+                free_constant_term.sub_assign(&tmp);
 
                 let mut space = self.transpilation_scratch_space.take().unwrap();
 
