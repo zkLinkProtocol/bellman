@@ -17,13 +17,7 @@ pub use ff::*;
 mod log;
 
 pub mod domain;
-pub mod groth16;
-
-#[cfg(feature = "gm17")]
-pub mod gm17;
-
-#[cfg(feature = "sonic")]
-pub mod sonic;
+pub mod resource_management;
 
 #[cfg(feature = "plonk")]
 pub mod plonk;
@@ -31,9 +25,6 @@ pub mod plonk;
 #[macro_use]
 #[cfg(feature = "plonk")]
 extern crate lazy_static;
-
-#[cfg(feature = "marlin")]
-pub mod marlin;
 
 #[cfg(any(feature = "marlin", feature = "plonk"))]
 pub mod kate_commitment;
