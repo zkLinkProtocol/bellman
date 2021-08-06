@@ -1,3 +1,8 @@
+pub mod signed_digit;
+pub use self::signed_digit::*;
+
+use core::ops::Range;
+
 // a representation of a continuos vector as either a single vector,
 // or by a set of vectors backed by the continuous allocation
 #[derive(Debug)]
@@ -21,6 +26,30 @@ pub fn get_chunk_size(
     };
 
     chunk_size
+}
+
+pub fn get_ranges(
+    num_elements: usize,
+    chunk_size: usize
+) -> Vec<Range<usize>> {
+    if num_elements <= chunk_size {
+        let range = 0..num_elements;
+        return vec![range]
+    } else {
+        let mut result = vec![];
+        let mut start = 0;
+        loop {
+            if num_elements <= chunk_size + start {
+                let range = start..num_elements;
+                result.push(range);
+                return result;
+            } else {
+                let range = start..(start+chunk_size);
+                result.push(range);
+                start += chunk_size;
+            }
+        } 
+    }
 }
 
 impl<T> ChunkableVector<T> {
