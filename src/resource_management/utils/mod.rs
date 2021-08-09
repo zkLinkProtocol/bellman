@@ -108,6 +108,12 @@ impl<T> ChunkableVector<T> {
                     let mut chunks = std::mem::replace(chunks, vec![]);
                     let num_elements = chunks.iter().map(|el| el.len()).sum();
                     let capacity = chunks.iter().map(|el| el.capacity()).sum();
+                    for pair in chunks.windows(2) {
+                        let first_num_elements = pair[0].len();
+                        let first_ptr = pair[0].as_ptr();
+                        let second_ptr = pair[1].as_ptr();
+                        assert_eq!(unsafe {first_ptr.add(first_num_elements)}, second_ptr);
+                    }
                     let mut first_el = chunks.drain(0..1).next().unwrap();
                     let elements_ptr = first_el.as_mut_ptr();
                     std::mem::forget(first_el);
