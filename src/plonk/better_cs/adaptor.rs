@@ -979,7 +979,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     // not sure that any sane circuit will have this,
                     // but we cover this variant
 
-                    println!("Warning: strange constraint, LC_C == 0 gate resulting from A=0 or B=0, annotation: {}", _ann().into());
+                    // println!("Warning: strange constraint, LC_C == 0 gate resulting from A=0 or B=0, annotation: {}", _ann().into());
 
                     let mut space = self.transpilation_scratch_space.take().unwrap();
 
@@ -1024,7 +1024,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     }
                 }
 
-                // now work with "leftover", that ia LC_A constant term (multiplier around CS::one()) if LC_A is not
+                // now work with "leftover", that is LC_A constant term (multiplier around CS::one()) if LC_A is not
                 // a full trivial constant, and same for LC_B
                 let mut free_constant_term = if a_is_constant {
                     b_constant_term
@@ -1072,7 +1072,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 let mut free_constant_term = c_constant_term;
                 free_constant_term.sub_assign(&tmp);
 
-                println!("Warning: strange constraint, LC_C == constant gate resulting from A=constant and B=constant, annotation: {}", _ann().into());
+                // println!("Warning: strange constraint, LC_C == constant gate resulting from A=constant and B=constant, annotation: {}", _ann().into());
 
                 let mut space = self.transpilation_scratch_space.take().unwrap();
 
