@@ -109,7 +109,7 @@ impl Future for ResourceResponseFuture {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
-        println!("Polling `ResourceResponseFuture`");
+        // println!("Polling `ResourceResponseFuture`");
         let this = self.project();
         let rec = this.receiver;
         match rec.poll(cx) {
@@ -258,11 +258,11 @@ impl ResourceManager {
         let available_resources = &mut manager.resources;
         let mut proceed_background = false;
         if let Some(req) = manager.priority_requests.pop() {
-            println!("Trying to process priority request");
+            // println!("Trying to process priority request");
             let res = req.resources;
             let can_allocate = try_get_res(available_resources, res);
             if can_allocate {
-                println!("Granted resources to priority request: {:?}", res);
+                // println!("Granted resources to priority request: {:?}", res);
                 if !req.sender.is_canceled() {
                     let _ = req.sender.send(res);
                 }
@@ -274,11 +274,11 @@ impl ResourceManager {
 
         if proceed_background {
             if let Some(req) = manager.background_requests.pop() {
-                println!("Trying to process priority request");
+                // println!("Trying to process priority request");
                 let res = req.resources;
                 let can_allocate = try_get_res(available_resources, res);
                 if can_allocate {
-                    println!("Granted resources to background request: {:?}", res);
+                    // println!("Granted resources to background request: {:?}", res);
                     if !req.sender.is_canceled() {
                         let _ = req.sender.send(res);
                     }

@@ -1,3 +1,5 @@
+use futures::task::SpawnExt;
+
 use super::transpose::*;
 use super::super::utils::*;
 use crate::ff::PrimeField;
@@ -60,6 +62,7 @@ async fn outer_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize, const TWI
     let mut values = values;
     let precomputed_twiddle_factors: &[F] = &*precomputed_twiddle_factors;
     let start = absolute_position_offset;
+    let work_1 = std::time::Instant::now();
     for (i, s) in values.chunks_mut(outer_size).enumerate() {
         if TWIDDLE {
             let idx = start + i;
@@ -81,6 +84,7 @@ async fn outer_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize, const TWI
         );
     }
 
+    let return_1 = std::time::Instant::now();
     worker.return_resources(resources).await;
 
     values
@@ -96,7 +100,7 @@ pub fn non_generic_small_size_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: u
     debug_assert_eq!(values.len() % stride, 0);
     // work size
     let size = values.len() / stride;
-    debug_assert!(size.is_power_of_two());
+    debug_assert!(size.is_power_of_two(), "size {} is not a power of two. Supplied values length {}, stride {}", size, values.len(), stride);
     debug_assert!(offset < stride);
     if size > 1 {
         // Inner FFT radix size/2 without explicit splitting
@@ -188,12 +192,13 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
     let max_available_cpus = max_available_resources.cpu_cores;
     let cpus_to_use = std::cmp::min(MAX_EFFICIENTLY_USED_CPUS, max_available_cpus);
 
-    let mut all_futures = vec![];
+    let mut all_futures = Vec::with_capacity(cpus_to_use);
 
     let num_inner_work_units_per_cpu = get_chunk_size(inner_size, cpus_to_use);
     let mut chunkable_vector = ChunkableVector::new(values);
     let fft_chunk_size = outer_size * num_inner_work_units_per_cpu;
-    chunkable_vector.split(cpus_to_use);
+    // we need to split alligned, so use splitting by precomputed size
+    chunkable_vector.split_with_chunk_size(fft_chunk_size);
 
     assert_eq!(<ChunkableVector<_> as AsRef<Vec<Vec<_>>>>::as_ref(&chunkable_vector).len(), cpus_to_use);
 
@@ -214,7 +219,8 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
             worker.child(),
             is_background,
         );
-        all_futures.push(fut);
+        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        all_futures.push(spawned_fut);
     }
 
     let chunks = join_all(all_futures).await;
@@ -234,9 +240,9 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
     drop(mut_ref);
 
     // split again
-    chunkable_vector.split(cpus_to_use);
+    chunkable_vector.split_with_chunk_size(fft_chunk_size);
 
-    let mut all_futures = vec![];
+    let mut all_futures = Vec::with_capacity(cpus_to_use);
     let mut_ref: &mut Vec<Vec<_>> = chunkable_vector.as_mut();
     for i in 0..cpus_to_use {
         let chunk = std::mem::replace(&mut mut_ref[i], vec![]);
@@ -254,7 +260,8 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
             worker.child(),
             is_background,
         );
-        all_futures.push(fut);
+        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        all_futures.push(spawned_fut);
     }
 
     let chunks = join_all(all_futures).await;

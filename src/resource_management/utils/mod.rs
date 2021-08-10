@@ -64,7 +64,50 @@ impl<T> ChunkableVector<T> {
             ChunkableVector::Single(ref mut elements) => {
                 let mut elements = std::mem::replace(elements, vec![]);
                 let chunk_size = get_chunk_size(elements.len(), num_chunks);
-                if chunk_size == 1 {
+                if num_chunks == 1 || chunk_size == elements.len() {
+                    ChunkableVector::Multiple(vec![elements])
+                } else {
+                    let mut result = Vec::with_capacity(num_chunks);
+                    let mut remaining_elements = elements.len();
+                    let mut remaining_capacity = elements.capacity();
+                    let mut elements_ptr = elements.as_mut_ptr();
+                    std::mem::forget(elements);
+                    // let (mut elements_ptr, mut remaining_elements, mut remaining_capacity) = elements.into_raw_parts();
+                    for _ in 0..(num_chunks-1) {
+                        let beginning = elements_ptr;
+                        let num_elements = chunk_size;
+                        let capacity = chunk_size;
+
+                        remaining_elements -= num_elements;
+                        remaining_capacity -= capacity;
+                        elements_ptr = unsafe {elements_ptr.add(num_elements)};
+
+                        let chunk = unsafe { Vec::from_raw_parts(beginning, num_elements, capacity)};
+                        result.push(chunk);
+                    }
+                    let final_chunk = unsafe { Vec::from_raw_parts(elements_ptr, remaining_elements, remaining_capacity)};
+                    result.push(final_chunk);
+
+                    ChunkableVector::Multiple(result)
+                }
+            },
+            _ => {
+                panic!("value is not a single chunk");
+            }
+        };
+
+        *self = new;
+    }
+
+    pub fn split_with_chunk_size(&mut self, chunk_size: usize) {
+        let new = match self {
+            ChunkableVector::Single(ref mut elements) => {
+                let mut elements = std::mem::replace(elements, vec![]);
+                let mut num_chunks = elements.len() / chunk_size;
+                if elements.len() % chunk_size != 0 {
+                    num_chunks += 1;
+                }
+                if num_chunks == 1 || chunk_size == elements.len() {
                     ChunkableVector::Multiple(vec![elements])
                 } else {
                     let mut result = Vec::with_capacity(num_chunks);

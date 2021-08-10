@@ -1,6 +1,7 @@
 use super::*;
 use crate::pairing::Engine;
 use crate::pairing::ff::PrimeField;
+use futures::task::SpawnExt;
 
 const WIDTH: u32 = 16;
 const MM: u64 = 1u64 << WIDTH;
@@ -16,7 +17,8 @@ pub async fn multiexp<E: Engine>(worker: Worker, scalars: Arc<Vec<E::Fr>>, bases
     let mut all_futures = Vec::with_capacity(num_windows);
     for w in std::array::IntoIter::new(windows) {
         let fut = sort_into_buckets::<E>(worker.child(), w, bases.clone(), is_background);
-        all_futures.push(fut);
+        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        all_futures.push(spawned_fut);
     }
     let join = join_all(all_futures).await;
 
@@ -25,7 +27,8 @@ pub async fn multiexp<E: Engine>(worker: Worker, scalars: Arc<Vec<E::Fr>>, bases
     let mut all_futures = Vec::with_capacity(num_windows);
     for buckets in join.into_iter() {
         let fut = sum_buckets::<E>(worker.child(), buckets, is_background);
-        all_futures.push(fut);
+        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        all_futures.push(spawned_fut);
     }
 
     let join = join_all(all_futures).await;
@@ -138,7 +141,8 @@ async fn scalars_to_signed_digits<E: Engine>(worker: Worker, scalars: Arc<Vec<E:
     let mut all_futures = Vec::with_capacity(ranges.len());
     for range in ranges.into_iter() {
         let fut = scalars_range_to_signed_digits::<E>(worker.child(), scalars.clone(), range, is_background);
-        all_futures.push(fut);
+        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        all_futures.push(spawned_fut);
     }
     println!("Spawning");
 

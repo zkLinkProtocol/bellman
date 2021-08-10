@@ -6,3 +6,4 @@ pub mod fft;
 
 pub use self::multiexp::*;
 pub use self::fft::*;
+pub use self::utils::*;
