@@ -5,7 +5,6 @@ use std::cmp::*;
 use std::sync::Arc;
 use std::convert::TryInto;
 
-use futures_locks::RwLock;
 use pairing::ff::PrimeFieldRepr;
 use std::future::{Future};
 use std::task::{Context, Poll};
@@ -21,7 +20,10 @@ pub mod routines;
 use self::priority_modifier::Priority;
 use self::resources::*;
 use self::utils::*;
+
 pub use self::routines::*;
+use futures_locks::RwLock;
+// use utils::rw_lock::RwLock;
 
 use futures::future::{join_all, lazy};
 use futures::channel::oneshot::{channel, Sender, Receiver};
@@ -167,6 +169,10 @@ impl Worker {
     pub async fn return_resources(&self, resources: Resources) {
         self.inner.manager.return_resources(resources).await;
     }
+
+    pub async fn read_available_free_resources(&self) -> Resources {
+        self.inner.manager.read_available_free_resources().await
+    }
 }
 
 pub struct ResourceManagerProxy {
@@ -196,6 +202,10 @@ impl ResourceManagerProxy {
     
     pub async fn return_resources(&self, resources: Resources) {
         self.inner.return_resources(resources).await;
+    }
+
+    pub fn block_on<F: Future>(f: F) -> F::Output {
+        block_on(f)
     }
 }
 
@@ -254,6 +264,12 @@ impl ResourceManager {
         resp
     }
 
+    fn return_resources_inner(manager: &mut ResourceManagerInner, resources: Resources) {
+        return_res(&mut manager.resources, resources);
+
+        Self::try_yeild(manager);
+    }
+
     fn try_yeild(manager: &mut ResourceManagerInner) {
         let available_resources = &mut manager.resources;
         let mut proceed_background = false;
@@ -289,6 +305,15 @@ impl ResourceManager {
         }
     }
 
+    async fn read_available_free_resources(&self) -> Resources {
+        let mut lock = self.resources.read().await;
+        let inner = &*lock;
+        let resources = inner.resources;
+        drop(lock);
+
+        resources
+    }
+
     async fn get_resources(&self, epoch: u32, priority: Priority<PRIORITY_DEPTH>, resources: Resources, is_background: bool) -> ResourceResponseFuture {
         let mut lock = self.resources.write().await;
         let inner = lock.deref_mut();
@@ -302,7 +327,7 @@ impl ResourceManager {
     async fn return_resources(&self, resources: Resources) {
         let mut lock = self.resources.write().await;
         let inner = lock.deref_mut();
-        return_res(&mut inner.resources, resources);
+        Self::return_resources_inner(inner, resources);
         drop(lock);
     }
 }
@@ -362,8 +387,6 @@ use crate::resource_management::utils::{ChunkableVector, get_chunk_size};
 
 #[cfg(test)]
 mod test {
-    use std::thread::Thread;
-
     use super::*;
 
     use futures::task::SpawnExt;
@@ -375,30 +398,37 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_spawn_simple() {
-        const SAMPLES: usize = 1 << 10;
+    fn test_async_multiexp() {
+        use crate::kate_commitment::test::*;
+        const SAMPLES: usize = 1 << 24;
 
-        let rng = &mut rand::thread_rng();
-        let v = Arc::new((0..SAMPLES).map(|_| <Bn256 as ScalarEngine>::Fr::rand(rng)).collect::<Vec<_>>());
-        let g = Arc::new((0..SAMPLES).map(|_| <Bn256 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
+        let pool = crate::multicore::Worker::new();
 
-        let pool = ThreadPool::builder().pool_size(4).create().unwrap();
+        println!("Generating random data");
+        let scalars = make_random_field_elements::<<Bn256 as ScalarEngine>::Fr>(&pool, SAMPLES);
+        let points = make_random_g1_points::<<Bn256 as Engine>::G1Affine>(&pool, SAMPLES);
+        println!("Done generating");
+
+        let v = Arc::new(scalars);
+        let g = Arc::new(points);
+
         let manager = ResourceManagerProxy::new_simple();
         let worker = manager.create_worker();
         let fut = multiexp::<Bn256>(worker, v.clone(), g.clone(), false);
+        let now = std::time::Instant::now();
         let handle = manager.inner.thread_pool.spawn_with_handle(fut).unwrap();
         let result = block_on(handle);
-        dbg!();
+        dbg!(now.elapsed());
 
         let inner = manager.inner;
-        dbg!(Arc::strong_count(&inner));
         let manager = Arc::try_unwrap(inner).unwrap();
-        dbg!(manager.resources.try_unwrap().unwrap());
 
-        let pool = crate::multicore::Worker::new();
+
         let vv = v.iter().map(|el| el.into_repr()).collect::<Vec<_>>();
         let g = Arc::try_unwrap(g).unwrap();
+        let now = std::time::Instant::now();
         let reference_result = crate::multiexp::dense_multiexp(&pool, &g, &vv).unwrap();
+        dbg!(now.elapsed());
         assert_eq!(result.into_affine(), reference_result.into_affine());
     }
 }

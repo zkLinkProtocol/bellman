@@ -714,6 +714,7 @@ pub fn dense_multiexp<G: CurveAffine>(
 
         // (f64::from(exponents.len() as u32)).ln().ceil() as u32
     };
+    dbg!(c);
 
     // dense_multiexp_inner_unrolled_with_prefetch(pool, bases, exponents, 0, c, true)
     dense_multiexp_inner(pool, bases, exponents, 0, c, true)
@@ -746,6 +747,7 @@ fn dense_multiexp_inner<G: CurveAffine>(
                     let zero = <G::Engine as ScalarEngine>::Fr::zero().into_repr();
                     let one = <G::Engine as ScalarEngine>::Fr::one().into_repr();
 
+                    let s1 = std::time::Instant::now();
                     for (base, &exp) in base.iter().zip(exp.iter()) {
                         // let index = (exp.as_ref()[0] & mask) as usize;
 
@@ -770,13 +772,16 @@ fn dense_multiexp_inner<G: CurveAffine>(
                             }
                         }
                     }
+                    dbg!(s1.elapsed());
 
                     // buckets are filled with the corresponding accumulated value, now sum
+                    let s2 = std::time::Instant::now();
                     let mut running_sum = G::Projective::zero();
                     for exp in buckets.into_iter().rev() {
                         running_sum.add_assign(&exp);
                         acc.add_assign(&running_sum);
                     }
+                    dbg!(s2.elapsed());
 
                     let mut guard = match this_region_rwlock.lock() {
                         Ok(guard) => guard,

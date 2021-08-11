@@ -1,6 +1,8 @@
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SignedDigit(u16);
+pub struct SignedDigit(u16);
+
+pub const SIGNED_DIGIT_ENCODING_LEN: usize = 2;
 
 impl SignedDigit {
     const SGN_MASK: u16 = 1u16 << 15;
@@ -34,7 +36,7 @@ impl SignedDigit {
         (sgn, abs)
     }
 
-    pub(crate) fn serialize(self) -> [u8; 2] {
+    pub fn serialize(self) -> [u8; SIGNED_DIGIT_ENCODING_LEN] {
         self.0.to_le_bytes()
     }
 }

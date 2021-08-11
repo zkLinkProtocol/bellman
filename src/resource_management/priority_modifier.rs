@@ -1,7 +1,5 @@
 use std::sync::atomic::AtomicUsize;
 
-use lazy_static::__Deref;
-
 #[derive(Debug)]
 pub struct Priority<const N: usize>{
     depth: AtomicUsize,

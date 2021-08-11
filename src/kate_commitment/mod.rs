@@ -1206,7 +1206,7 @@ pub(crate) mod test {
         result 
     }
 
-    fn make_random_g1_points<G: CurveAffine>(
+    pub(crate) fn make_random_g1_points<G: CurveAffine>(
         worker: &Worker,
         num_elements: usize,
     ) -> Vec<G> {
@@ -1233,8 +1233,13 @@ pub(crate) mod test {
                 let subrng = ChaChaRng::from_seed(&seed);
                 scope.spawn(move |_| {
                     let mut subrng = subrng;
-                    for r in r.iter_mut() {
+                    let mut temporary = Vec::with_capacity(r.len());
+                    for _ in 0..r.len() {
                         let p: G::Projective = subrng.gen();
+                        temporary.push(p);
+                    }
+                    G::Projective::batch_normalization(&mut temporary);
+                    for (r, p) in r.iter_mut().zip(temporary.into_iter()) {
                         *r = p.into_affine();
                     }
                 });
