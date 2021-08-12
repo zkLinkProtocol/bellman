@@ -400,7 +400,8 @@ mod test {
     #[test]
     fn test_async_multiexp() {
         use crate::kate_commitment::test::*;
-        const SAMPLES: usize = 1 << 24;
+        // const SAMPLES: usize = 1 << 24;
+        const SAMPLES: usize = 1 << 20;
 
         let pool = crate::multicore::Worker::new();
 

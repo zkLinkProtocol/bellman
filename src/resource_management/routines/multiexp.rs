@@ -158,17 +158,53 @@ pub async fn scalars_to_signed_digits<E: Engine>(worker: Worker, scalars: Arc<Ve
 
     // now we need to transpose the results to sort into all the signed digits at the same place
     let s2 = std::time::Instant::now();
-    let mut final_result: [Vec<_>; NUM_WINDOWS] = (0..16).map(|_| Vec::with_capacity(num_scalars)).collect::<Vec<_>>().try_into().unwrap();
-    // let mut buffered_writers: [_; NUM_WINDOWS] = final_result.iter_mut().map(|el| BufWriter::with_capacity(1 << 24, el)).collect::<Vec<_>>().try_into().unwrap();
-    for r in join.into_iter() {
-        // we have a vector of [digits] of for each set of scalars, and need to transform to N vectors of n_th place digit of each scalar
-        for el in r.into_iter() {
-            for (i, src) in std::array::IntoIter::new(el).enumerate() {
-                final_result[i].push(src);
-            }
-        }
+    // let mut final_result: [Vec<_>; NUM_WINDOWS] = (0..16).map(|_| Vec::with_capacity(num_scalars)).collect::<Vec<_>>().try_into().unwrap();
+    let mut final_result: [Vec<_>; NUM_WINDOWS] = (0..16).map(|_| vec![SignedDigit::new(); num_scalars]).collect::<Vec<_>>().try_into().unwrap();
+    let [mut w0, mut w1, mut w2, mut w3, mut w4, mut w5, mut w6, mut w7, mut w8, mut w9, mut w10, mut w11, mut w12, mut w13, mut w14, mut w15] = final_result;
+    let mut results_iter = w0.iter_mut()
+        .zip(w1.iter_mut())
+        .zip(w2.iter_mut())
+        .zip(w3.iter_mut())
+        .zip(w4.iter_mut())
+        .zip(w5.iter_mut())
+        .zip(w6.iter_mut())
+        .zip(w7.iter_mut())
+        .zip(w8.iter_mut())
+        .zip(w9.iter_mut())
+        .zip(w10.iter_mut())
+        .zip(w11.iter_mut())
+        .zip(w12.iter_mut())
+        .zip(w13.iter_mut())
+        .zip(w14.iter_mut())
+        .zip(w15.iter_mut());
+
+    let mut src_iter = join.into_iter().map(|el| el.into_iter()).flatten();
+    for (dst, src) in (&mut results_iter).zip(&mut src_iter) {
+        let (((((((((((((((s0, s1), s2), s3), s4), s5), s6), s7), s8), s9), s10), s11), s12), s13), s14), s15) = dst;
+        let [t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15] = src;
+        *s0 = t0;
+        *s1 = t1;
+        *s2 = t2;
+        *s3 = t3;
+        *s4 = t4;
+        *s5 = t5;
+        *s6 = t6;
+        *s7 = t7;
+        *s8 = t8;
+        *s9 = t9;
+        *s10 = t10;
+        *s11 = t11;
+        *s12 = t12;
+        *s13 = t13;
+        *s14 = t14;
+        *s15 = t15;
     }
+    assert!(results_iter.next().is_none());
+    assert!(src_iter.next().is_none());
+
     dbg!(s2.elapsed());
+
+    let final_result = [w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15];
 
     final_result
 }
