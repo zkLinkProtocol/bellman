@@ -54,7 +54,7 @@ pub async fn multiexp<E: Engine>(worker: Worker, scalars: Arc<Vec<E::Fr>>, bases
     result
 }
 
-async fn sort_into_buckets<E: Engine>(worker_scope: Worker, digits: Vec<SignedDigit>, bases: Arc<Vec<E::G1Affine>>, is_background: bool) -> Vec<E::G1> {
+pub async fn sort_into_buckets<E: Engine>(worker_scope: Worker, digits: Vec<SignedDigit>, bases: Arc<Vec<E::G1Affine>>, is_background: bool) -> Vec<E::G1> {
     use crate::pairing::CurveProjective;
     use crate::pairing::CurveAffine;
     assert_eq!(digits.len(), bases.len());
@@ -80,7 +80,7 @@ async fn sort_into_buckets<E: Engine>(worker_scope: Worker, digits: Vec<SignedDi
     all_buckets
 }
 
-async fn sum_buckets<E: Engine>(worker: Worker, mut buckets: Vec<E::G1>, is_background: bool) -> E::G1 {
+pub async fn sum_buckets<E: Engine>(worker: Worker, mut buckets: Vec<E::G1>, is_background: bool) -> E::G1 {
     use crate::pairing::CurveProjective;
     use crate::pairing::CurveAffine;
 
