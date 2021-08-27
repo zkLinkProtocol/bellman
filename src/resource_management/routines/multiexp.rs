@@ -6,6 +6,7 @@ use crate::pairing::ff::PrimeField;
 use futures::task::SpawnExt;
 
 const WIDTH: u32 = 16;
+const NUM_BUCKETS: usize = 1 << (WIDTH-1);
 const MM: u64 = 1u64 << WIDTH;
 const MIDPOINT: u64 = MM >> 1;
 const MASK: u64 = MM - 1;
@@ -60,7 +61,7 @@ async fn sort_into_buckets<E: Engine>(worker_scope: Worker, digits: Vec<SignedDi
 
     let granted_resources = worker_scope.get_cpu_unit(is_background).await.await;
     
-    let mut all_buckets = vec![E::G1::zero(); (1<<WIDTH) + 1];
+    let mut all_buckets = vec![E::G1::zero(); NUM_BUCKETS];
     let s1 = std::time::Instant::now();
     for (digit, base) in digits.into_iter().zip(bases.iter()) {
         let mut base = *base;

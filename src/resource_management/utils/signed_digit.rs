@@ -10,7 +10,7 @@ impl SignedDigit {
     const ABS_MASK: u16 = !Self::SGN_MASK;
     const MAX_ABS: u16 = 1u16 << 15;
 
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         SignedDigit(0)
     }
 
@@ -36,7 +36,7 @@ impl SignedDigit {
         (sgn, abs)
     }
 
-    pub fn serialize(self) -> [u8; SIGNED_DIGIT_ENCODING_LEN] {
+    pub const fn serialize(self) -> [u8; SIGNED_DIGIT_ENCODING_LEN] {
         self.0.to_le_bytes()
     }
 }
