@@ -5,10 +5,10 @@ pub struct SignedDigit(u16);
 pub const SIGNED_DIGIT_ENCODING_LEN: usize = 2;
 
 impl SignedDigit {
-    pub const SGN_MASK: u16 = 1u16 << 15;
     pub const SGN_SHIFT: u32 = 15;
+    pub const SGN_MASK: u16 = 1u16 << Self::SGN_SHIFT;
     pub const ABS_MASK: u16 = !Self::SGN_MASK;
-    pub const MAX_ABS: u16 = 1u16 << 15;
+    pub const MAX_ABS: u16 = 1u16 << Self::SGN_SHIFT;
 
     pub const fn new() -> Self {
         SignedDigit(0)
@@ -19,10 +19,13 @@ impl SignedDigit {
             debug_assert!(abs != 0)
         }
 
-        if abs == Self::MAX_ABS && sign {
+        if abs == Self::MAX_ABS {
+            debug_assert!(sign);
             Self(Self::MAX_ABS)
         } else {
-            Self((sign as u16) << Self::SGN_SHIFT | abs)
+            debug_assert!(abs < Self::MAX_ABS);
+            let packed = ((sign as u16) << Self::SGN_SHIFT) | abs;
+            Self(packed)
         }
     }
 
