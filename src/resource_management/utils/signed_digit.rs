@@ -5,16 +5,16 @@ pub struct SignedDigit(u16);
 pub const SIGNED_DIGIT_ENCODING_LEN: usize = 2;
 
 impl SignedDigit {
-    const SGN_MASK: u16 = 1u16 << 15;
-    const SGN_SHIFT: u32 = 15;
-    const ABS_MASK: u16 = !Self::SGN_MASK;
-    const MAX_ABS: u16 = 1u16 << 15;
+    pub const SGN_MASK: u16 = 1u16 << 15;
+    pub const SGN_SHIFT: u32 = 15;
+    pub const ABS_MASK: u16 = !Self::SGN_MASK;
+    pub const MAX_ABS: u16 = 1u16 << 15;
 
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         SignedDigit(0)
     }
 
-    pub(crate) fn from_sign_and_abs(sign: bool, abs: u16) -> Self {
+    pub fn from_sign_and_abs(sign: bool, abs: u16) -> Self {
         if sign {
             debug_assert!(abs != 0)
         }
@@ -26,7 +26,7 @@ impl SignedDigit {
         }
     }
 
-    pub(crate) fn to_sign_and_abs(self) -> (bool, u16) {
+    pub fn to_sign_and_abs(self) -> (bool, u16) {
         let sgn = ((self.0 & Self::SGN_MASK) >> Self::SGN_SHIFT) != 0;
         let mut abs = self.0 & Self::ABS_MASK;
         if sgn && abs == 0 {
