@@ -5,6 +5,7 @@ use std::cmp::*;
 use std::sync::Arc;
 use std::convert::TryInto;
 
+use futures::task::SpawnExt;
 use pairing::ff::PrimeFieldRepr;
 use std::future::{Future};
 use std::task::{Context, Poll};
@@ -25,10 +26,11 @@ pub use self::routines::*;
 use futures_locks::RwLock;
 // use utils::rw_lock::RwLock;
 
-use futures::future::{join_all, lazy};
+use futures::future::{join_all, lazy, RemoteHandle};
 use futures::channel::oneshot::{channel, Sender, Receiver};
 use futures::executor::{block_on};
 use futures::executor::{ThreadPool};
+use futures::task::SpawnError;
 
 
 #[derive(Debug)]
@@ -166,12 +168,29 @@ impl Worker {
         resp
     }
 
+    pub async fn get_fpga_unit(&self, is_background: bool) -> ResourceResponseFuture {
+        let priority = self.priority.clone();
+        let mut resources = Resources::default();
+        resources.fpga_units = 1;
+        let resp = self.inner.manager.get_resources(self.epoch, priority, resources, is_background).await;
+
+        resp
+    }
+
     pub async fn return_resources(&self, resources: Resources) {
         self.inner.manager.return_resources(resources).await;
     }
 
     pub async fn read_available_free_resources(&self) -> Resources {
         self.inner.manager.read_available_free_resources().await
+    }
+
+    pub fn spawn_with_handle<Fut>(&self, future: Fut) -> Result<RemoteHandle<Fut::Output>, SpawnError>
+    where
+        Fut: Future + Send + 'static,
+        Fut::Output: Send,
+    {
+        self.inner.manager.thread_pool.spawn_with_handle(future)
     }
 }
 
