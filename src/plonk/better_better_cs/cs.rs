@@ -4542,6 +4542,8 @@ mod test {
         ).unwrap();
 
         dbg!(valid);
+
+        assert!(valid);
     }
 
     #[derive(Clone, Debug, Hash, Default)]
