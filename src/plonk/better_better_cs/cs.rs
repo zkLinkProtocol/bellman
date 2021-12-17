@@ -1896,14 +1896,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     }
 
     fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
-        let entries = single_application.get_table_values_for_polys();
+        let entries = table.get_table_values_for_polys();
         assert_eq!(entries.len(), 3);
 
         // sort them in a standard lexicographic way, so our sorting is always simple
         let size = entries[0].len();
         let mut kv_set_entries = Vec::with_capacity(size);
         for i in 0..size {
-            let entry = KeyValueSet::new([entries[0][i], entries[1][i], entries[2][i]]);
+            let entry = KeyValueSet::<E>::new([entries[0][i], entries[1][i], entries[2][i]]);
             kv_set_entries.push(entry)
         }
 
