@@ -250,6 +250,12 @@ impl PrimeFieldRepr for FrRepr {
     }
 }
 
+impl Default for Fr {
+    fn default() -> Self {
+        <Self as Field>::zero()
+    }
+}
+
 impl PrimeField for Fr {
     type Repr = FrRepr;
 

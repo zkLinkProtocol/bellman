@@ -1878,7 +1878,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let mut column_contributions = vec![vec![]; width + 1];
 
         for table in self.tables.iter() {
-            let entries = table.get_table_values_for_polys();
+            // let entries = table.get_table_values_for_polys();
+            let entries = Self::ensure_sorted_table(table);
             // these are individual column vectors, so just copy
             for (idx, e) in entries.into_iter().enumerate() {
                 column_contributions[idx].extend(e);
@@ -1892,6 +1893,31 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
 
         Ok(column_contributions)
+    }
+
+    fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
+        let entries = single_application.get_table_values_for_polys();
+        assert_eq!(entries.len(), 3);
+
+        // sort them in a standard lexicographic way, so our sorting is always simple
+        let size = entries[0].len();
+        let mut kv_set_entries = Vec::with_capacity(size);
+        for i in 0..size {
+            let entry = KeyValueSet::new([entries[0][i], entries[1][i], entries[2][i]]);
+            kv_set_entries.push(entry)
+        }
+
+        kv_set_entries.sort();
+
+        let mut result = vec![Vec::with_capacity(size); 3];
+
+        for kv in kv_set_entries.iter() {
+            for i in 0..3 {
+                result[i].push(kv.inner[i]);
+            }
+        }
+
+        result
     }
 
     pub fn calculate_interleaved_t_polys(&self) -> 
@@ -1933,7 +1959,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let lookup_selector = self.calculate_lookup_selector_values()?;
 
         for single_application in self.tables.iter() {
-            let entries = single_application.get_table_values_for_polys();
+            // let entries = single_application.get_table_values_for_polys();
+            let entries = Self::ensure_sorted_table(single_application);
             assert_eq!(entries.len(), 3);
             let table_id = single_application.table_id();
             let num_entries = single_application.size();
@@ -1984,7 +2011,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             // copy table elements themselves
 
-            let entries = single_application.get_table_values_for_polys();
+            // let entries = single_application.get_table_values_for_polys();
+            let entries = Self::ensure_sorted_table(single_application);
             // those are full values of polynomials, so we have to virtually transpose
 
             let size = entries[0].len();
@@ -4490,7 +4518,7 @@ mod test {
     }
 
     #[test]
-    fn test_circuit_setup_and_prove() {
+    fn test_setup_and_prove_custom_gate_and_tables() {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;
         use crate::plonk::better_better_cs::verifier::*;
@@ -4541,7 +4569,62 @@ mod test {
             None,
         ).unwrap();
 
-        dbg!(valid);
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_setup_and_prove_single_gate_and_tables() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::worker::Worker;
+        use crate::plonk::better_better_cs::verifier::*;
+        use crate::plonk::better_better_cs::setup::VerificationKey;
+
+        let mut assembly = SetupAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+
+        let circuit = TestCircuit4WithLookupsManyGatesSmallTable::<Bn256> {
+            _marker: PhantomData
+        };
+
+        circuit.synthesize(&mut assembly).expect("must work");
+
+        println!("Assembly contains {} gates", assembly.n());
+        assert!(assembly.is_satisfied());
+
+        assembly.finalize();
+
+        println!("Finalized assembly contains {} gates", assembly.n());
+
+        let worker = Worker::new();
+
+        let setup = assembly.create_setup::<TestCircuit4WithLookupsManyGatesSmallTable<Bn256>>(&worker).unwrap();
+
+        let mut assembly = ProvingAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+        circuit.synthesize(&mut assembly).expect("must work");
+        assembly.finalize();
+
+        let size = assembly.n().next_power_of_two();
+
+        use crate::plonk::commitments::transcript::keccak_transcript::RollingKeccakTranscript;
+        use crate::kate_commitment::*;
+
+        let crs_mons = Crs::<Bn256, CrsForMonomialForm>::crs_42(size, &worker);
+
+        let proof = assembly.create_proof::<TestCircuit4WithLookupsManyGatesSmallTable<Bn256>, RollingKeccakTranscript<Fr>>(
+            &worker, 
+            &setup, 
+            &crs_mons, 
+            None
+        ).unwrap();
+
+        let vk = VerificationKey::from_setup(&setup, &worker, &crs_mons).unwrap();
+
+        let valid = verify::<Bn256, TestCircuit4WithLookupsManyGatesSmallTable<Bn256>, RollingKeccakTranscript<Fr>>(
+            &vk,
+            &proof,
+            None,
+        ).unwrap();
+
+        assert!(valid);
     }
 
     #[derive(Clone, Debug, Hash, Default)]

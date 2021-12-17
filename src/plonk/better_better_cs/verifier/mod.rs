@@ -180,12 +180,11 @@ pub fn aggregate<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     let mut gate_selectors_commitments_storage = HashMap::new();
     {
         let mut gate_setup_polys_commitments_iter = vk.gate_setup_commitments.iter();
-        let mut gate_selectors_polys_commitments_iter = vk.gate_selectors_commitments.iter();
 
-        for gate in sorted_gates.iter() {
-            let key = PolyIdentifier::GateSelector(gate.name());
-            let commitment = *gate_selectors_polys_commitments_iter.next().ok_or(SynthesisError::AssignmentMissing)?;
-            gate_selectors_commitments_storage.insert(key, commitment);
+
+        if sorted_gates.len() == 1 {
+            // there is no selector
+            let gate = sorted_gates.last().unwrap();
 
             let setup_polys = gate.setup_polynomials();
             for id in setup_polys.into_iter() {
@@ -193,10 +192,25 @@ pub fn aggregate<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
 
                 setup_commitments_storage.insert(id, commitment);
             }
+        } else {
+            let mut gate_selectors_polys_commitments_iter = vk.gate_selectors_commitments.iter();
+
+            for gate in sorted_gates.iter() {
+                let key = PolyIdentifier::GateSelector(gate.name());
+                let commitment = *gate_selectors_polys_commitments_iter.next().ok_or(SynthesisError::AssignmentMissing)?;
+                gate_selectors_commitments_storage.insert(key, commitment);
+    
+                let setup_polys = gate.setup_polynomials();
+                for id in setup_polys.into_iter() {
+                    let commitment = *gate_setup_polys_commitments_iter.next().ok_or(SynthesisError::AssignmentMissing)?;
+    
+                    setup_commitments_storage.insert(id, commitment);
+                }
+            }
+            safe_assert(gate_selectors_polys_commitments_iter.next().is_none())?;
         }
 
         safe_assert(gate_setup_polys_commitments_iter.next().is_none())?;
-        safe_assert(gate_selectors_polys_commitments_iter.next().is_none())?;
     }
 
     let queries_with_linearization = sort_queries_for_linearization(&sorted_gates, MAX_DILATION);
