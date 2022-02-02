@@ -1366,7 +1366,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             if &t_poly.as_ref()[(l-4)..] != &[E::Fr::zero(); 4][..] {
                 return Err(SynthesisError::Unsatisfiable);
             }
-            // assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
+  
+          // assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
         }
 
         // println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
@@ -1387,6 +1388,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             proof.quotient_poly_parts_commitments.push(commitment);
         }
+
+
+
+
+
+
+
+
+
+
+
+        // round 4
 
         // draw opening point
         let z = transcript.get_challenge();
@@ -1560,6 +1573,79 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         transcript.commit_field_element(&copy_permutation_z_at_z_omega);
         proof.copy_permutation_grand_product_opening_at_z_omega = copy_permutation_z_at_z_omega;
 
+
+        self.round_5(&mut proof,
+                     worker,
+                     &monomials_storage,
+                     num_state_polys,
+                     required_domain_size,
+                     z,
+                     num_different_gates,
+                     mon_crs,
+                     domain,
+                     lookup_data,
+                     queries_with_linearization,
+                     transcript,
+                     powers_of_alpha_for_gates,
+                     copy_permutation_z_at_z_omega,
+                     copy_permutation_queries,
+                     beta_for_copy_permutation,
+                     gamma_for_copy_permutation,
+                     copy_grand_product_alphas,
+                     lookup_z_poly_in_monomial_form,
+                     t_poly_parts,
+                     copy_permutation_z_in_monomial_form,
+                     quotient_at_z,
+                     gamma_for_lookup,
+                     beta_for_lookup,
+                     query_values_map,
+                     z_omega,
+                     lookup_grand_product_alphas,
+                     selector_values,
+                     non_residues,
+                     )?;
+
+        Ok(proof)
+    }
+
+    fn round_4<C: Circuit<E>, T: Transcript<E::Fr>>(
+        z: E::Fr
+    ) -> Result<Round4Output, SynthesisError> {
+        todo!();
+    }
+
+    fn round_5<C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        proof: &mut Proof<E, C>,
+        worker: &Worker,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        num_state_polys: usize,
+        required_domain_size: usize,
+        z: E::Fr,
+        num_different_gates: usize,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        domain: Domain<E::Fr>,
+        lookup_data: Option<data_structures::LookupDataHolder<E>>,
+        queries_with_linearization: SortedGateQueries<E>,
+        mut transcript: T,
+        powers_of_alpha_for_gates: Vec<E::Fr>,
+        copy_permutation_z_at_z_omega: E::Fr,
+        copy_permutation_queries: Vec<E::Fr>,
+        beta_for_copy_permutation: E::Fr,
+        gamma_for_copy_permutation: E::Fr,
+        copy_grand_product_alphas: Option<[E::Fr; 2]>,
+        lookup_z_poly_in_monomial_form: Option<Polynomial<E::Fr, Coefficients>>,
+        mut t_poly_parts: Vec<Polynomial<E::Fr, Coefficients>>,
+        copy_permutation_z_in_monomial_form: Polynomial<E::Fr, Coefficients>,
+        quotient_at_z: E::Fr,
+        gamma_for_lookup: Option<E::Fr>,
+        beta_for_lookup: Option<E::Fr>,
+        query_values_map: HashMap<PolynomialInConstraint, E::Fr>,
+        z_omega: E::Fr,
+        lookup_grand_product_alphas: Option<[E::Fr; 3]>,
+        selector_values: Vec<E::Fr>,
+        non_residues: Vec<E::Fr>,
+    ) -> Result<(), SynthesisError> {
         // we've computed everything, so perform linearization
 
         let mut challenges_slice = &powers_of_alpha_for_gates[..];
@@ -2167,8 +2253,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         proof.opening_proof_at_z = opening_at_z;
         proof.opening_proof_at_z_omega = opening_at_z_omega;
 
-        Ok(proof)
+        Ok(())
     }
+}
+
+struct Round4Output {
+    
 }
 
 #[derive(Debug)]
