@@ -868,6 +868,116 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             None
         };
 
+        let round_3_output = self.round_3(worker,
+            &mon_crs,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            required_domain_size,
+            &mut transcript,
+            ldes_storage,
+            omegas_bitreversed,
+            omegas_inv_bitreversed,
+            &lookup_data,
+            &domain,
+            &beta_for_copy_permutation,
+            &gamma_for_copy_permutation,
+            &lookup_z_poly_in_monomial_form,
+            &copy_permutation_z_in_monomial_form,
+            &gamma_for_lookup,
+            &beta_for_lookup,
+            &non_residues)?;
+
+        let round_4_output = self.round_4(worker,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            required_domain_size,
+            &mut transcript,
+            &domain,
+            &copy_permutation_z_in_monomial_form,
+            &round_3_output.t_poly_parts)?;
+
+        self.round_5(&worker,
+            &mon_crs,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            required_domain_size,
+            transcript,
+            lookup_data,
+            domain,
+            beta_for_copy_permutation,
+            gamma_for_copy_permutation,
+            lookup_z_poly_in_monomial_form,
+            copy_permutation_z_in_monomial_form,
+            gamma_for_lookup,
+            beta_for_lookup,
+            non_residues,
+            round_3_output.num_different_gates,
+            round_3_output.powers_of_alpha_for_gates,
+            round_3_output.copy_grand_product_alphas,
+            round_3_output.t_poly_parts,
+            round_3_output.lookup_grand_product_alphas,
+            round_4_output.z,
+            round_4_output.z_omega,
+            round_4_output.queries_with_linearization,
+            round_4_output.copy_permutation_z_at_z_omega,
+            round_4_output.copy_permutation_queries,
+            round_4_output.quotient_at_z,
+            round_4_output.query_values_map,
+            round_4_output.selector_values)?;
+
+        Ok(proof)
+    }
+
+    fn round_2<C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        worker: &Worker,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        // init input:
+        proof: &mut Proof<E, C>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        num_state_polys: usize,
+        required_domain_size: usize,
+        transcript: &mut T,
+        mut ldes_storage: AssembledPolynomialStorage<E>,
+        // round 1 input
+        omegas_bitreversed: BitReversedOmegas<E::Fr>,
+        omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
+        lookup_data: &Option<data_structures::LookupDataHolder<E>>,
+    ) -> Result<Round2Output<E>, SynthesisError> {
+
+
+        todo!();
+    }
+
+    fn round_3<C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        worker: &Worker,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        // init input:
+        proof: &mut Proof<E, C>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        num_state_polys: usize,
+        required_domain_size: usize,
+        transcript: &mut T,
+        mut ldes_storage: AssembledPolynomialStorage<E>,
+        // round 1 input
+        omegas_bitreversed: BitReversedOmegas<E::Fr>,
+        omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
+        lookup_data: &Option<data_structures::LookupDataHolder<E>>,
+        // round 2 input
+        domain: &Domain<E::Fr>,
+        beta_for_copy_permutation: &E::Fr, 
+        gamma_for_copy_permutation: &E::Fr,
+        lookup_z_poly_in_monomial_form: &Option<Polynomial<E::Fr, Coefficients>>,
+        copy_permutation_z_in_monomial_form: &Polynomial<E::Fr, Coefficients>,
+        gamma_for_lookup: &Option<E::Fr>,
+        beta_for_lookup: &Option<E::Fr>,
+        non_residues: &Vec<E::Fr>,
+    ) -> Result<Round3Output<E>, SynthesisError> {
+        
         // now draw alpha and add all the contributions to the quotient polynomial
 
         let alpha = transcript.get_challenge();
@@ -1050,7 +1160,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             assert_eq!(non_residues.len() + 1, num_state_polys);
 
             for (poly_idx, non_res) in (1..num_state_polys).zip(non_residues.iter()) {
-                let mut factor = beta_for_copy_permutation;
+                let mut factor = *beta_for_copy_permutation;
                 factor.mul_assign(&non_res);
 
                 let key = PolyIdentifier::VariablesPolynomial(poly_idx);
@@ -1382,25 +1492,35 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             )?;
 
             commit_point_as_xy::<E, T>(
-                &mut transcript,
+                transcript,
                 &commitment
             );
 
             proof.quotient_poly_parts_commitments.push(commitment);
         }
 
+        Ok(Round3Output {
+            lookup_grand_product_alphas,
+            t_poly_parts,
+            copy_grand_product_alphas,
+            powers_of_alpha_for_gates,
+            num_different_gates})
+    }
 
-
-
-
-
-
-
-
-
-
-        // round 4
-
+    fn round_4<C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        worker: &Worker,
+        // init input:
+        proof: &mut Proof<E, C>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        num_state_polys: usize,
+        required_domain_size: usize,
+        transcript: &mut T,
+        // round 2 input
+        domain: &Domain<E::Fr>,
+        copy_permutation_z_in_monomial_form: &Polynomial<E::Fr, Coefficients>,
+        t_poly_parts: &Vec<Polynomial<E::Fr, Coefficients>>,
+    ) -> Result<Round4Output<E>, SynthesisError> {
         // draw opening point
         let z = transcript.get_challenge();
 
@@ -1573,78 +1693,54 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         transcript.commit_field_element(&copy_permutation_z_at_z_omega);
         proof.copy_permutation_grand_product_opening_at_z_omega = copy_permutation_z_at_z_omega;
 
-
-        self.round_5(&mut proof,
-                     worker,
-                     &monomials_storage,
-                     num_state_polys,
-                     required_domain_size,
-                     z,
-                     num_different_gates,
-                     mon_crs,
-                     domain,
-                     lookup_data,
-                     queries_with_linearization,
-                     transcript,
-                     powers_of_alpha_for_gates,
-                     copy_permutation_z_at_z_omega,
-                     copy_permutation_queries,
-                     beta_for_copy_permutation,
-                     gamma_for_copy_permutation,
-                     copy_grand_product_alphas,
-                     lookup_z_poly_in_monomial_form,
-                     t_poly_parts,
-                     copy_permutation_z_in_monomial_form,
-                     quotient_at_z,
-                     gamma_for_lookup,
-                     beta_for_lookup,
-                     query_values_map,
-                     z_omega,
-                     lookup_grand_product_alphas,
-                     selector_values,
-                     non_residues,
-                     )?;
-
-        Ok(proof)
-    }
-
-    fn round_4<C: Circuit<E>, T: Transcript<E::Fr>>(
-        z: E::Fr
-    ) -> Result<Round4Output, SynthesisError> {
-        todo!();
+        Ok(Round4Output {
+            selector_values,
+            z_omega,
+            query_values_map,
+            copy_permutation_z_at_z_omega,
+            copy_permutation_queries,
+            queries_with_linearization,
+            z,
+            quotient_at_z,
+        })
     }
 
     fn round_5<C: Circuit<E>, T: Transcript<E::Fr>>(
         &self,
-        proof: &mut Proof<E, C>,
         worker: &Worker,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        // init input:
+        proof: &mut Proof<E, C>,
         monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
         num_state_polys: usize,
         required_domain_size: usize,
-        z: E::Fr,
-        num_different_gates: usize,
-        mon_crs: &Crs<E, CrsForMonomialForm>,
-        domain: Domain<E::Fr>,
-        lookup_data: Option<data_structures::LookupDataHolder<E>>,
-        queries_with_linearization: SortedGateQueries<E>,
         mut transcript: T,
-        powers_of_alpha_for_gates: Vec<E::Fr>,
-        copy_permutation_z_at_z_omega: E::Fr,
-        copy_permutation_queries: Vec<E::Fr>,
-        beta_for_copy_permutation: E::Fr,
+        // round 1 input
+        lookup_data: Option<data_structures::LookupDataHolder<E>>,
+        // round 2 input
+        domain: Domain<E::Fr>,
+        beta_for_copy_permutation: E::Fr, 
         gamma_for_copy_permutation: E::Fr,
-        copy_grand_product_alphas: Option<[E::Fr; 2]>,
         lookup_z_poly_in_monomial_form: Option<Polynomial<E::Fr, Coefficients>>,
-        mut t_poly_parts: Vec<Polynomial<E::Fr, Coefficients>>,
         copy_permutation_z_in_monomial_form: Polynomial<E::Fr, Coefficients>,
-        quotient_at_z: E::Fr,
         gamma_for_lookup: Option<E::Fr>,
         beta_for_lookup: Option<E::Fr>,
-        query_values_map: HashMap<PolynomialInConstraint, E::Fr>,
-        z_omega: E::Fr,
-        lookup_grand_product_alphas: Option<[E::Fr; 3]>,
-        selector_values: Vec<E::Fr>,
         non_residues: Vec<E::Fr>,
+        // round 3 input
+        num_different_gates: usize,
+        powers_of_alpha_for_gates: Vec<E::Fr>,
+        copy_grand_product_alphas: Option<[E::Fr; 2]>,
+        mut t_poly_parts: Vec<Polynomial<E::Fr, Coefficients>>,
+        lookup_grand_product_alphas: Option<[E::Fr; 3]>,
+        // round 4 input
+        z: E::Fr,
+        z_omega: E::Fr,
+        queries_with_linearization: SortedGateQueries<E>,
+        copy_permutation_z_at_z_omega: E::Fr,
+        copy_permutation_queries: Vec<E::Fr>,
+        quotient_at_z: E::Fr,
+        query_values_map: HashMap<PolynomialInConstraint, E::Fr>,
+        selector_values: Vec<E::Fr>,
     ) -> Result<(), SynthesisError> {
         // we've computed everything, so perform linearization
 
@@ -2257,9 +2353,51 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     }
 }
 
-struct Round4Output {
-    
+struct InitOutput<'a, E: Engine, C: Circuit<E>, T: Transcript<E::Fr>> {
+    transcript: T,
+    required_domain_size: usize,
+    num_state_polys: usize,
+    monomials_storage: AssembledPolynomialStorageForMonomialForms<'a, E>,
+    proof: Proof<E, C>,
+    ldes_storage: AssembledPolynomialStorage<'a, E>,
 }
+
+struct Round1Output<'a, E: Engine> {
+    lookup_data: Option<data_structures::LookupDataHolder<'a, E>>,
+    omegas_bitreversed: BitReversedOmegas<E::Fr>,
+    omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
+}
+
+struct Round2Output<E: Engine> {
+    domain: Domain<E::Fr>,
+    beta_for_copy_permutation: E::Fr,
+    gamma_for_copy_permutation: E::Fr,
+    lookup_z_poly_in_monomial_form: Option<Polynomial<E::Fr, Coefficients>>,
+    copy_permutation_z_in_monomial_form: Polynomial<E::Fr, Coefficients>,
+    gamma_for_lookup: Option<E::Fr>,
+    beta_for_lookup: Option<E::Fr>,
+    non_residues: Vec<E::Fr>,
+}
+
+struct Round3Output<E: Engine> {
+    lookup_grand_product_alphas: Option<[E::Fr; 3]>,
+    t_poly_parts: Vec<Polynomial<E::Fr, Coefficients>>,
+    copy_grand_product_alphas: Option<[E::Fr; 2]>,
+    powers_of_alpha_for_gates: Vec<E::Fr>,
+    num_different_gates: usize,
+}
+
+struct Round4Output<E: Engine> {
+    selector_values: Vec<E::Fr>,
+    z_omega: E::Fr,
+    query_values_map: HashMap<PolynomialInConstraint, E::Fr>,
+    copy_permutation_z_at_z_omega: E::Fr,
+    copy_permutation_queries: Vec<E::Fr>,
+    queries_with_linearization: SortedGateQueries<E>,
+    z: E::Fr,
+    quotient_at_z: E::Fr,    
+}
+
 
 #[derive(Debug)]
 pub struct SortedGateQueries<E: Engine>{
