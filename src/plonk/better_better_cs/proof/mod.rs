@@ -360,6 +360,109 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         monomials_storage.extend_from_setup(setup)?;
 
+        let mut round_1_output = self.round_1(worker,
+            setup,
+            mon_crs,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            num_witness_polys,
+            required_domain_size,
+            &mut transcript,
+            &values_storage,
+            &omegas_bitreversed,
+            &omegas_inv_bitreversed)?;
+
+        let round_2_output = self.round_2(worker,
+            mon_crs,
+            &mut proof,
+            num_state_polys,
+            required_domain_size,
+            &mut transcript,
+            &mut values_storage,
+            &omegas_inv_bitreversed,
+            &mut round_1_output.lookup_data)?;
+
+        let round_3_output = self.round_3(worker,
+            mon_crs,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            required_domain_size,
+            &mut transcript,
+            ldes_storage,
+            omegas_bitreversed,
+            omegas_inv_bitreversed,
+            &round_1_output.lookup_data,
+            &round_2_output.domain,
+            &round_2_output.beta_for_copy_permutation,
+            &round_2_output.gamma_for_copy_permutation,
+            &round_2_output.lookup_z_poly_in_monomial_form,
+            &round_2_output.copy_permutation_z_in_monomial_form,
+            &round_2_output.gamma_for_lookup,
+            &round_2_output.beta_for_lookup,
+            &round_2_output.non_residues)?;
+
+        let round_4_output = self.round_4(worker,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            required_domain_size,
+            &mut transcript,
+            &round_2_output.domain,
+            &round_2_output.copy_permutation_z_in_monomial_form,
+            &round_3_output.t_poly_parts)?;
+
+        self.round_5(&worker,
+            mon_crs,
+            &mut proof,
+            &monomials_storage,
+            num_state_polys,
+            required_domain_size,
+            transcript,
+            round_1_output.lookup_data,
+            round_2_output.domain,
+            round_2_output.beta_for_copy_permutation,
+            round_2_output.gamma_for_copy_permutation,
+            round_2_output.lookup_z_poly_in_monomial_form,
+            round_2_output.copy_permutation_z_in_monomial_form,
+            round_2_output.gamma_for_lookup,
+            round_2_output.beta_for_lookup,
+            round_2_output.non_residues,
+            round_3_output.num_different_gates,
+            round_3_output.powers_of_alpha_for_gates,
+            round_3_output.copy_grand_product_alphas,
+            round_3_output.t_poly_parts,
+            round_3_output.lookup_grand_product_alphas,
+            round_4_output.z,
+            round_4_output.z_omega,
+            round_4_output.queries_with_linearization,
+            round_4_output.copy_permutation_z_at_z_omega,
+            round_4_output.copy_permutation_queries,
+            round_4_output.quotient_at_z,
+            round_4_output.query_values_map,
+            round_4_output.selector_values)?;
+
+        Ok(proof)
+    }
+
+    fn round_1<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        worker: &Worker,
+        setup: &'a Setup<E, C>,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        // init input:
+        proof: &mut Proof<E, C>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        num_state_polys: usize,
+        num_witness_polys: usize,
+        required_domain_size: usize,
+        transcript: &mut T,
+        values_storage: &AssembledPolynomialStorage<E>,
+        omegas_bitreversed: &BitReversedOmegas<E::Fr>,
+        omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
+    ) -> Result<Round1Output<'a, E>, SynthesisError> {
+
         // step 1 - commit state and witness, enumerated. Also commit sorted polynomials for table arguments
         for i in 0..num_state_polys {
             let key = PolyIdentifier::VariablesPolynomial(i);
@@ -371,7 +474,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             )?;
 
             commit_point_as_xy::<E, T>(
-                &mut transcript,
+                transcript,
                 &commitment
             );
 
@@ -388,7 +491,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             )?;
 
             commit_point_as_xy::<E, T>(
-                &mut transcript,
+                transcript,
                 &commitment
             );
 
@@ -410,7 +513,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     let mon = Polynomial::from_values(table_type_values.clone())?;
                     let mon = mon.ifft_using_bitreversed_ntt(
                         &worker,
-                        &omegas_inv_bitreversed,
+                        omegas_inv_bitreversed,
                         &E::Fr::one()
                     )?;
     
@@ -419,7 +522,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
                 let selector_poly = Polynomial::<E::Fr, Values>::from_values(selector_for_lookup_values)?.ifft_using_bitreversed_ntt(
                     &worker,
-                    &omegas_inv_bitreversed,
+                    omegas_inv_bitreversed,
                     &E::Fr::one()
                 )?;
 
@@ -437,7 +540,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 // let mut table_type_values = table_type_poly_ref.clone().fft(&worker).into_coeffs();
                 let mut table_type_values = table_type_poly_ref.clone().fft_using_bitreversed_ntt(
                     &worker,
-                    &omegas_bitreversed,
+                    omegas_bitreversed,
                     &E::Fr::one()
                 )?.into_coeffs();
                 table_type_values.pop().unwrap();
@@ -454,7 +557,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     // let selector_values = PolynomialProxy::from_owned(selector_poly.as_ref().clone().fft(&worker));
                     let selector_values = selector_poly.as_ref().clone().fft_using_bitreversed_ntt(
                         &worker,
-                        &omegas_bitreversed,
+                        omegas_bitreversed,
                         &E::Fr::one()
                     )?;
 
@@ -515,7 +618,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     let mon = Polynomial::from_values(full_t_poly_values.clone())?;
                     let mon = mon.ifft_using_bitreversed_ntt(
                         &worker,
-                        &omegas_inv_bitreversed,
+                        omegas_inv_bitreversed,
                         &E::Fr::one()
                     )?;
     
@@ -544,7 +647,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 // let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft(&worker);
                 let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft_using_bitreversed_ntt(
                     &worker,
-                    &omegas_bitreversed,
+                    omegas_bitreversed,
                     &E::Fr::one()
                 )?;
                 let mut t_values_shifted_coeffs = t_poly_values.clone().into_coeffs();
@@ -591,7 +694,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     let mon = Polynomial::from_values(full_s_poly_values.clone())?;
                     let mon = mon.ifft_using_bitreversed_ntt(
                         &worker,
-                        &omegas_inv_bitreversed,
+                        omegas_inv_bitreversed,
                         &E::Fr::one()
                     )?;
     
@@ -612,7 +715,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             )?;
 
             commit_point_as_xy::<E, T>(
-                &mut transcript,
+                transcript,
                 &s_poly_commitment
             );
 
@@ -640,7 +743,25 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             unimplemented!("do not support multitables yet")
         }
 
-        // step 2 - grand product arguments
+        Ok(Round1Output {
+            lookup_data,
+        })
+    }
+
+    fn round_2<C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        worker: &Worker,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        // init input:
+        proof: &mut Proof<E, C>,
+        num_state_polys: usize,
+        required_domain_size: usize,
+        transcript: &mut T,
+        values_storage: &mut AssembledPolynomialStorage<E>,
+        omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
+        // round 1 input
+        lookup_data: &mut Option<data_structures::LookupDataHolder<E>>,
+    ) -> Result<Round2Output<E>, SynthesisError> {
 
         let beta_for_copy_permutation = transcript.get_challenge();
         let gamma_for_copy_permutation = transcript.get_challenge();
@@ -742,7 +863,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let copy_permutation_z_in_monomial_form = z.ifft_using_bitreversed_ntt(
             &worker, 
-            &omegas_inv_bitreversed, 
+            omegas_inv_bitreversed, 
             &E::Fr::one()
         )?;
 
@@ -753,7 +874,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         )?;
 
         commit_point_as_xy::<E, T>(
-            &mut transcript,
+            transcript,
             &copy_permutation_z_poly_commitment
         );
 
@@ -846,7 +967,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             let z = z.ifft_using_bitreversed_ntt(
                 &worker, 
-                &omegas_inv_bitreversed, 
+                omegas_inv_bitreversed, 
                 &E::Fr::one()
             )?;
 
@@ -857,7 +978,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             )?;
     
             commit_point_as_xy::<E, T>(
-                &mut transcript,
+                transcript,
                 &lookup_z_poly_commitment
             );
     
@@ -868,44 +989,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             None
         };
 
-        let round_3_output = self.round_3(worker,
-            &mon_crs,
-            &mut proof,
-            &monomials_storage,
-            num_state_polys,
-            required_domain_size,
-            &mut transcript,
-            ldes_storage,
-            omegas_bitreversed,
-            omegas_inv_bitreversed,
-            &lookup_data,
-            &domain,
-            &beta_for_copy_permutation,
-            &gamma_for_copy_permutation,
-            &lookup_z_poly_in_monomial_form,
-            &copy_permutation_z_in_monomial_form,
-            &gamma_for_lookup,
-            &beta_for_lookup,
-            &non_residues)?;
-
-        let round_4_output = self.round_4(worker,
-            &mut proof,
-            &monomials_storage,
-            num_state_polys,
-            required_domain_size,
-            &mut transcript,
-            &domain,
-            &copy_permutation_z_in_monomial_form,
-            &round_3_output.t_poly_parts)?;
-
-        self.round_5(&worker,
-            &mon_crs,
-            &mut proof,
-            &monomials_storage,
-            num_state_polys,
-            required_domain_size,
-            transcript,
-            lookup_data,
+        Ok( Round2Output {
             domain,
             beta_for_copy_permutation,
             gamma_for_copy_permutation,
@@ -914,42 +998,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             gamma_for_lookup,
             beta_for_lookup,
             non_residues,
-            round_3_output.num_different_gates,
-            round_3_output.powers_of_alpha_for_gates,
-            round_3_output.copy_grand_product_alphas,
-            round_3_output.t_poly_parts,
-            round_3_output.lookup_grand_product_alphas,
-            round_4_output.z,
-            round_4_output.z_omega,
-            round_4_output.queries_with_linearization,
-            round_4_output.copy_permutation_z_at_z_omega,
-            round_4_output.copy_permutation_queries,
-            round_4_output.quotient_at_z,
-            round_4_output.query_values_map,
-            round_4_output.selector_values)?;
-
-        Ok(proof)
-    }
-
-    fn round_2<C: Circuit<E>, T: Transcript<E::Fr>>(
-        &self,
-        worker: &Worker,
-        mon_crs: &Crs<E, CrsForMonomialForm>,
-        // init input:
-        proof: &mut Proof<E, C>,
-        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
-        num_state_polys: usize,
-        required_domain_size: usize,
-        transcript: &mut T,
-        mut ldes_storage: AssembledPolynomialStorage<E>,
-        // round 1 input
-        omegas_bitreversed: BitReversedOmegas<E::Fr>,
-        omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
-        lookup_data: &Option<data_structures::LookupDataHolder<E>>,
-    ) -> Result<Round2Output<E>, SynthesisError> {
-
-
-        todo!();
+        })
     }
 
     fn round_3<C: Circuit<E>, T: Transcript<E::Fr>>(
@@ -963,9 +1012,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         required_domain_size: usize,
         transcript: &mut T,
         mut ldes_storage: AssembledPolynomialStorage<E>,
-        // round 1 input
         omegas_bitreversed: BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
+        // round 1 input
         lookup_data: &Option<data_structures::LookupDataHolder<E>>,
         // round 2 input
         domain: &Domain<E::Fr>,
@@ -2357,15 +2406,16 @@ struct InitOutput<'a, E: Engine, C: Circuit<E>, T: Transcript<E::Fr>> {
     transcript: T,
     required_domain_size: usize,
     num_state_polys: usize,
+    num_witness_polys: usize,
     monomials_storage: AssembledPolynomialStorageForMonomialForms<'a, E>,
     proof: Proof<E, C>,
     ldes_storage: AssembledPolynomialStorage<'a, E>,
+    omegas_bitreversed: BitReversedOmegas<E::Fr>,
+    omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
 }
 
 struct Round1Output<'a, E: Engine> {
     lookup_data: Option<data_structures::LookupDataHolder<'a, E>>,
-    omegas_bitreversed: BitReversedOmegas<E::Fr>,
-    omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
 }
 
 struct Round2Output<E: Engine> {
