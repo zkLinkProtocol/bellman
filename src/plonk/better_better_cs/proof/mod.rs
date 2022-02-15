@@ -22,6 +22,10 @@ use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
 use std::io::{Read, Write};
 
+// use async_work_manager::*;
+use std::sync::{Arc, Mutex};
+use std::ops::Deref;
+
 use crate::plonk::better_cs::keys::*;
 
 pub fn write_tuple_with_one_index<F: PrimeField, W: Write>(
@@ -282,13 +286,113 @@ use super::cs::*;
 use crate::plonk::commitments::transcript::*;
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> Assembly<E, P, MG, S> {
-    pub fn create_proof<C: Circuit<E>, T: Transcript<E::Fr>>(
-        self, 
+    pub async fn create_proof<C: Circuit<E>, T: Transcript<E::Fr>>(
+        self,
         worker: &Worker,
-        setup: &Setup<E, C>,
+        setup: Arc<Setup<E, C>>,
         mon_crs: &Crs<E, CrsForMonomialForm>,
         transcript_params: Option<T::InitializationParameters>,
     ) -> Result<Proof<E, C>, SynthesisError> {
+
+        let mut init_output = self.initialization::<C, T>(worker,
+            setup.deref(),
+            mon_crs,
+            transcript_params).await?;
+
+        let mut round_1_output = self.round_1(worker,
+            setup.deref(),
+            mon_crs,
+            &mut init_output.proof,
+            &init_output.monomials_storage,
+            init_output.num_state_polys,
+            init_output.num_witness_polys,
+            init_output.required_domain_size,
+            &mut init_output.transcript,
+            &init_output.values_storage,
+            &init_output.omegas_bitreversed,
+            &init_output.omegas_inv_bitreversed).await?;
+
+        let round_2_output = self.round_2(worker,
+            mon_crs,
+            &mut init_output.proof,
+            init_output.num_state_polys,
+            init_output.required_domain_size,
+            &mut init_output.transcript,
+            &mut init_output.values_storage,
+            &init_output.omegas_inv_bitreversed,
+            &mut round_1_output.lookup_data).await?;
+
+        let round_3_output = self.round_3(worker,
+            mon_crs,
+            &mut init_output.proof,
+            &init_output.monomials_storage,
+            init_output.num_state_polys,
+            init_output.required_domain_size,
+            &mut init_output.transcript,
+            init_output.ldes_storage,
+            init_output.omegas_bitreversed,
+            init_output.omegas_inv_bitreversed,
+            &round_1_output.lookup_data,
+            &round_2_output.domain,
+            &round_2_output.beta_for_copy_permutation,
+            &round_2_output.gamma_for_copy_permutation,
+            &round_2_output.lookup_z_poly_in_monomial_form,
+            &round_2_output.copy_permutation_z_in_monomial_form,
+            &round_2_output.gamma_for_lookup,
+            &round_2_output.beta_for_lookup,
+            &round_2_output.non_residues).await?;
+
+        let round_4_output = self.round_4(worker,
+            &mut init_output.proof,
+            &init_output.monomials_storage,
+            init_output.num_state_polys,
+            init_output.required_domain_size,
+            &mut init_output.transcript,
+            &round_2_output.domain,
+            &round_2_output.copy_permutation_z_in_monomial_form,
+            &round_3_output.t_poly_parts).await?;
+
+        self.round_5(&worker,
+            mon_crs,
+            &mut init_output.proof,
+            &init_output.monomials_storage,
+            init_output.num_state_polys,
+            init_output.required_domain_size,
+            init_output.transcript,
+            round_1_output.lookup_data,
+            round_2_output.domain,
+            round_2_output.beta_for_copy_permutation,
+            round_2_output.gamma_for_copy_permutation,
+            round_2_output.lookup_z_poly_in_monomial_form,
+            round_2_output.copy_permutation_z_in_monomial_form,
+            round_2_output.gamma_for_lookup,
+            round_2_output.beta_for_lookup,
+            round_2_output.non_residues,
+            round_3_output.num_different_gates,
+            round_3_output.powers_of_alpha_for_gates,
+            round_3_output.copy_grand_product_alphas,
+            round_3_output.t_poly_parts,
+            round_3_output.lookup_grand_product_alphas,
+            round_4_output.z,
+            round_4_output.z_omega,
+            round_4_output.queries_with_linearization,
+            round_4_output.copy_permutation_z_at_z_omega,
+            round_4_output.copy_permutation_queries,
+            round_4_output.quotient_at_z,
+            round_4_output.query_values_map,
+            round_4_output.selector_values).await?;
+
+        Ok(init_output.proof)
+    }
+
+    async fn initialization<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self,
+        worker: &Worker,
+        setup: &'a Setup<E, C>,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        transcript_params: Option<T::InitializationParameters>,
+    ) -> Result<InitOutput<'a, E, C, T>, SynthesisError> {
+
         assert!(S::PRODUCE_WITNESS);
         assert!(self.is_finalized);
 
@@ -360,110 +464,39 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         monomials_storage.extend_from_setup(setup)?;
 
-        let mut round_1_output = self.round_1(worker,
-            setup,
-            mon_crs,
-            &mut proof,
-            &monomials_storage,
+        Ok(InitOutput {
+            transcript,
+            required_domain_size,
             num_state_polys,
             num_witness_polys,
-            required_domain_size,
-            &mut transcript,
-            &values_storage,
-            &omegas_bitreversed,
-            &omegas_inv_bitreversed)?;
-
-        let round_2_output = self.round_2(worker,
-            mon_crs,
-            &mut proof,
-            num_state_polys,
-            required_domain_size,
-            &mut transcript,
-            &mut values_storage,
-            &omegas_inv_bitreversed,
-            &mut round_1_output.lookup_data)?;
-
-        let round_3_output = self.round_3(worker,
-            mon_crs,
-            &mut proof,
-            &monomials_storage,
-            num_state_polys,
-            required_domain_size,
-            &mut transcript,
+            monomials_storage,
+            values_storage,
+            proof,
             ldes_storage,
             omegas_bitreversed,
-            omegas_inv_bitreversed,
-            &round_1_output.lookup_data,
-            &round_2_output.domain,
-            &round_2_output.beta_for_copy_permutation,
-            &round_2_output.gamma_for_copy_permutation,
-            &round_2_output.lookup_z_poly_in_monomial_form,
-            &round_2_output.copy_permutation_z_in_monomial_form,
-            &round_2_output.gamma_for_lookup,
-            &round_2_output.beta_for_lookup,
-            &round_2_output.non_residues)?;
-
-        let round_4_output = self.round_4(worker,
-            &mut proof,
-            &monomials_storage,
-            num_state_polys,
-            required_domain_size,
-            &mut transcript,
-            &round_2_output.domain,
-            &round_2_output.copy_permutation_z_in_monomial_form,
-            &round_3_output.t_poly_parts)?;
-
-        self.round_5(&worker,
-            mon_crs,
-            &mut proof,
-            &monomials_storage,
-            num_state_polys,
-            required_domain_size,
-            transcript,
-            round_1_output.lookup_data,
-            round_2_output.domain,
-            round_2_output.beta_for_copy_permutation,
-            round_2_output.gamma_for_copy_permutation,
-            round_2_output.lookup_z_poly_in_monomial_form,
-            round_2_output.copy_permutation_z_in_monomial_form,
-            round_2_output.gamma_for_lookup,
-            round_2_output.beta_for_lookup,
-            round_2_output.non_residues,
-            round_3_output.num_different_gates,
-            round_3_output.powers_of_alpha_for_gates,
-            round_3_output.copy_grand_product_alphas,
-            round_3_output.t_poly_parts,
-            round_3_output.lookup_grand_product_alphas,
-            round_4_output.z,
-            round_4_output.z_omega,
-            round_4_output.queries_with_linearization,
-            round_4_output.copy_permutation_z_at_z_omega,
-            round_4_output.copy_permutation_queries,
-            round_4_output.quotient_at_z,
-            round_4_output.query_values_map,
-            round_4_output.selector_values)?;
-
-        Ok(proof)
+            omegas_inv_bitreversed
+        })
     }
 
-    fn round_1<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
+    async fn round_1<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
         &self,
         worker: &Worker,
         setup: &'a Setup<E, C>,
         mon_crs: &Crs<E, CrsForMonomialForm>,
         // init input:
         proof: &mut Proof<E, C>,
-        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<'a, E>,
         num_state_polys: usize,
         num_witness_polys: usize,
         required_domain_size: usize,
         transcript: &mut T,
-        values_storage: &AssembledPolynomialStorage<E>,
+        values_storage: &AssembledPolynomialStorage<'a, E>,
         omegas_bitreversed: &BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
     ) -> Result<Round1Output<'a, E>, SynthesisError> {
 
-        // step 1 - commit state and witness, enumerated. Also commit sorted polynomials for table arguments
+        // step 1 - commit state and witness, enumerated.
+        //  Also commit sorted polynomials for table arguments
         for i in 0..num_state_polys {
             let key = PolyIdentifier::VariablesPolynomial(i);
             let poly_ref = monomials_storage.get_poly(key);
@@ -498,7 +531,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             proof.witness_polys_commitments.push(commitment);
         }
 
-        // step 1.5 - if there are lookup tables then draw random "eta" to linearlize over tables
+        // step 1.5 - if there are lookup tables then draw random "eta"
+        // to linearlize over tables
         let mut lookup_data: Option<data_structures::LookupDataHolder<E>> = if self.tables.len() > 0 {
             let eta = transcript.get_challenge();
             // let eta = E::Fr::from_str("987").unwrap();
@@ -748,7 +782,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         })
     }
 
-    fn round_2<C: Circuit<E>, T: Transcript<E::Fr>>(
+    async fn round_2<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
         &self,
         worker: &Worker,
         mon_crs: &Crs<E, CrsForMonomialForm>,
@@ -757,10 +791,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         num_state_polys: usize,
         required_domain_size: usize,
         transcript: &mut T,
-        values_storage: &mut AssembledPolynomialStorage<E>,
+        values_storage: &mut AssembledPolynomialStorage<'a, E>,
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
         // round 1 input
-        lookup_data: &mut Option<data_structures::LookupDataHolder<E>>,
+        lookup_data: &mut Option<data_structures::LookupDataHolder<'a, E>>,
     ) -> Result<Round2Output<E>, SynthesisError> {
 
         let beta_for_copy_permutation = transcript.get_challenge();
@@ -1001,21 +1035,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         })
     }
 
-    fn round_3<C: Circuit<E>, T: Transcript<E::Fr>>(
+    async fn round_3<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
         &self,
         worker: &Worker,
         mon_crs: &Crs<E, CrsForMonomialForm>,
         // init input:
         proof: &mut Proof<E, C>,
-        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<'a, E>,
         num_state_polys: usize,
         required_domain_size: usize,
         transcript: &mut T,
-        mut ldes_storage: AssembledPolynomialStorage<E>,
+        mut ldes_storage: AssembledPolynomialStorage<'a, E>,
         omegas_bitreversed: BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: OmegasInvBitreversed<E::Fr>,
         // round 1 input
-        lookup_data: &Option<data_structures::LookupDataHolder<E>>,
+        lookup_data: &Option<data_structures::LookupDataHolder<'a, E>>,
         // round 2 input
         domain: &Domain<E::Fr>,
         beta_for_copy_permutation: &E::Fr, 
@@ -1556,12 +1590,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             num_different_gates})
     }
 
-    fn round_4<C: Circuit<E>, T: Transcript<E::Fr>>(
+    async fn round_4<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
         &self,
         worker: &Worker,
         // init input:
         proof: &mut Proof<E, C>,
-        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<'a, E>,
         num_state_polys: usize,
         required_domain_size: usize,
         transcript: &mut T,
@@ -1754,18 +1788,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         })
     }
 
-    fn round_5<C: Circuit<E>, T: Transcript<E::Fr>>(
+    async fn round_5<'a, C: Circuit<E>, T: Transcript<E::Fr>>(
         &self,
         worker: &Worker,
         mon_crs: &Crs<E, CrsForMonomialForm>,
         // init input:
         proof: &mut Proof<E, C>,
-        monomials_storage: &AssembledPolynomialStorageForMonomialForms<E>,
+        monomials_storage: &AssembledPolynomialStorageForMonomialForms<'a, E>,
         num_state_polys: usize,
         required_domain_size: usize,
         mut transcript: T,
         // round 1 input
-        lookup_data: Option<data_structures::LookupDataHolder<E>>,
+        lookup_data: Option<data_structures::LookupDataHolder<'a, E>>,
         // round 2 input
         domain: Domain<E::Fr>,
         beta_for_copy_permutation: E::Fr, 
@@ -2408,6 +2442,7 @@ struct InitOutput<'a, E: Engine, C: Circuit<E>, T: Transcript<E::Fr>> {
     num_state_polys: usize,
     num_witness_polys: usize,
     monomials_storage: AssembledPolynomialStorageForMonomialForms<'a, E>,
+    values_storage: AssembledPolynomialStorage<'a, E>,
     proof: Proof<E, C>,
     ldes_storage: AssembledPolynomialStorage<'a, E>,
     omegas_bitreversed: BitReversedOmegas<E::Fr>,
