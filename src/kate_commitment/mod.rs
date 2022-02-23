@@ -20,7 +20,7 @@ pub struct Crs<E: Engine, T: CrsType> {
     pub g1_bases: Arc<Vec<E::G1Affine>>,
     pub g2_monomial_bases: Arc<Vec<E::G2Affine>>,
 
-    _marker: std::marker::PhantomData<T>
+    pub _marker: std::marker::PhantomData<T>
 }
 
 use std::io::{Read, Write};

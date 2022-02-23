@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::pairing::ff::PrimeField;
 use crate::plonk::domains::*;
 use crate::SynthesisError;
@@ -48,6 +50,11 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
 
     pub fn as_mut(&mut self) -> &mut [F] {
         &mut self.coeffs
+    }
+
+    pub fn as_arc(&self) -> Arc<Vec<F>>{
+        // FIXME
+        Arc::new(self.coeffs.clone())
     }
 
     pub fn into_coeffs(self) -> Vec<F> {
@@ -1416,7 +1423,6 @@ impl<F: PrimeField> Polynomial<F, Values> {
         res
     }
 
-
     pub fn add_assign(&mut self, worker: &Worker, other: &Polynomial<F, Values>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
@@ -2389,8 +2395,10 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
                     let to = from + coset_size;
                     let one = F::one();
                     let bitreversed_power = cooley_tukey_ntt::bitreverse(coset_idx, factor_log); 
+                    dbg!(bitreversed_power);
                     let mut coset_generator = coset_omega.pow(&[bitreversed_power as u64]);
                     coset_generator.mul_assign(&coset_factor);
+                    
                     if coset_generator != one {
                         distribute_powers_with_num_cpus(&mut r[from..to], &worker, coset_generator, num_cpus_hint.expect("is some"));
                     }

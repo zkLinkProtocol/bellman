@@ -1,19 +1,29 @@
+use std::sync::Arc;
+
+use futures::future::join_all;
+use heavy_ops_service::Worker as AsyncWorker;
 use crate::pairing::ff::PrimeField;
-use crate::worker::Worker;
 use crate::plonk::domains::*;
+use crate::worker::Worker;
 use crate::SynthesisError;
 
 use crate::plonk::polynomials::*;
 
-pub trait FieldBinop<F: PrimeField>: 'static + Copy + Clone + Send + Sync + std::fmt::Debug {
+pub trait FieldBinop<F: PrimeField>:
+    'static + Copy + Clone + Send + Sync + std::fmt::Debug
+{
     fn apply(&self, dest: &mut F, source: &F);
 }
 
-pub(crate) fn binop_over_slices<F: PrimeField, B: FieldBinop<F>>(worker: &Worker, binop: &B, dest: &mut [F], source: &[F]) {
+pub(crate) fn binop_over_slices<F: PrimeField, B: FieldBinop<F>>(
+    worker: &Worker,
+    binop: &B,
+    dest: &mut [F],
+    source: &[F],
+) {
     assert_eq!(dest.len(), source.len());
     worker.scope(dest.len(), |scope, chunk| {
-        for (dest, source) in dest.chunks_mut(chunk)
-                            .zip(source.chunks(chunk)) {
+        for (dest, source) in dest.chunks_mut(chunk).zip(source.chunks(chunk)) {
             scope.spawn(move |_| {
                 for (dest, source) in dest.iter_mut().zip(source.iter()) {
                     binop.apply(dest, source);
@@ -23,6 +33,42 @@ pub(crate) fn binop_over_slices<F: PrimeField, B: FieldBinop<F>>(worker: &Worker
     });
 }
 
+pub(crate) async fn binop_over_slices_async<F: PrimeField, B: FieldBinop<F>>(
+    worker: AsyncWorker,
+    is_background: bool,
+    binop: B,
+    dest: Arc<Vec<F>>,
+    source: Arc<Vec<F>>,
+) {
+    assert_eq!(dest.len(), source.len());
+    // let dest = unsafe{Arc::get_mut_unchecked(dest)};
+
+    let num_cpus = worker.num_cpus();
+    let num_items = source.len();
+    let chunk_size = num_items /num_cpus;
+
+    let mut handles = vec![];
+    for (chunk_id, (worker, dest, source, chunk_len)) in source.chunks(chunk_size).map(|chunk|{
+       ( worker.child(), dest.clone(), source.clone(), chunk.len())
+    }).enumerate(){
+        let start = chunk_id * chunk_size;
+        let end = start + chunk_len;
+        let range = start..end;
+
+        let fut = async move{
+
+            let dest = unsafe{std::slice::from_raw_parts_mut(dest[range.clone()].as_ptr() as *mut F, chunk_len)};
+            
+            for (dest, src) in dest.iter_mut().zip(&source[range]){
+                binop.apply(dest, src);
+            }
+        };
+        let handle = worker.spawn_with_handle(fut).unwrap();
+        handles.push(handle);
+    }
+    let _ = join_all(handles).await;
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BinopAddAssign;
 
@@ -30,19 +76,17 @@ impl<F: PrimeField> FieldBinop<F> for BinopAddAssign {
     #[inline(always)]
     fn apply(&self, dest: &mut F, source: &F) {
         dest.add_assign(source);
-    }   
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct BinopAddAssignScaled<F: PrimeField>{
-    pub scale: F
+pub struct BinopAddAssignScaled<F: PrimeField> {
+    pub scale: F,
 }
 
 impl<F: PrimeField> BinopAddAssignScaled<F> {
     pub fn new(scale: F) -> Self {
-        Self {
-            scale
-        }
+        Self { scale }
     }
 }
 
@@ -53,7 +97,7 @@ impl<F: PrimeField> FieldBinop<F> for BinopAddAssignScaled<F> {
         tmp.mul_assign(&source);
 
         dest.add_assign(&tmp);
-    }   
+    }
 }
 
 pub(crate) fn get_degree<F: PrimeField>(poly: &Polynomial<F, Coefficients>) -> usize {
@@ -69,9 +113,9 @@ pub(crate) fn get_degree<F: PrimeField>(poly: &Polynomial<F, Coefficients>) -> u
     degree
 }
 
-pub (crate) fn calculate_inverse_vanishing_polynomial_with_last_point_cut<F: PrimeField>( 
-    worker: &Worker, 
-    poly_size:usize, 
+pub(crate) fn calculate_inverse_vanishing_polynomial_with_last_point_cut<F: PrimeField>(
+    worker: &Worker,
+    poly_size: usize,
     vahisning_size: usize,
     coset_factor: F,
 ) -> Result<Polynomial<F, Values>, SynthesisError> {
@@ -101,7 +145,7 @@ pub (crate) fn calculate_inverse_vanishing_polynomial_with_last_point_cut<F: Pri
     // now we should evaluate X^(n+1) - 1 in a linear time
 
     let shift = coset_factor.pow([vahisning_size as u64]);
-    
+
     let mut denominator = Polynomial::<F, Values>::from_values(vec![shift; poly_size])?;
 
     // elements are h^size - 1, (hg)^size - 1, (hg^2)^size - 1, ...

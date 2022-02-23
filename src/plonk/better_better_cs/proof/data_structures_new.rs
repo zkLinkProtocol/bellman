@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use crate::pairing::ff::*;
 use crate::pairing::*;
-use crate::plonk::polynomials::*;
-use super::cs::GateInternal;
+// use new_polynomials::polynomials::*;
+use super::polynomials_new::*;
+use super::super::cs::GateInternal;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum PolyIdentifier {
@@ -75,10 +76,10 @@ impl<'a, F: PrimeField, P: PolynomialForm> PolynomialProxy<'a, F, P> {
     pub fn as_data_arc(&self) -> Arc<Vec<F>>{
         match self {
             PolynomialProxy::Borrowed(b) => {
-                b.as_arc()
+                b.arc_coeffs()
             },
             PolynomialProxy::Owned(o) => {
-                o.as_arc()
+                o.arc_coeffs()
             }
         }
     }
@@ -144,51 +145,51 @@ pub fn clone_as_borrowed<'a, 'b: 'a, F: PrimeField, P: PolynomialForm>(
 // }
 
 
-pub struct AssembledPolynomialStorage<'a, E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub scratch_space: std::collections::HashMap<PolynomialInConstraint, PolynomialProxy<'a, E::Fr, Values>>,
-    pub gate_selectors: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub named_polys: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
+pub struct AssembledPolynomialStorage<E: Engine> {
+    pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub scratch_space: std::collections::HashMap<PolynomialInConstraint, Polynomial<E::Fr, Values>>,
+    pub gate_selectors: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
+    pub named_polys: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>,
     pub is_bitreversed: bool,
     pub lde_factor: usize
 }
 
-pub struct AssembledPolynomialStorageForMonomialForms<'a, E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub gate_selectors: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub named_polys: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
+pub struct AssembledPolynomialStorageForMonomialForms<E: Engine> {
+    pub state_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+    pub witness_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+    pub setup_map: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+    pub gate_selectors: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
+    pub named_polys: std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Coefficients>>,
 }
 
-impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
+impl<E: Engine> AssembledPolynomialStorage<E> {
     pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values> {
         match id {
-            p @ PolyIdentifier::VariablesPolynomial(..) => {
-                self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+            p @ PolyIdentifier::VariablesPolynomial(..) => {                
+                self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::WitnessPolynomial(..) => {
-                self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::GateSetupPolynomial(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::GateSelector(..) => {
-                self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::PermutationPolynomial(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::LookupSelector => {
-                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
-                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::NamedSetupPolynomial(..) => {
-                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             _ => {
                 unreachable!()
@@ -205,7 +206,7 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
     pub fn get_selector_for_gate(&self, gate: &dyn GateInternal<E>) -> &Polynomial<E::Fr, Values> {
         let gate_name = gate.name();
         let p = PolyIdentifier::GateSelector(gate_name);
-        self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+        self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p))
     }
 
     pub fn new(bitreversed: bool, lde_factor: usize) -> Self {
@@ -221,29 +222,29 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
         }
     }
 
-    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Values>]) {
+    pub fn add_setup_polys(&mut self, ids: &[PolyIdentifier], polys: Vec<Polynomial<E::Fr, Values>>) {
         assert_eq!(ids.len(), polys.len());
-        for (id, poly) in ids.iter().zip(polys.iter()) {
-            let proxy = PolynomialProxy::from_borrowed(poly);
+        for (id, poly) in ids.iter().zip(polys.into_iter()) {
+            // let proxy = PolynomialProxy::from_borrowed(poly);
 
             match id {
                 p @ PolyIdentifier::GateSetupPolynomial(..) => {
-                    self.setup_map.insert(p.clone(), proxy);
+                    self.setup_map.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::GateSelector(..) => {
-                    self.setup_map.insert(p.clone(), proxy);
+                    self.setup_map.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::PermutationPolynomial(..) => {
-                    self.setup_map.insert(p.clone(), proxy);
+                    self.setup_map.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::LookupSelector => {
-                    self.named_polys.insert(p.clone(), proxy);
+                    self.named_polys.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
-                    self.named_polys.insert(p.clone(), proxy);
+                    self.named_polys.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::NamedSetupPolynomial(..) => {
-                    self.named_polys.insert(p.clone(), proxy);
+                    self.named_polys.insert(p.clone(), poly);
                 },
                 _ => {
                     unreachable!()
@@ -253,32 +254,32 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
     }
 }
 
-impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
+impl<E: Engine> AssembledPolynomialStorageForMonomialForms<E> {
     pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Coefficients> {
         match id {
             p @ PolyIdentifier::VariablesPolynomial(..) => {
-                self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::WitnessPolynomial(..) => {
-                self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.witness_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::GateSetupPolynomial(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::GateSelector(..) => {
-                self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::PermutationPolynomial(..) => {
-                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.setup_map.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::LookupSelector => {
-                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
-                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p))
             },
             p @ PolyIdentifier::NamedSetupPolynomial(..) => {
-                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+                self.named_polys.get(&p).expect(&format!("poly {:?} must exist", p))
             },
         }
     }
@@ -296,32 +297,32 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
     pub fn get_selector_for_gate(&self, gate: &dyn GateInternal<E>) -> &Polynomial<E::Fr, Coefficients> {
         let gate_name = gate.name();
         let p = PolyIdentifier::GateSelector(gate_name);
-        self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
+        self.state_map.get(&p).expect(&format!("poly {:?} must exist", p))
     }
 
-    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Coefficients>]) {
+    pub fn add_setup_polys(&mut self, ids: &[PolyIdentifier], polys: Vec<Polynomial<E::Fr, Coefficients>>) {
         assert_eq!(ids.len(), polys.len());
-        for (id, poly) in ids.iter().zip(polys.iter()) {
-            let proxy = PolynomialProxy::from_borrowed(poly);
+        for (id, poly) in ids.iter().zip(polys.into_iter()) {
+            // let proxy = PolynomialProxy::from_borrowed(poly);
 
             match id {
                 p @ PolyIdentifier::GateSetupPolynomial(..) => {
-                    self.setup_map.insert(p.clone(), proxy);
+                    self.setup_map.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::GateSelector(..) => {
-                    self.setup_map.insert(p.clone(), proxy);
+                    self.setup_map.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::PermutationPolynomial(..) => {
-                    self.setup_map.insert(p.clone(), proxy);
+                    self.setup_map.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::LookupSelector => {
-                    self.named_polys.insert(p.clone(), proxy);
+                    self.named_polys.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::LookupTableEntriesPolynomial(..) => {
-                    self.named_polys.insert(p.clone(), proxy);
+                    self.named_polys.insert(p.clone(), poly);
                 },
                 p @ PolyIdentifier::NamedSetupPolynomial(..) => {
-                    self.named_polys.insert(p.clone(), proxy);
+                    self.named_polys.insert(p.clone(), poly);
                 }
                 _ => {
                     unreachable!()
@@ -329,17 +330,4 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
             }
         }
     }
-}
-
-pub struct LookupDataHolder<'a, E: Engine> {
-    pub eta: E::Fr,
-    pub f_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub t_poly_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values>>,
-    pub t_shifted_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values>>,
-    pub s_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub t_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub s_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
-    pub selector_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub table_type_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
 }

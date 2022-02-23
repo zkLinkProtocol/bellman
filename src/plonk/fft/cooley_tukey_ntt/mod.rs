@@ -551,7 +551,8 @@ mod test {
         use super::BitReversedOmegas;
         use crate::plonk::domains::Domain;
 
-        let poly_sizes = vec![1_000_000, 2_000_000, 4_000_000];
+        // let poly_sizes = vec![1_000_000, 2_000_000, 4_000_000];
+        let poly_sizes = vec![1 << 8 as usize];
 
         // let poly_sizes = vec![8];
 

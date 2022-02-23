@@ -1,5 +1,7 @@
+#![feature(adt_const_params)]
 #![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments, unreachable_patterns ) ]
-
+#![feature(async_closure)]
+#![feature(get_mut_unchecked)]
 #[macro_use]
 
 extern crate cfg_if;
@@ -17,7 +19,7 @@ pub use ff::*;
 mod log;
 
 pub mod domain;
-pub mod resource_management;
+// pub mod resource_management;
 
 #[cfg(feature = "plonk")]
 pub mod plonk;

@@ -772,7 +772,7 @@ fn dense_multiexp_inner<G: CurveAffine>(
                             }
                         }
                     }
-                    dbg!(s1.elapsed());
+                    // dbg!(s1.elapsed());
 
                     // buckets are filled with the corresponding accumulated value, now sum
                     let s2 = std::time::Instant::now();
@@ -781,7 +781,7 @@ fn dense_multiexp_inner<G: CurveAffine>(
                         running_sum.add_assign(&exp);
                         acc.add_assign(&running_sum);
                     }
-                    dbg!(s2.elapsed());
+                    // dbg!(s2.elapsed());
 
                     let mut guard = match this_region_rwlock.lock() {
                         Ok(guard) => guard,

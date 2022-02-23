@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use heavy_ops_service::AsyncWorkManager;
+
 use super::*;
 
 #[derive(Clone, Debug, Hash, Default)]

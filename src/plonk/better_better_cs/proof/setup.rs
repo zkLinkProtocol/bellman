@@ -1,22 +1,27 @@
-use super::cs::*;
-use super::data_structures::*;
+use crate::plonk::better_better_cs::proof::cs::*;
+use super::data_structures_new::*;
 use crate::pairing::ff::*;
 use crate::pairing::*;
-use crate::plonk::polynomials::*;
+// use new_polynomials::polynomials::*;
+use super::polynomials_new::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::plonk::domains::*;
-use crate::worker::Worker;
+use crate::worker::Worker as OldWorker;
 use crate::SynthesisError;
 
 use crate::kate_commitment::*;
 
-use super::super::better_cs::utils::make_non_residues;
+use super::super::super::better_cs::utils::make_non_residues;
 
 use crate::byteorder::BigEndian;
 use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
 use std::io::{Read, Write};
+
+use heavy_ops_service::AsyncWorkManager;
+use heavy_ops_service::Worker;
 
 use crate::plonk::better_cs::keys::*;
 
@@ -78,65 +83,65 @@ impl<E: Engine, C: Circuit<E>> Setup<E, C> {
         }
     }
 
-    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-        writer.write_u64::<BigEndian>(self.n as u64)?;
-        writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
-        writer.write_u64::<BigEndian>(self.state_width as u64)?;
-        writer.write_u64::<BigEndian>(self.num_witness_polys as u64)?;
+    // pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+    //     writer.write_u64::<BigEndian>(self.n as u64)?;
+    //     writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
+    //     writer.write_u64::<BigEndian>(self.state_width as u64)?;
+    //     writer.write_u64::<BigEndian>(self.num_witness_polys as u64)?;
 
-        write_polynomials_vec(&self.gate_setup_monomials, &mut writer)?;
-        write_polynomials_vec(&self.gate_selectors_monomials, &mut writer)?;
-        write_polynomials_vec(&self.permutation_monomials, &mut writer)?;
+    //     write_polynomials_vec(&self.gate_setup_monomials, &mut writer)?;
+    //     write_polynomials_vec(&self.gate_selectors_monomials, &mut writer)?;
+    //     write_polynomials_vec(&self.permutation_monomials, &mut writer)?;
 
-        writer.write_u64::<BigEndian>(self.total_lookup_entries_length as u64)?;
-        write_optional_polynomial(&self.lookup_selector_monomial, &mut writer)?;
-        write_polynomials_vec(&self.lookup_tables_monomials, &mut writer)?;
-        write_optional_polynomial(&self.lookup_table_type_monomial, &mut writer)?;
+    //     writer.write_u64::<BigEndian>(self.total_lookup_entries_length as u64)?;
+    //     write_optional_polynomial(&self.lookup_selector_monomial, &mut writer)?;
+    //     write_polynomials_vec(&self.lookup_tables_monomials, &mut writer)?;
+    //     write_optional_polynomial(&self.lookup_table_type_monomial, &mut writer)?;
 
-        write_fr_vec(&self.non_residues, &mut writer)?;
+    //     write_fr_vec(&self.non_residues, &mut writer)?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
-        use crate::pairing::CurveAffine;
-        use crate::pairing::EncodedPoint;
+    // pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+    //     use crate::pairing::CurveAffine;
+    //     use crate::pairing::EncodedPoint;
 
-        let n = reader.read_u64::<BigEndian>()?;
-        let num_inputs = reader.read_u64::<BigEndian>()?;
-        let state_width = reader.read_u64::<BigEndian>()?;
-        let num_witness_polys = reader.read_u64::<BigEndian>()?;
+    //     let n = reader.read_u64::<BigEndian>()?;
+    //     let num_inputs = reader.read_u64::<BigEndian>()?;
+    //     let state_width = reader.read_u64::<BigEndian>()?;
+    //     let num_witness_polys = reader.read_u64::<BigEndian>()?;
 
-        let gate_setup_monomials = read_polynomials_coeffs_vec(&mut reader)?;
-        let gate_selectors_monomials = read_polynomials_coeffs_vec(&mut reader)?;
-        let permutation_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+    //     let gate_setup_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+    //     let gate_selectors_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+    //     let permutation_monomials = read_polynomials_coeffs_vec(&mut reader)?;
 
-        let total_lookup_entries_length = reader.read_u64::<BigEndian>()?;
-        let lookup_selector_monomial = read_optional_polynomial_coeffs(&mut reader)?;
-        let lookup_tables_monomials = read_polynomials_coeffs_vec(&mut reader)?;
-        let lookup_table_type_monomial = read_optional_polynomial_coeffs(&mut reader)?;
+    //     let total_lookup_entries_length = reader.read_u64::<BigEndian>()?;
+    //     let lookup_selector_monomial = read_optional_polynomial_coeffs(&mut reader)?;
+    //     let lookup_tables_monomials = read_polynomials_coeffs_vec(&mut reader)?;
+    //     let lookup_table_type_monomial = read_optional_polynomial_coeffs(&mut reader)?;
 
-        let non_residues = read_fr_vec(&mut reader)?;
+    //     let non_residues = read_fr_vec(&mut reader)?;
 
-        let new = Self {
-            n: n as usize,
-            num_inputs: num_inputs as usize,
-            state_width: state_width as usize,
-            num_witness_polys: num_witness_polys as usize,
-            gate_setup_monomials,
-            gate_selectors_monomials,
-            permutation_monomials,
-            total_lookup_entries_length: total_lookup_entries_length as usize,
-            lookup_selector_monomial,
-            lookup_tables_monomials,
-            lookup_table_type_monomial,
-            non_residues,
+    //     let new = Self {
+    //         n: n as usize,
+    //         num_inputs: num_inputs as usize,
+    //         state_width: state_width as usize,
+    //         num_witness_polys: num_witness_polys as usize,
+    //         gate_setup_monomials,
+    //         gate_selectors_monomials,
+    //         permutation_monomials,
+    //         total_lookup_entries_length: total_lookup_entries_length as usize,
+    //         lookup_selector_monomial,
+    //         lookup_tables_monomials,
+    //         lookup_table_type_monomial,
+    //         non_residues,
 
-            _marker: std::marker::PhantomData,
-        };
+    //         _marker: std::marker::PhantomData,
+    //     };
 
-        Ok(new)
-    }
+    //     Ok(new)
+    // }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -178,11 +183,13 @@ impl<E: Engine, C: Circuit<E>> std::fmt::Debug for VerificationKey<E, C> {
 }
 
 impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
-    pub fn from_setup(
+    pub async fn from_setup(
         setup: &Setup<E, C>,
         worker: &Worker,
-        crs: &Crs<E, CrsForMonomialForm>,
+        async_manager: Arc<AsyncWorkManager<E>>,
+        g2_monomial_bases: [E::G2Affine; 2]
     ) -> Result<Self, SynthesisError> {
+        let [first, second]  = g2_monomial_bases;
         let mut new = Self {
             n: setup.n,
             num_inputs: setup.num_inputs,
@@ -198,7 +205,7 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
             lookup_table_type_commitment: None,
         
             non_residues: vec![],
-            g2_elements: [crs.g2_monomial_bases[0], crs.g2_monomial_bases[1]],
+            g2_elements: [first, second],
 
             _marker: std::marker::PhantomData,
         };
@@ -210,18 +217,21 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
             (&setup.lookup_tables_monomials, &mut new.lookup_tables_commitments),
         ].into_iter() {
             for p in p.iter() {
-                let commitment = commit_using_monomials(p, &crs, &worker)?;
-                c.push(commitment);
+                todo!()
+                // let commitment = commit_using_monomials(p, &crs, &worker)?;
+                // c.push(commitment);
             }
         }
 
         if let Some(p) = setup.lookup_selector_monomial.as_ref() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            // let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = async_manager.multiexp(p.arc_coeffs(), worker.child(), false).await;
             new.lookup_selector_commitment = Some(commitment);
         }
 
         if let Some(p) = setup.lookup_table_type_monomial.as_ref() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            // let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = async_manager.multiexp(p.arc_coeffs(), worker.child(), false).await;
             new.lookup_table_type_commitment = Some(commitment);
         }
 
@@ -302,10 +312,9 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
     }
 }
 
-use crate::plonk::better_better_cs::data_structures::AssembledPolynomialStorageForMonomialForms;
 
-impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
-    pub fn extend_from_setup<C: Circuit<E>>(&mut self, setup: &'a Setup<E, C>) -> Result<(), SynthesisError> {
+impl<E: Engine> AssembledPolynomialStorageForMonomialForms<E> {
+    pub fn extend_from_setup<C: Circuit<E>>(&mut self, setup: &Setup<E, C>) -> Result<(), SynthesisError> {
         // extend with gate setup polys, gate selectors, permutation polys
         // and lookup table setup polys if available
         let all_gates = C::declare_used_gates()?;
@@ -315,9 +324,9 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
         let mut setup_gates_iter = setup.gate_setup_monomials.iter();
         for gate in all_gates.iter() {
             for poly_id in gate.setup_polynomials().into_iter() {
-                let poly_ref = setup_gates_iter.next().expect(&format!("must have gate setup poly {:?} for gate {:?} in setup", poly_id, gate));
-                let proxy = PolynomialProxy::from_borrowed(poly_ref);
-                self.setup_map.insert(poly_id, proxy);
+                let poly = setup_gates_iter.next().expect(&format!("must have gate setup poly {:?} for gate {:?} in setup", poly_id, gate));
+                // let proxy = PolynomialProxy::from_borrowed(poly_ref);
+                self.setup_map.insert(poly_id, poly.arc_clone());
             }
         }
 
@@ -325,19 +334,19 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
 
         if has_selectors {
             let mut selector_iter = setup.gate_selectors_monomials.iter();
-            for gate in all_gates.into_iter() {
+            for gate in all_gates.iter() {
                 let id = PolyIdentifier::GateSelector(gate.name());
-                let poly_ref = selector_iter.next().expect(&format!("must have gate selector poly for gate {:?} in setup", gate));
-                let proxy = PolynomialProxy::from_borrowed(poly_ref);
-                self.gate_selectors.insert(id, proxy);
+                let poly = selector_iter.next().expect(&format!("must have gate selector poly for gate {:?} in setup", gate));
+                // let proxy = PolynomialProxy::from_borrowed(poly_ref);
+                self.gate_selectors.insert(id, poly.arc_clone());
             }
             assert!(selector_iter.next().is_none());
         }
 
-        for (idx, poly_ref) in setup.permutation_monomials.iter().enumerate() {
+        for (idx, poly) in setup.permutation_monomials.iter().enumerate() {
             let id = PolyIdentifier::PermutationPolynomial(idx);
-            let proxy = PolynomialProxy::from_borrowed(poly_ref);
-            self.setup_map.insert(id, proxy);
+            // let proxy = PolynomialProxy::from_borrowed(poly_ref);
+            self.setup_map.insert(id, poly.arc_clone());
         }
 
         Ok(())
