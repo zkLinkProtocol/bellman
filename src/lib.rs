@@ -37,6 +37,8 @@ mod source;
 mod multiexp;
 mod prefetch;
 
+pub use heavy_ops_service;
+
 #[cfg(test)]
 mod tests;
 

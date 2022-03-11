@@ -107,6 +107,7 @@ async fn run_test_circuit_setup_and_async_prove() {
         SetupAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextNew>::new();
 
     let circuit = TestCircuit4WithLookups::<Bn256> {
+        log_degree: 10,
         _marker: PhantomData,
     };
 
@@ -156,7 +157,6 @@ async fn run_test_circuit_setup_and_async_prove() {
     let bases = Arc::try_unwrap(mon_crs.g1_bases).unwrap();
 
     let async_manager = AsyncWorkManager::init(
-        worker.child(),
         Some(bases),
         Some((omega, twiddles)),
         thread_pool,
@@ -197,6 +197,7 @@ async fn run_test_circuit_setup_and_async_prove() {
 }
 
 struct TestCircuit4WithLookups<E: Engine> {
+    log_degree: usize,
     _marker: PhantomData<E>,
 }
 
@@ -304,7 +305,19 @@ impl<E: Engine> Circuit<E> for TestCircuit4WithLookups<E> {
             cs.end_gates_batch_for_step()?;
         }
 
+        let rng = &mut thread_rng();
+
         // d - 100 == 0
+        let degree = 1 << self.log_degree;
+        for _ in 0..degree{
+            let a = ArithmeticTerm::constant(E::Fr::rand(rng));
+            let b = ArithmeticTerm::from_variable(d);
+            let mut term = MainGateTerm::new();
+            term.add_assign(a);
+            term.sub_assign(b);
+    
+            cs.allocate_main_gate(term)?;    
+        }
 
         let hundred = ArithmeticTerm::constant(E::Fr::from_str("100").unwrap());
         let d_term = ArithmeticTerm::from_variable(d);
@@ -366,6 +379,7 @@ impl<E: Engine> Circuit<E> for TestCircuit4WithLookups<E> {
 
         cs.new_single_gate_for_trace_step(&TestBitGate::default(), &[], &[one], &[])?;
 
+    
         Ok(())
     }
 }

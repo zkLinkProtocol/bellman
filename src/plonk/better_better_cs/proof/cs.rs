@@ -459,29 +459,29 @@ pub fn get_from_map_unchecked<E: Engine>(
     r
 }
 
-pub fn ensure_in_map_or_create<'a, 'b, E: Engine>(
-    key_with_dilation: PolynomialInConstraint,
-    domain_size: usize,
-    lde_factor: usize,
-    coset_factor: E::Fr,
-    monomials_map: & AssembledPolynomialStorageForMonomialForms<E>,
-    ldes_map: &mut AssembledPolynomialStorage< E>,
-    async_manager: Arc<AsyncWorkManager<E>>,
-    worker: NewWorker,
-    is_background: bool,
-) -> Result<(), SynthesisError> {
-    block_on(ensure_in_map_or_create_async(
-        key_with_dilation,
-        domain_size,
-        lde_factor,
-        coset_factor,
-        monomials_map,
-        ldes_map,
-        async_manager,
-        worker,
-        is_background,
-    ))
-}
+// pub fn ensure_in_map_or_create<'a, 'b, E: Engine>(
+//     key_with_dilation: PolynomialInConstraint,
+//     domain_size: usize,
+//     lde_factor: usize,
+//     coset_factor: E::Fr,
+//     monomials_map: & AssembledPolynomialStorageForMonomialForms<E>,
+//     ldes_map: &mut AssembledPolynomialStorage< E>,
+//     async_manager: Arc<AsyncWorkManager<E>>,
+//     worker: NewWorker,
+//     is_background: bool,
+// ) -> Result<(), SynthesisError> {
+//     block_on(ensure_in_map_or_create_async(
+//         key_with_dilation,
+//         domain_size,
+//         lde_factor,
+//         coset_factor,
+//         monomials_map,
+//         ldes_map,
+//         async_manager,
+//         worker,
+//         is_background,
+//     ))
+// }
 
 pub async fn ensure_in_map_or_create_async<'a, 'b, E: Engine>(
     key_with_dilation: PolynomialInConstraint,

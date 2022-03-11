@@ -19,13 +19,11 @@ use super::setup::*;
 pub mod utils;
 pub mod verifier;
 pub mod main_gate_with_d_next;
-pub mod main_gate_with_d_next_new;
 pub use main_gate_with_d_next::*;
+pub mod main_gate_with_d_next_new;
 pub use main_gate_with_d_next_new::*;
 pub mod selector_optimized_with_d_next;
 pub use selector_optimized_with_d_next::*;
-pub mod selector_optimized_with_d_next_new;
-pub use selector_optimized_with_d_next_new::*;
 // use utils::*;
 
 

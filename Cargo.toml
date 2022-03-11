@@ -57,4 +57,5 @@ asm = ["pairing/asm"]
 async_prover = ["gpu_prover"]
 fpga_prover = ["heavy-ops-service/fpga", "new_polynomials"]
 gpu_prover = ["heavy-ops-service/gpu", "new_polynomials"]
+fallback_cpu_prover = ["heavy-ops-service", "new_polynomials"]
 
