@@ -7,6 +7,8 @@ use heavy_ops_service::*;
 use std::sync::Arc;
 use crate::multicore::Worker as OldWorker;
 pub trait PolynomialForm: Sized + Copy + Clone {}
+use heavy_ops_service::utils::SubVec;
+use std::ops::{Deref, DerefMut};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Coefficients {}
@@ -19,7 +21,7 @@ impl PolynomialForm for Values {}
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
-    coeffs: Arc<Vec<F>>,
+    coeffs: SubVec<F>,
     pub exp: u32,
     pub omega: F,
     pub omegainv: F,
@@ -31,7 +33,7 @@ pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
 impl<F: PrimeField, P: PolynomialForm> Default for Polynomial<F, P> {
     fn default() -> Self {
         Self {
-            coeffs: Default::default(),
+            coeffs: SubVec::<F>::empty(),
             exp: Default::default(),
             omega: Default::default(),
             omegainv: Default::default(),
@@ -43,12 +45,8 @@ impl<F: PrimeField, P: PolynomialForm> Default for Polynomial<F, P> {
 }
 impl<F: PrimeField, P: PolynomialForm> Clone for Polynomial<F, P> {
     fn clone(&self) -> Self {
-        let len = self.coeffs.len();
-        let mut coeffs = vec![F::zero(); len];
-        // TODO
-        unsafe { std::ptr::copy(self.coeffs.as_ptr(), coeffs.as_mut_ptr(), len) };
         Self {
-            coeffs: Arc::new(coeffs),
+            coeffs: self.coeffs.create_copy(),
             exp: self.exp.clone(),
             omega: self.omega.clone(),
             omegainv: self.omegainv.clone(),
@@ -65,62 +63,46 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     }
 
     pub fn as_ref(&self) -> &[F] {
-        self.coeffs.as_ref()
+        self.coeffs.deref()
     }
 
     pub fn as_mut(&mut self) -> &mut [F] {
-        // FIXME
-        unsafe{std::slice::from_raw_parts_mut(self.coeffs.as_ptr() as *mut F, self.coeffs.len())}
-    }
-
-    fn borrow_mut(&self) -> &mut Self{
-        unsafe{&mut *(self as *const Self as  *mut Self)}
+        self.coeffs.deref_mut()
     }
 
     pub fn into_coeffs(self) -> Vec<F> {
-        let num_items = self.coeffs.len();
-        let mut coeffs = vec![F::zero(); num_items];
-        unsafe{std::ptr::copy(self.coeffs.as_ptr(), coeffs.as_mut_ptr(), num_items)};
-
-        coeffs        
+        self.coeffs.buf[self.coeffs.range].to_vec()
     }
 
     pub fn arc_coeffs(&self) -> Arc<Vec<F>> {        
-        self.coeffs.clone()
+        Arc::clone(&self.coeffs.buf)
     }
     
     pub fn arc_clone(&self) -> Self {        
-        Self{
+        Self {
             coeffs: self.coeffs.clone(),
-            exp: self.exp,
-            omega: self.omega,
-            omegainv: self.omegainv,
-            geninv: self.geninv,
-            minv: self.minv,
-            _marker: std::marker::PhantomData,
+            exp: self.exp.clone(),
+            omega: self.omega.clone(),
+            omegainv: self.omegainv.clone(),
+            geninv: self.geninv.clone(),
+            minv: self.minv.clone(),
+            _marker: self._marker.clone(),
         }
     }
 
     pub async fn distribute_powers(&mut self, worker: Worker, is_background: bool, g: F) {
         let num_cpus = worker.num_cpus();
-        let num_items = self.coeffs.len();
-        let chunk_size = num_items / num_cpus;
+        let mut coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let chunk_size = coeffs_chunks[0].len();
         let mut handles = vec![];
-        for (chunk_id, (child_worker, coeffs, chunk)) in self
-            .coeffs
-            .chunks(chunk_size)
-            .map(|c| (worker.child(), self.coeffs.clone(), c))
+        for (chunk_id, (child_worker, mut chunk)) in coeffs_chunks
+            .into_iter()
+            .map(|chunk| (worker.child(), chunk))
             .enumerate()
         {
-            let chunk_len = chunk.len();
-            let start = chunk_id * chunk_size;
-            let end = start + chunk_len;
-            let range = start..end;
             let fut = async move {
                 let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-                let buf = unsafe {
-                    std::slice::from_raw_parts_mut(coeffs[range].as_ptr() as *mut F, chunk_len)
-                };
+                let buf = chunk.deref_mut();
                 let mut x = g.pow([(chunk_id * chunk_size) as u64]);
                 for el in buf.iter_mut() {
                     el.mul_assign(&x);
@@ -134,15 +116,14 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         join_all(handles).await;
     }
 
-    // FIXME
-    pub fn reuse_allocation<PP: PolynomialForm>(&self, other: &Polynomial<F, PP>) {
+    pub fn reuse_allocation<PP: PolynomialForm>(&mut self, other: &Polynomial<F, PP>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.borrow_mut().coeffs) };
-        coeffs.copy_from_slice(&other.coeffs); // TODO multicore
+        let coeffs = self.coeffs.deref_mut();
+        coeffs.copy_from_slice(other.coeffs.deref());
     }
 
     pub async fn bitreverse_enumeration(&mut self, worker: Worker, is_background: bool) {
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.coeffs) };
+        let coeffs = self.coeffs.deref_mut();
         let total_len = coeffs.len();
         let log_n = self.exp as usize;
         if total_len <= worker.num_cpus() {
@@ -243,27 +224,14 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     }
 
     pub fn pad_by_factor(&mut self, factor: usize) -> Result<(), SynthesisError> {
-        debug_assert!(self.coeffs.len().is_power_of_two());
+        let length = self.coeffs.len();
+        debug_assert!(length.is_power_of_two());
 
         if factor == 1 {
             return Ok(());
         }
-        let next_power_of_two = factor.next_power_of_two();
-        if factor != next_power_of_two {
-            return Err(SynthesisError::Unsatisfiable);
-        }
-
-        let new_size = self.coeffs.len() * factor;
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.coeffs) };
-        coeffs.resize(new_size, F::zero());
-        // self.coeffs.resize(new_size, F::zero());
-
-        let domain = Domain::new_for_size(new_size as u64)?;
-        self.exp = domain.power_of_two as u32;
-        let m = domain.size as usize;
-        self.omega = domain.generator;
-        self.omegainv = self.omega.inverse().unwrap();
-        self.minv = F::from_str(&format!("{}", m)).unwrap().inverse().unwrap();
+        
+        self.pad_to_size(length * factor);
 
         Ok(())
     }
@@ -276,35 +244,38 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         if new_size != next_power_of_two {
             return Err(SynthesisError::Unsatisfiable);
         }
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.coeffs) };
-        coeffs.resize(new_size, F::zero());
-        // self.coeffs.resize(new_size, F::zero());
 
+        let mut coeffs = self.coeffs.deref().to_vec();
+        coeffs.resize(new_size, F::zero());
         let domain = Domain::new_for_size(new_size as u64)?;
-        self.exp = domain.power_of_two as u32;
         let m = domain.size as usize;
-        self.omega = domain.generator;
-        self.omegainv = self.omega.inverse().unwrap();
-        self.minv = F::from_str(&format!("{}", m)).unwrap().inverse().unwrap();
+
+        *self = Self {
+            coeffs: SubVec::new(coeffs),
+            exp: domain.power_of_two as u32,
+            omega: domain.generator,
+            omegainv: self.omega.inverse().unwrap(),
+            geninv: self.geninv.clone(),
+            minv: F::from_str(&format!("{}", m)).unwrap().inverse().unwrap(),
+            _marker: self._marker.clone(),
+        };
 
         Ok(())
     }
 
     pub fn pad_to_domain(&mut self) -> Result<(), SynthesisError> {
         let domain = Domain::<F>::new_for_size(self.coeffs.len() as u64)?;
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.coeffs) };
-        coeffs.resize(domain.size as usize, F::zero());
-        // self.coeffs.resize(domain.size as usize, F::zero());
+        let new_size = domain.size as usize;
+
+        self.pad_to_size(new_size);
 
         Ok(())
     }
 
     pub fn clone_padded_to_domain(&self) -> Result<Self, SynthesisError> {
         let mut padded = self.clone();
-        let domain = Domain::<F>::new_for_size(self.coeffs.len() as u64)?;
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut padded.coeffs) };
-        coeffs.resize(domain.size as usize, F::zero());
-        // padded.coeffs.resize(domain.size as usize, F::zero());
+
+        padded.pad_to_domain()?;
 
         Ok(padded)
     }
@@ -314,9 +285,12 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         if size <= degree + 1 {
             return Ok(());
         }
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.coeffs) };
-        coeffs.truncate(degree + 1);
-        coeffs.resize(size, F::zero());
+
+        let (_, mut coeffs) = self.coeffs.clone().split_at(degree);
+
+        for x in coeffs.deref_mut().iter_mut() {
+            *x = F::zero();
+        }
 
         Ok(())
     }
@@ -329,8 +303,9 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         Self::from_coeffs(coeffs)
     }
 
-    pub fn from_coeffs(mut coeffs: Vec<F>) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
+    pub fn from_coeffs(coeffs: Vec<F>) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
         let coeffs_len = coeffs.len();
+        let mut coeffs = coeffs;
 
         let domain = Domain::new_for_size(coeffs_len as u64)?;
         let exp = domain.power_of_two as u32;
@@ -340,7 +315,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         coeffs.resize(m, F::zero());
 
         Ok(Polynomial::<F, Coefficients> {
-            coeffs: Arc::new(coeffs),
+            coeffs: SubVec::new(coeffs),
             exp: exp,
             omega: omega,
             omegainv: omega.inverse().unwrap(),
@@ -356,42 +331,13 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         size: usize,
     ) -> Result<Vec<Polynomial<F, Coefficients>>, SynthesisError> {
         // TODO
-        let mut coeffs = unsafe {
-            Vec::from_raw_parts(
-                self.coeffs.as_ptr() as *mut F,
-                self.coeffs.len(),
-                self.coeffs.len(),
-            )
-        };
 
-        let (mut num_parts, last_size) = if coeffs.len() % size == 0 {
-            let num_parts = coeffs.len() / size;
+        let splited_coeffs = self.coeffs.split_into_chunks_with_chunk_size(size);
 
-            (num_parts, 0)
-        } else {
-            let num_parts = coeffs.len() / size;
-            let last_size = coeffs.len() - num_parts * size;
+        let mut results = Vec::with_capacity(splited_coeffs.len());
 
-            (num_parts, last_size)
-        };
-
-        let mut rev_results = Vec::with_capacity(num_parts);
-
-        if last_size != 0 {
-            let drain = coeffs.split_off(coeffs.len() - last_size);
-            rev_results.push(drain);
-            num_parts -= 1;
-        }
-
-        for _ in 0..num_parts {
-            let drain = coeffs.split_off(coeffs.len() - size);
-            rev_results.push(drain);
-        }
-
-        let mut results = Vec::with_capacity(num_parts);
-
-        for c in rev_results.into_iter().rev() {
-            let poly = Polynomial::<F, Coefficients>::from_coeffs(c)?;
+        for c in splited_coeffs.iter() {
+            let poly = Polynomial::<F, Coefficients>::from_coeffs(c.deref().to_vec())?;
             results.push(poly);
         }
 
@@ -481,24 +427,19 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
     pub async fn evaluate_at(&self, worker: Worker, is_background: bool, g: F) -> F {
         let num_cpus = worker.num_cpus();
-        let num_items = self.coeffs.len();
-        let chunk_size = num_items / num_cpus;
+        
+        let coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let chunk_size = coeffs_chunks[0].len();
+
         let mut handles = vec![];
-        for (chunk_id, (child_worker, coeffs, chunk)) in self
-            .coeffs
-            .chunks(chunk_size)
-            .map(|c| (worker.child(), self.coeffs.clone(), c))
+        for (chunk_id, (child_worker, chunk)) in coeffs_chunks
+            .into_iter()
+            .map(|chunk| (worker.child(), chunk))
             .enumerate()
         {
-            let chunk_len = chunk.len();
-            let start = chunk_id * chunk_size;
-            let end = start + chunk_len;
-            let range = start..end;
             let fut = async move {
                 let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-                let buf = unsafe {
-                    std::slice::from_raw_parts_mut(coeffs[range].as_ptr() as *mut F, chunk_len)
-                };
+                let buf = chunk.deref();
 
                 let mut x = g.pow([(chunk_id * chunk_size) as u64]);
                 let mut chunk_sum = F::zero();
@@ -533,8 +474,9 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Self::from_values(coeffs)
     }
 
-    pub fn from_values(mut values: Vec<F>) -> Result<Polynomial<F, Values>, SynthesisError> {
+    pub fn from_values(values: Vec<F>) -> Result<Polynomial<F, Values>, SynthesisError> {
         let coeffs_len = values.len();
+        let mut values = values;
 
         let domain = Domain::new_for_size(coeffs_len as u64)?;
         let exp = domain.power_of_two as u32;
@@ -544,7 +486,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         values.resize(m, F::zero());
 
         Ok(Polynomial::<F, Values> {
-            coeffs: Arc::new(values),
+            coeffs: SubVec::new(values),
             exp: exp,
             omega: omega,
             omegainv: omega.inverse().unwrap(),
@@ -567,7 +509,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let omega = domain.generator;
 
         Ok(Polynomial::<F, Values> {
-            coeffs: values,
+            coeffs: SubVec::new_from_arc(values),
             exp: exp,
             omega: omega,
             omegainv: omega.inverse().unwrap(),
@@ -602,7 +544,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let start = 0;
         let end = new_size;
 
-        result.copy_from_slice(&self.coeffs[start..end]);
+        result.copy_from_slice(&self.coeffs.deref()[start..end]);
 
         // unsafe { result.set_len(new_size)};
         // let copy_to_start_pointer: *mut F = result[..].as_mut_ptr();
@@ -678,13 +620,13 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
     pub fn rotate(mut self, by: usize) -> Result<Polynomial<F, Values>, SynthesisError> {
         todo!();
-        let mut values: Vec<_> = self.coeffs.drain(by..).collect();
+        // let mut values: Vec<_> = self.coeffs.drain(by..).collect();
 
-        for c in self.coeffs.into_iter() {
-            values.push(c);
-        }
+        // for c in self.coeffs.into_iter() {
+        //     values.push(c);
+        // }
 
-        Polynomial::from_values(values)
+        // Polynomial::from_values(values)
     }
 
     pub async fn calculate_shifted_grand_product(
@@ -694,24 +636,13 @@ impl<F: PrimeField> Polynomial<F, Values> {
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
         let num_items = self.coeffs.len();
         let mut result = vec![F::zero(); num_items + 1];
-        let result_ptr = result.as_mut_ptr();
-        let result_len = result.len();
         result[0] = F::one();
-        std::mem::forget(result);
-        let result = unsafe {
-            // ignore first elem
-            let len = result_len - 1;
-            Vec::from_raw_parts(result_ptr.add(1), len, len)
-        };
-        let result = Arc::new(result);
-        calculate_grand_product(worker, is_background, self.coeffs.clone(), result.clone()).await;
-        std::mem::forget(result);
-        let result = unsafe {
-            // get first elem back
-            let len = result_len;
-            Vec::from_raw_parts(result_ptr, len, len)
-        };
-        Polynomial::from_values(result)
+        let result = SubVec::new(result);
+        let (_, result_part) = result.clone().split_at(1);
+        
+        calculate_grand_product(worker, is_background, self.coeffs.clone(), result_part).await;
+        
+        Polynomial::from_values(result.into_inner())
     }
 
     pub async fn calculate_grand_product(
@@ -719,10 +650,11 @@ impl<F: PrimeField> Polynomial<F, Values> {
         worker: Worker,
         is_background: bool,
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
-        let result = Arc::new(vec![F::zero(); self.coeffs.len()]);
+        let result = SubVec::new(vec![F::zero(); self.coeffs.len()]);
+
         calculate_grand_product(worker, is_background, self.coeffs.clone(), result.clone()).await;
-        let result = Arc::try_unwrap(result).expect("live arc");
-        Polynomial::from_values(result)
+
+        Polynomial::from_values(result.into_inner())
     }
 
     pub async fn add_assign_scaled(
@@ -802,59 +734,43 @@ impl<F: PrimeField> Polynomial<F, Values> {
     }
 
     pub async fn batch_inversion(
-        &self, // FIXME
+        &mut self,
         worker: Worker,
         is_background: bool,
     ) -> Result<(), SynthesisError> {
         let num_cpus = worker.num_cpus();
         let num_items = self.coeffs.len();
         dbg!(num_items);
-        let grand_products = Arc::new(vec![F::one(); num_items]);
-        let sub_products = Arc::new(vec![F::one(); num_cpus]);
-        let mut chunk_size = num_items / num_cpus;
-        if num_items % num_cpus != 0{
-            chunk_size += 1;
-        }
+        let mut grand_products = SubVec::new(vec![F::one(); num_items]);
+        let mut sub_products = SubVec::new(vec![F::one(); num_cpus]);
+
+        let mut grand_products_chunks = grand_products.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let mut chunk_size = coeffs_chunks[0].len();
+
         let mut handles = vec![];
-        for (chunk_id, (child_worker, coeffs, grand_products, sub_products, chunk_len)) in self
-            .coeffs
-            .chunks(chunk_size)
-            .map(|chunk| {
+
+        for (chunk_id, (child_worker, mut coeffs_chunk, mut grand_products_chunk, mut sub_product)) in itertools::izip!(
+            coeffs_chunks.into_iter(),
+            grand_products_chunks.into_iter(),)
+            .map(|(coeffs_chunk, grand_products_chunk)| {
                 (
                     worker.child(),
-                    self.coeffs.clone(),
-                    grand_products.clone(),
-                    sub_products.clone(),
-                    chunk.len(),
+                    coeffs_chunk,
+                    grand_products_chunk,
+                    sub_products.clone()
                 )
             })
             .enumerate()
         {
             assert!(chunk_id < num_cpus);
-            let start = chunk_id * chunk_size;
-            let end = start + chunk_len;
-            let range = start..end;
+
             let fut = async move {
                 let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-                let coeffs = unsafe {
-                    std::slice::from_raw_parts(
-                        coeffs[range.clone()].as_ptr(),
-                        chunk_len,
-                    )
-                };
+                let coeffs = coeffs_chunk.deref_mut();
+                let grand_products = grand_products_chunk.deref_mut();
+                let sub_products = sub_product.deref_mut();
 
-                let grand_products = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        grand_products[range].as_ptr() as *mut F,
-                        chunk_len,
-                    )
-                };
-                let sub_products = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        sub_products.as_ptr() as *mut F,
-                        sub_products.len(),
-                    )
-                };
                 for (a, g) in coeffs.iter().zip(grand_products.iter_mut()) {
                     sub_products[chunk_id].mul_assign(&a);
                     *g = sub_products[chunk_id];
@@ -872,7 +788,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         // not guaranteed to have equal length
 
         let mut full_grand_product = F::one();
-        for sub in sub_products.iter() {
+        for sub in sub_products.deref().iter() {
             full_grand_product.mul_assign(sub);
         }
 
@@ -881,10 +797,11 @@ impl<F: PrimeField> Polynomial<F, Values> {
             .ok_or(SynthesisError::DivisionByZero)?;
 
         // now let's get [abc^-1, def^-1, ..., xyz^-1];
+
         let mut sub_inverses = vec![F::one(); num_cpus];
         for (i, s) in sub_inverses.iter_mut().enumerate() {
             let mut tmp = product_inverse;
-            for (j, p) in sub_products.iter().enumerate() {
+            for (j, p) in sub_products.deref().iter().enumerate() {
                 if i == j {
                     continue;
                 }
@@ -894,46 +811,29 @@ impl<F: PrimeField> Polynomial<F, Values> {
             *s = tmp;
         }
 
-        let sub_inverses = Arc::new(sub_inverses);
+        let mut sub_inverses = SubVec::new(sub_inverses);
+        let mut grand_products_chunks = grand_products.split_into_chunks_with_chunks_number(num_cpus);
 
+        let coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
         let mut handles = vec![];
-        for (chunk_id, (child_worker, coeffs, grand_products, sub_inverses, chunk_len)) in self
-            .coeffs
-            .chunks(chunk_size)
-            .map(|chunk| {
+        for (chunk_id, (child_worker, mut coeffs_chunk, mut grand_products_chunk, mut sub_inverses)) in itertools::izip!(
+            coeffs_chunks.into_iter(),
+            grand_products_chunks.into_iter())
+            .map(|(coeffs_chunk, grand_products_chunk)| {
                 (
                     worker.child(),
-                    self.coeffs.clone(),
-                    grand_products.clone(),
-                    sub_inverses.clone(),
-                    chunk.len(),
+                    coeffs_chunk,
+                    grand_products_chunk,
+                    sub_inverses.clone()
                 )
             })
             .enumerate()
         {
-            let start = chunk_id * chunk_size;
-            let end = start + chunk_len;
-            let range = start..end;
             let fut = async move {
                 let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-                let coeffs = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        coeffs[range.clone()].as_ptr() as *mut F,
-                        chunk_len,
-                    )
-                };
-                let grand_products = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        grand_products[range].as_ptr() as *mut F,
-                        chunk_len,
-                    )
-                };
-                let sub_inverses = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        sub_inverses.as_ptr() as *mut F,
-                        sub_inverses.len(),
-                    )
-                };
+                let coeffs = coeffs_chunk.deref_mut();
+                let grand_products = grand_products_chunk.deref_mut();
+                let sub_inverses = sub_inverses.deref_mut();
 
                 for (a, g) in coeffs.iter_mut().rev().zip(
                     grand_products
@@ -961,10 +861,14 @@ impl<F: PrimeField> Polynomial<F, Values> {
     }
 
     pub fn pop_last(&mut self) -> Result<F, SynthesisError> {
-        let coeffs = unsafe { Arc::get_mut_unchecked(&mut self.coeffs) };
-        let last = coeffs.pop().ok_or(SynthesisError::AssignmentMissing)?;
+        assert_eq!(Arc::strong_count(&self.coeffs.buf), 1);
+        let mut last = SubVec::empty();
+        let length = self.coeffs.len();
+        assert!(length > 1);
 
-        Ok(last)
+        (self.coeffs, last) = self.coeffs.clone().split_at(length - 1);
+
+        Ok(last.buf[0])
     }
 
     pub async fn clone_shifted_assuming_bitreversed(
@@ -973,10 +877,11 @@ impl<F: PrimeField> Polynomial<F, Values> {
         worker: Worker,
         is_background: bool,
     ) -> Result<Self, SynthesisError> {
+        assert_eq!(self.coeffs.len(), self.coeffs.buf.len());
         let len = self.coeffs.len();
         assert!(by < len);
         let mut extended_clone = Vec::with_capacity(len + by);
-        extended_clone.extend_from_slice(&self.coeffs);
+        extended_clone.extend_from_slice(&self.coeffs.buf);
         let mut tmp = Self::from_values(extended_clone)?;
         tmp.bitreverse_enumeration(worker.child(), is_background)
             .await;
@@ -996,7 +901,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
     pub fn ifft(mut self, worker: &OldWorker) -> Polynomial<F, Coefficients>
     {
         debug_assert!(self.coeffs.len().is_power_of_two());        
-        let mut coeffs = unsafe{Arc::get_mut_unchecked(&mut self.coeffs)};
+        let mut coeffs = self.coeffs.deref_mut();
         crate::plonk::fft::fft::best_fft(coeffs, worker, &self.omegainv, self.exp, None);
 
         let minv = self.minv;
@@ -1048,26 +953,20 @@ async fn op<F: PrimeField>(
     worker: Worker,
     is_background: bool,
     op: Operation<F>,
-    this: Arc<Vec<F>>,
+    this: SubVec<F>,
 ) {
     let num_cpus = worker.num_cpus();
-    let num_items = this.len();
-    let chunk_size = num_items / num_cpus;
+    let mut this_chunks = this.clone().split_into_chunks_with_chunks_number(num_cpus);
+    let chunk_size = this_chunks[0].len();
     let mut handles = vec![];
-    for (chunk_id, (child_worker, coeffs, chunk)) in this
-        .chunks(chunk_size)
-        .map(|c| (worker.child(), this.clone(), c))
-        .enumerate()
+
+    for (child_worker, mut chunk) in this_chunks
+        .into_iter()
+        .map(|chunk| (worker.child(), chunk))
     {
-        let chunk_len = chunk.len();
-        let start = chunk_id * chunk_size;
-        let end = start + chunk_len;
-        let range = start..end;
         let fut = async move {
             let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-            let buf = unsafe {
-                std::slice::from_raw_parts_mut(coeffs[range].as_ptr() as *mut F, chunk_len)
-            };
+            let buf = chunk.deref_mut();
             for el in buf.iter_mut() {
                 match op {
                     Operation::Scale(ref scaling) => el.mul_assign(scaling),
@@ -1100,31 +999,26 @@ async fn bin_op_scaled<F: PrimeField>(
     worker: Worker,
     is_background: bool,
     op: BinOperation<F>,
-    this: Arc<Vec<F>>,
-    other: Arc<Vec<F>>,
+    this: SubVec<F>,
+    other: SubVec<F>,
 ) {
     let num_cpus = worker.num_cpus();
-    let num_items = other.len();
-    let chunk_size = num_items / num_cpus;
+    assert_eq!(this.len(), other.len());
+
+    let this_chunks = this.clone().split_into_chunks_with_chunks_number(num_cpus);
+    let other_chunks = other.clone().split_into_chunks_with_chunks_number(num_cpus);
+
     let mut handles = vec![];
-    for (chunk_id, (child_worker, this, other, chunk)) in other
-        .chunks(chunk_size)
-        .map(|chunk| (worker.child(), this.clone(), other.clone(), chunk))
-        .enumerate()
+    for (child_worker, mut this_chunk, other_chunk) in this_chunks
+        .into_iter()
+        .zip(other_chunks.into_iter())
+        .map(|(this_chunk, other_chunk)| (worker.child(), this_chunk, other_chunk))
     {
-        let chunk_len = chunk.len();
-        let start = chunk_id * chunk_size;
-        let end = start + chunk_len;
-        let range = start..end;
         let fut = async move {
             let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-            let this_buf = unsafe {
-                std::slice::from_raw_parts_mut(this[range.clone()].as_ptr() as *mut F, chunk_len)
-            };
-            let other_buf = unsafe {
-                std::slice::from_raw_parts_mut(other[range].as_ptr() as *mut F, chunk_len)
-            };
-            for (t, o) in this_buf.iter_mut().zip(other_buf) {
+            let this_buf = this_chunk.deref_mut();
+            let other_buf = other_chunk.deref();
+            for (t, o) in this_buf.iter_mut().zip(other_buf.iter()) {
                 match op {
                     BinOperation::AddAssign => t.add_assign(o),
                     BinOperation::AddAssignScaled(ref scalar) => {
@@ -1153,44 +1047,33 @@ async fn bin_op_scaled<F: PrimeField>(
 pub async fn calculate_grand_product<F: PrimeField>(
     worker: Worker,
     is_background: bool,
-    coeffs: Arc<Vec<F>>,
-    result: Arc<Vec<F>>,
+    coeffs: SubVec<F>,
+    result: SubVec<F>,
 ) {
     let num_cpus = worker.num_cpus();
-    let num_items = coeffs.len();
-    let mut sub_products = Arc::new(vec![F::one(); num_cpus]);
-    let mut chunk_size = num_items / num_cpus;
-    if num_items % num_cpus != 0 {
-        chunk_size +=1 ;
-    }
+    let mut sub_products = SubVec::new(vec![F::one(); num_cpus]);
+    let mut coeffs_chunks = coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+    let mut result_chunks = result.clone().split_into_chunks_with_chunks_number(num_cpus);
+
     let mut handles = vec![];
-    for (chunk_id, (child_worker, result, coeffs, sub_products, chunk_len)) in coeffs
-        .chunks(chunk_size)
-        .map(|chunk| {
+    for (chunk_id, (child_worker, mut coeffs_chunk, mut result_chunk, mut sub_products)) in itertools::izip!(
+        coeffs_chunks.into_iter(),
+        result_chunks.into_iter())
+        .map(|(coeffs_chunk, result_chunk)| {
             (
                 worker.child(),
-                result.clone(),
-                coeffs.clone(),
-                sub_products.clone(),
-                chunk.len(),
+                coeffs_chunk,
+                result_chunk,
+                sub_products.clone()
             )
         })
         .enumerate()
     {
-        let start = chunk_id * chunk_size;
-        let end = start + chunk_len;
-        let range = start..end;
         let fut = async move {
             let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-            let coeffs = unsafe {
-                std::slice::from_raw_parts_mut(coeffs[range.clone()].as_ptr() as *mut F, chunk_len)
-            };
-            let result = unsafe {
-                std::slice::from_raw_parts_mut(result[range].as_ptr() as *mut F, chunk_len)
-            };
-            let sub_products = unsafe {
-                std::slice::from_raw_parts_mut(sub_products.as_ptr() as *mut F, sub_products.len())
-            };
+            let coeffs = coeffs_chunk.deref_mut();
+            let result = result_chunk.deref_mut();
+            let sub_products = sub_products.deref_mut();
 
             for (r, c) in result.iter_mut().zip(coeffs.iter()) {
                 sub_products[chunk_id].mul_assign(c);
@@ -1204,50 +1087,37 @@ pub async fn calculate_grand_product<F: PrimeField>(
     }
     join_all(handles).await;
 
-    {
-        let sub_products = unsafe { Arc::get_mut_unchecked(&mut sub_products) };
-        // subproducts are [abc, def, xyz]
+    let mut sub_products = sub_products.into_inner();
+    // subproducts are [abc, def, xyz]
 
-        // we do not need the last one
-        sub_products.pop().expect("has at least one value");
+    // we do not need the last one
+    sub_products.pop().expect("has at least one value");
 
-        let mut tmp = F::one();
-        for s in sub_products.iter_mut() {
-            tmp.mul_assign(&s);
-            *s = tmp;
-        }
-
-        std::mem::forget(sub_products);
+    let mut tmp = F::one();
+    for s in sub_products.iter_mut() {
+        tmp.mul_assign(&s);
+        *s = tmp;
     }
 
+    let mut result_chunks = result.split_into_chunks_with_chunks_number(num_cpus);
     let mut handles = vec![];
-    for (chunk_id, (worker, result, sub_products, chunk_len)) in result
-        .chunks(chunk_size)
-        .map(|chunk| {
+    for (worker, mut result_chunk, sub_product) in result_chunks
+        .into_iter().skip(1)
+        .zip(sub_products.into_iter())
+        .map(|(result_chunk, sub_product)| {
             (
                 worker.child(),
-                result.clone(),
-                sub_products.clone(),
-                chunk.len(),
+                result_chunk,
+                sub_product
             )
         })
-        .enumerate()
-        .skip(1)
     {
         let child_worker = worker.child();
         let fut = async move {
-            let start = chunk_id * chunk_len;
-            let end = start + chunk_len;
-            let range = start..end;
             let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
-            let result = unsafe {
-                std::slice::from_raw_parts_mut(result[range].as_ptr() as *mut F, chunk_len)
-            };
-            let sub_products = unsafe {
-                std::slice::from_raw_parts_mut(sub_products.as_ptr() as *mut F, sub_products.len())
-            };
+            let result = result_chunk.deref_mut();
             for r in result.iter_mut() {
-                r.mul_assign(&sub_products[chunk_id - 1]);
+                r.mul_assign(&sub_product);
             }
 
             child_worker.return_resources(cpu_unit).await;
@@ -1257,4 +1127,34 @@ pub async fn calculate_grand_product<F: PrimeField>(
     }
 
     join_all(handles).await;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pairing::bn256::{Bn256, Fr};
+    use crate::pairing::ff::Field;
+    use futures::executor::block_on;
+
+    #[test]
+    fn test_new_polynoms() {
+        let manager = ResourceManagerProxy::new(num_cpus::get_physical(), 0, 1);
+        let worker = manager.create_worker();
+
+        let coeffs1 = vec![Fr::one(), Fr::zero(), Fr::zero(), Fr::zero()];
+        let coeffs2 = vec![Fr::one(); 8];
+        let coeffs3: Vec<Fr> = (0..8).map(|x| Fr::from_str(&format!("{}", x+1)).unwrap()).collect();
+        let values1 = vec![Fr::one(); 8];
+
+        let mut poly1 = Polynomial::from_coeffs(coeffs1).unwrap();
+        let mut poly2 = Polynomial::from_coeffs(coeffs2).unwrap();
+        let mut poly3 = Polynomial::from_values(coeffs3).unwrap();
+        let mut poly4 = Polynomial::from_values(values1).unwrap();
+
+        let res = block_on(poly3.calculate_shifted_grand_product(worker.child(), false)).unwrap();
+        dbg!(res.as_ref());
+
+
+    }
 }

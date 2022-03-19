@@ -146,7 +146,7 @@ async fn test_bit_gate_contribute_into_quotient<E: Engine>(
         let handle = worker.spawn_with_handle(fut).unwrap();
         handles.push(handle);
     }
-    let _ = join_all(handles).await;;
+    let _ = join_all(handles).await;
 
     tmp.scale(worker.child(), false, challenges[0]);
 
@@ -965,7 +965,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 z_2.mul_assign(worker.child(), false, &p).await;
             }
 
-            z_2.batch_inversion(worker.child(), false).await?;
+            z_2.arc_clone().batch_inversion(worker.child(), false).await?;
 
             z_2
         };
@@ -1289,7 +1289,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let mut tmp = ldes_storage
                 .state_map
                 .get(&PolyIdentifier::VariablesPolynomial(0))
-                .unwrap();
+                .unwrap().arc_clone();
             tmp.add_constant(worker.child(), false, &gamma_for_copy_permutation).await;
             tmp.add_assign_scaled(worker.child(), false, &x_poly, &beta_for_copy_permutation).await;
             contrib_z.mul_assign(worker.child(), false, &tmp).await;
@@ -1665,7 +1665,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let mut tmp = ldes_storage
                 .state_map
                 .get(&PolyIdentifier::VariablesPolynomial(0))
-                .unwrap();
+                .unwrap().arc_clone();
             tmp.add_constant(worker.child(), false, &gamma_for_copy_permutation).await;
             tmp.add_assign_scaled(worker.child(), false, &x_poly, &beta_for_copy_permutation).await;
             contrib_z.mul_assign(worker.child(), false, &tmp).await;

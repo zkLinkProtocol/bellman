@@ -8,7 +8,7 @@ use crate::resource_management::*;
 use crate::resource_management::utils::*;
 
 #[inline(always)]
-pub fn radix_2_butterfly<F: PrimeField>(values: &mut [F], offset: usize, stride: usize) {
+fn radix_2_butterfly<F: PrimeField>(values: &mut [F], offset: usize, stride: usize) {
     // a + b, a - b
     unsafe {
         let i = offset;
@@ -22,7 +22,7 @@ pub fn radix_2_butterfly<F: PrimeField>(values: &mut [F], offset: usize, stride:
 }
 
 #[inline(always)]
-pub fn radix_2_butterfly_with_twiddle<F: PrimeField>(
+fn radix_2_butterfly_with_twiddle<F: PrimeField>(
     values: &mut [F],
     twiddle: &F,
     offset: usize,
@@ -46,7 +46,7 @@ pub fn radix_2_butterfly_with_twiddle<F: PrimeField>(
 }
 
 async fn outer_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize, const TWIDDLE: bool>(
-    values: Vec<F>,
+    mut values: SubVec<F>,
     omega: F,
     precomputed_twiddle_factors: Arc<Vec<F>>,
     inner_size: usize,
@@ -57,12 +57,12 @@ async fn outer_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize, const TWI
     stride: usize,
     worker: Worker,
     is_background: bool,
-) -> Vec<F> {
+) {
     let resources = worker.get_cpu_unit(is_background).await.await;
-    let mut values = values;
+    let values = values.deref_mut();
+
     let precomputed_twiddle_factors: &[F] = &*precomputed_twiddle_factors;
     let start = absolute_position_offset;
-    let work_1 = std::time::Instant::now();
     for (i, s) in values.chunks_mut(outer_size).enumerate() {
         if TWIDDLE {
             let idx = start + i;
@@ -73,6 +73,10 @@ async fn outer_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize, const TWI
                 element.mul_assign(&outer_twiddle);
                 outer_twiddle.mul_assign(&inner_twiddle);
             }
+        }else{
+            // TODO: we use here to distribute powers of coset generator
+            // through all terms
+            
         }
 
         non_generic_small_size_serial_fft::<F, MAX_LOOP_UNROLL>(
@@ -84,13 +88,10 @@ async fn outer_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize, const TWI
         );
     }
 
-    let return_1 = std::time::Instant::now();
     worker.return_resources(resources).await;
-
-    values
 }
 
-pub fn non_generic_small_size_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize>(
+ fn non_generic_small_size_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: usize>(
     values: &mut [F],
     precomputed_twiddle_factors: &[F],
     offset: usize,
@@ -148,7 +149,7 @@ pub fn non_generic_small_size_serial_fft<F: PrimeField, const MAX_LOOP_UNROLL: u
     }
 }
 
-pub fn calcualate_inner_and_outer_sizes(size: usize) -> (usize, usize) {
+fn calcualate_inner_and_outer_sizes(size: usize) -> (usize, usize) {
     assert!(size.is_power_of_two());
     let log_n = size.trailing_zeros();
     let inner_size = 1 << (log_n / 2);
@@ -158,17 +159,18 @@ pub fn calcualate_inner_and_outer_sizes(size: usize) -> (usize, usize) {
 }
 
 pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>(
-    values: Vec<F>,
+    job_id: usize,
+    values: SubVec<F>, // will be modified
     omega: F,
     precomputed_twiddle_factors: Arc<Vec<F>>,
     worker: Worker,
     is_background: bool,
-) -> Vec<F> {
+) -> usize {
     if values.len() <= 1 {
-        return values;
+        return job_id; // TODO
     }
 
-    let mut values = values;
+    // let mut values = values;
 
     // Recurse by splitting along the square root
     // Round such that outer is larger.
@@ -176,17 +178,19 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
 
     let (inner_size, outer_size) = calcualate_inner_and_outer_sizes(length);
     // TODO
-    // assert_eq!(precomputed_twiddle_factors.len() * 2, outer_size);
     let stretch = outer_size / inner_size;
 
-    debug_assert_eq!(omega.pow(&[values.len() as u64]), F::one());
+    debug_assert_eq!(omega.pow(&[length as u64]), F::one());
     debug_assert!(outer_size == inner_size || outer_size == 2 * inner_size);
     debug_assert_eq!(outer_size * inner_size, length);
 
-    // shuffle
-    transpose(&mut values, inner_size, stretch);
 
-    const MAX_EFFICIENTLY_USED_CPUS: usize = 8;
+
+    // shuffle
+    let mut values = values;
+    transpose(values.deref_mut(), inner_size, stretch);
+
+    const MAX_EFFICIENTLY_USED_CPUS: usize = 1;
 
     let max_available_resources = worker.max_available_resources();
     let max_available_cpus = max_available_resources.cpu_cores;
@@ -195,16 +199,17 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
     let mut all_futures = Vec::with_capacity(cpus_to_use);
 
     let num_inner_work_units_per_cpu = get_chunk_size(inner_size, cpus_to_use);
-    let mut chunkable_vector = ChunkableVector::new(values);
     let fft_chunk_size = outer_size * num_inner_work_units_per_cpu;
     // we need to split alligned, so use splitting by precomputed size
-    chunkable_vector.split_with_chunk_size(fft_chunk_size);
+    // chunkable_vector
+    // let mut_ref: &mut Vec<Vec<_>> = chunkable_vector.as_mut();
 
-    assert_eq!(<ChunkableVector<_> as AsRef<Vec<Vec<_>>>>::as_ref(&chunkable_vector).len(), cpus_to_use);
+    let mut chunk = SubVec::new(vec![]);
+    let mut values_copy = values.clone();
 
-    let mut_ref: &mut Vec<Vec<_>> = chunkable_vector.as_mut();
-    for i in 0..cpus_to_use {
-        let chunk = std::mem::replace(&mut mut_ref[i], vec![]);
+    for i in 0..cpus_to_use-1 {
+        (chunk, values_copy) = values_copy.split_at(fft_chunk_size);
+
         let absolute_position_offset = i * num_inner_work_units_per_cpu;
         let fut = outer_serial_fft::<F, MAX_LOOP_UNROLL, false>(
             chunk, 
@@ -219,33 +224,40 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
             worker.child(),
             is_background,
         );
-        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        let spawned_fut = worker.spawn_with_handle(fut).expect("must spawn a future");
         all_futures.push(spawned_fut);
     }
 
-    let chunks = join_all(all_futures).await;
+    let absolute_position_offset = (cpus_to_use - 1) * num_inner_work_units_per_cpu;
+        let fut = outer_serial_fft::<F, MAX_LOOP_UNROLL, false>(
+        values_copy, 
+        omega,
+        precomputed_twiddle_factors.clone(),
+        inner_size,
+        outer_size,
+        absolute_position_offset,
+        0,
+        stretch,
+        stretch,
+        worker.child(),
+        is_background,
+    );
+    let spawned_fut = worker.spawn_with_handle(fut).expect("must spawn a future");
+    all_futures.push(spawned_fut);
+
+    let _ = join_all(all_futures).await;
     let worker = worker.next();
 
-    // place chunks back
-    assert_eq!(chunks.len(), cpus_to_use);
-    for (i, c) in chunks.into_iter().enumerate() {
-        let _ = std::mem::replace(&mut mut_ref[i], c);
-    }
-    drop(mut_ref);
-    chunkable_vector.merge();
-
-    // shuffle back
-    let mut_ref: &mut Vec<F> = chunkable_vector.as_mut();
-    transpose(mut_ref, inner_size, stretch);
-    drop(mut_ref);
-
-    // split again
-    chunkable_vector.split_with_chunk_size(fft_chunk_size);
+    transpose(values.deref_mut(), inner_size, stretch);
 
     let mut all_futures = Vec::with_capacity(cpus_to_use);
-    let mut_ref: &mut Vec<Vec<_>> = chunkable_vector.as_mut();
-    for i in 0..cpus_to_use {
-        let chunk = std::mem::replace(&mut mut_ref[i], vec![]);
+
+    let mut chunk = SubVec::new(vec![]);
+    let mut values_copy = values.clone();
+
+    for i in 0..cpus_to_use-1 {
+        (chunk, values_copy) = values_copy.split_at(fft_chunk_size);
+
         let absolute_position_offset = i * num_inner_work_units_per_cpu;
         let fut = outer_serial_fft::<F, MAX_LOOP_UNROLL, true>(
             chunk, 
@@ -259,22 +271,29 @@ pub async fn non_generic_radix_sqrt<F: PrimeField, const MAX_LOOP_UNROLL: usize>
             1,
             worker.child(),
             is_background,
-        );
-        let spawned_fut = worker.inner.manager.thread_pool.spawn_with_handle(fut).expect("must spawn a future");
+        );          
+        let spawned_fut = worker.spawn_with_handle(fut).expect("must spawn a future");
         all_futures.push(spawned_fut);
     }
 
-    let chunks = join_all(all_futures).await;
-    // place chunks back
-    assert_eq!(chunks.len(), cpus_to_use);
-    for (i, c) in chunks.into_iter().enumerate() {
-        let _ = std::mem::replace(&mut mut_ref[i], c);
-    }
-    drop(mut_ref);
+    let absolute_position_offset = (cpus_to_use - 1) * num_inner_work_units_per_cpu;
+    let fut = outer_serial_fft::<F, MAX_LOOP_UNROLL, true>(
+        values_copy, 
+        omega,
+        precomputed_twiddle_factors.clone(),
+        inner_size,
+        outer_size,
+        absolute_position_offset,
+        0,
+        1,
+        1,
+        worker.child(),
+        is_background,
+    );          
+    let spawned_fut = worker.spawn_with_handle(fut).expect("must spawn a future");
+    all_futures.push(spawned_fut);
 
-    chunkable_vector.merge();
+    let _ = join_all(all_futures).await;
 
-    let values = chunkable_vector.into_single();
-
-    values
+    job_id
 }

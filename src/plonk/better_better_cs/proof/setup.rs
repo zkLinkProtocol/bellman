@@ -217,9 +217,8 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
             (&setup.lookup_tables_monomials, &mut new.lookup_tables_commitments),
         ].into_iter() {
             for p in p.iter() {
-                todo!()
-                // let commitment = commit_using_monomials(p, &crs, &worker)?;
-                // c.push(commitment);
+                let commitment = async_manager.multiexp(p.arc_coeffs(), worker.child(), false).await;
+                c.push(commitment);
             }
         }
 

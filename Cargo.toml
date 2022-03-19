@@ -16,6 +16,7 @@ crate-type = ["cdylib", "lib", "staticlib"]
 rand = "0.4"
 bit-vec = "0.6"
 cfg-if = "1.*"
+itertools = "*"
 
 pairing = {package = "pairing_ce", version = "0.26.*" }
 # pairing = {package = "pairing_ce", path = "../pairing"}
@@ -54,7 +55,7 @@ plonk = ["lazy_static", "tiny-keccak", "blake2s_const"]
 # redshift = ["plonk", "rescue_hash", "poseidon_hash"]
 wasm = ["web-sys"]
 asm = ["pairing/asm"]
-async_prover = ["gpu_prover"]
+async_prover = ["fallback_cpu_prover"]
 fpga_prover = ["heavy-ops-service/fpga", "new_polynomials"]
 gpu_prover = ["heavy-ops-service/gpu", "new_polynomials"]
 fallback_cpu_prover = ["heavy-ops-service", "new_polynomials"]

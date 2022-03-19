@@ -53,6 +53,9 @@ pub mod cs;
 pub mod setup;
 #[cfg(feature = "async_prover")]
 pub mod lookup_tables;
+// #[cfg(feature = "async_prover")]
+// pub mod polynomials_new_new;
+
 
 #[cfg(test)]
 mod tests;

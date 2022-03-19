@@ -179,6 +179,7 @@ async fn run_test_circuit_setup_and_async_prove() {
     let first = mon_crs.g2_monomial_bases[0].clone();
     let second = mon_crs.g2_monomial_bases[1].clone();
 
+    println!("1");
     let vk = VerificationKey::from_setup(
         &setup,
         &worker.child(),
@@ -188,6 +189,7 @@ async fn run_test_circuit_setup_and_async_prove() {
     .await
     .unwrap();
 
+    println!("1");
     let valid = verify::<Bn256, TestCircuit4WithLookups<Bn256>, RollingKeccakTranscript<Fr>>(
         &vk, &proof, None,
     )

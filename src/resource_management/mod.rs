@@ -402,8 +402,6 @@ impl Worker {
     }
 }
 
-use crate::resource_management::utils::{ChunkableVector, get_chunk_size};
-
 #[cfg(test)]
 mod test {
     use super::*;
