@@ -35,7 +35,7 @@ blake2s_simd = {version = "0.5"}
 lazy_static = {version = "1", optional = true}
 
 blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_const/blake2s/"}
-
+async-utils = {path = "../heavy-ops-service/async-utils"}
 # rescue_hash = {git = "https://github.com/shamatar/rescue_hash.git", optional = true }
 # rescue_hash = {path = "../rescue_hash", optional = true }
 # poseidon_hash = {path = "../poseidon_hash", optional = true }

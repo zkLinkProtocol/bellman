@@ -52,7 +52,7 @@ cfg_if! {
         #[cfg(feature = "wasm")]
         compile_error!("Multicore feature is not yet compatible with wasm target arch");
 
-        mod multicore;
+        pub mod multicore;
         pub mod worker {
             pub use super::multicore::*;
         }

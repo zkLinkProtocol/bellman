@@ -698,11 +698,11 @@ pub(crate) struct LookupDataHolder<E: Engine> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct LookupQuery<E: Engine> {
-    pub(crate) s_at_z_omega: E::Fr,
-    pub(crate) grand_product_at_z_omega: E::Fr,
-    pub(crate) t_at_z: E::Fr,
-    pub(crate) t_at_z_omega: E::Fr,
-    pub(crate) selector_at_z: E::Fr,
-    pub(crate) table_type_at_z: E::Fr,
+pub struct LookupQuery<E: Engine> {
+    pub s_at_z_omega: E::Fr,
+    pub grand_product_at_z_omega: E::Fr,
+    pub t_at_z: E::Fr,
+    pub t_at_z_omega: E::Fr,
+    pub selector_at_z: E::Fr,
+    pub table_type_at_z: E::Fr,
 }
