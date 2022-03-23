@@ -234,7 +234,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
 
     pub async fn async_calculate_lookup_selector_values(
-        &self,
+        &'static self,
         worker: Worker,
         is_background: bool,
     ) -> Result<Vec<E::Fr>, SynthesisError> {
@@ -250,28 +250,51 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         // total number of gates, Input + Aux
         let size = self.n();
+        let num_cpus = worker.num_cpus();
 
         let aux_gates_start = self.num_input_gates;
 
         let num_aux_gates = self.num_aux_gates;
         // input + aux gates without t-polys
+        let length = self.tables.len();
+        let worker_ranges = ranges_from_length_and_num_cpus(length, num_cpus);
 
-        let mut lookup_selector_values = vec![E::Fr::zero(); size];
+        let tables = Arc::new(&self.tables);
+        let selectors = Arc::new(&self.table_selectors);
+        let mut lookup_selector_values = SubVec::new(vec![E::Fr::zero(); size]);
 
-        for single_application in self.tables.iter() {
-            let table_name = single_application.functional_name();
-            let selector_bitvec = self.table_selectors.get(&table_name).unwrap();
+        let mut handles = vec![];
+        for range in worker_ranges.into_iter() {
+            let child_worker = worker.child();
+            let mut lookup_selector_values_clone = lookup_selector_values.clone();
+            let tables_clone = tables.clone();
+            let selectors_clone = selectors.clone();
 
-            for aux_gate_idx in 0..num_aux_gates {
-                if selector_bitvec[aux_gate_idx] {
-                    let global_gate_idx = aux_gate_idx + aux_gates_start;
-                    // place 1 into selector
-                    lookup_selector_values[global_gate_idx] = E::Fr::one();
+            let fut = async move {
+                let cpu_unit = child_worker.get_cpu_unit(is_background).await.await;
+
+                for i in range {
+                    let table_name = tables_clone[i].functional_name();
+                    let selector_bitvec = selectors_clone.get(&table_name).unwrap();
+
+                    let selector_values = lookup_selector_values_clone.deref_mut();
+                    for aux_gate_idx in 0..num_aux_gates {
+                        if selector_bitvec[aux_gate_idx] {
+                            let global_gate_idx = aux_gate_idx + aux_gates_start;
+                            // place 1 into selector
+                            selector_values[global_gate_idx] = E::Fr::one();
+                        }
+                    }
                 }
-            }
-        }
 
-        Ok(lookup_selector_values)
+                child_worker.return_resources(cpu_unit).await;
+            };
+            let handle = worker.spawn_with_handle(fut).unwrap();
+            handles.push(handle);
+        }
+        join_all(handles).await;
+
+        Ok(lookup_selector_values.into_inner())
     }
 
     pub async fn async_calculate_masked_lookup_entries_using_selector(
