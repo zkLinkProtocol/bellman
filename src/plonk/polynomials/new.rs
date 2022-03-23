@@ -45,7 +45,14 @@ pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
 impl<F: PrimeField, P: PolynomialForm> Clone for Polynomial<F, P> {
     fn clone(&self) -> Self {
         let coeffs = self.into_coeffs();
-        Self { coeffs: SubVec::new(coeffs), exp: self.exp.clone(), omega: self.omega.clone(), omegainv: self.omegainv.clone(), geninv: self.geninv.clone(), minv: self.minv.clone(), _marker: self._marker.clone() }
+        Self { 
+            coeffs: SubVec::new(coeffs), 
+            exp: self.exp.clone(), 
+            omega: self.omega.clone(), 
+            omegainv: self.omegainv.clone(), 
+            geninv: self.geninv.clone(), 
+            minv: self.minv.clone(), 
+            _marker: self._marker.clone() }
     }
 }
 

@@ -8,6 +8,9 @@ pub mod proof;
 pub mod verifier;
 pub mod trees;
 pub mod gates;
+pub mod async_data_structures;
+pub mod async_polynomials;
+pub mod async_cs;
 
 #[cfg(feature = "redshift")]
 pub mod redshift;

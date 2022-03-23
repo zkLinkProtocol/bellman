@@ -4,6 +4,7 @@ use crate::bit_vec::BitVec;
 
 use crate::{SynthesisError};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use crate::worker::Worker;
 use crate::plonk::domains::*;
@@ -12,11 +13,14 @@ use crate::plonk::polynomials::*;
 pub use crate::plonk::cs::variable::*;
 use crate::plonk::better_cs::utils::*;
 pub use super::lookup_tables::{self, *};
+use futures::future::join_all;
 
 use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::utils::*;
 pub use super::data_structures::*;
+pub use super::async_polynomials;
+pub use super::async_data_structures;
 pub use super::setup::*;
 
 pub use super::gates::main_gate_with_d_next::*;
@@ -628,8 +632,6 @@ pub trait PlonkConstraintSystemParams<E: Engine>: Sized + Copy + Clone + Send + 
     const HAS_CUSTOM_GATES: bool;
     const CAN_ACCESS_NEXT_TRACE_STEP: bool;
 }
-
-use std::sync::Arc;
 
 pub trait ConstraintSystem<E: Engine> {
     type Params: PlonkConstraintSystemParams<E>;
@@ -1895,7 +1897,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(column_contributions)
     }
 
-    fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
+    pub(crate) fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
         let entries = table.get_table_values_for_polys();
         assert_eq!(entries.len(), 3);
 
