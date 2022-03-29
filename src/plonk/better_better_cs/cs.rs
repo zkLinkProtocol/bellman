@@ -4,7 +4,7 @@ use crate::bit_vec::BitVec;
 
 use crate::{SynthesisError};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::worker::Worker;
 use crate::plonk::domains::*;
@@ -734,7 +734,7 @@ impl<E: Engine> PlonkConstraintSystemParams<E> for PlonkCsWidth4WithNextStepAndC
     const HAS_CUSTOM_GATES: bool = true;
     const CAN_ACCESS_NEXT_TRACE_STEP: bool = true;
 }
-
+ 
 use crate::plonk::polynomials::*;
 
 #[derive(Clone)]
@@ -844,13 +844,13 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
 
     pub tables: Vec<Arc<LookupTableApplication<E>>>,
     pub multitables: Vec<Arc<MultiTableApplication<E>>>,
-    pub table_selectors: std::collections::HashMap<String, BitVec>,
+    pub table_selectors: Arc<RwLock<std::collections::HashMap<String, BitVec>>>,
     pub multitable_selectors: std::collections::HashMap<String, BitVec>,
     pub table_ids_poly: Vec<E::Fr>,
     pub total_length_of_all_tables: usize,
 
-    pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
-    pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
+    pub individual_table_entries: std::collections::HashMap<String, Arc<RwLock<Vec<Vec<E::Fr>>>>>,
+    pub individual_multitable_entries: std::collections::HashMap<String, Arc<RwLock<Vec<Vec<E::Fr>>>>>,
     pub known_table_ids: Vec<E::Fr>,
     pub num_table_lookups: usize,
     pub num_multitable_lookups: usize,
@@ -1102,8 +1102,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let res = shared.clone();
 
         self.tables.push(shared);
-        self.individual_table_entries.insert(table_name.clone(), vec![]);
-        self.table_selectors.insert(table_name, BitVec::new());
+        self.individual_table_entries.insert(table_name.clone(), Arc::new(RwLock::new(vec![])));
+        self.table_selectors.write().unwrap().insert(table_name, BitVec::new());
         self.known_table_ids.push(table_id);
 
         self.total_length_of_all_tables += number_of_entries;
@@ -1132,7 +1132,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         assert!(exists == false);
         self.multitables.push(Arc::from(table));
         self.multitable_selectors.insert(table_name.clone(), BitVec::new());
-        self.individual_table_entries.insert(table_name.clone(), vec![]);
+        self.individual_table_entries.insert(table_name.clone(), Arc::new(RwLock::new(vec![])));
 
         Ok(())
     }
@@ -1164,13 +1164,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             // - mark that this table applies at this row
             // - add values into the list to later on make a sorted polynomial
 
-            let tracker = self.table_selectors.get_mut(&table_name).unwrap();
+            let mut lock = self.table_selectors.write().unwrap();
+            let tracker = lock.get_mut(&table_name).unwrap();
             if tracker.len() != n {
                 let padding = n - tracker.len();
                 tracker.grow(padding, false);
             }
             tracker.push(true);
             debug_assert_eq!(n+1, tracker.len());
+            drop(lock);
 
             // keep track of what table is applied at what row
             self.table_ids_poly.resize(n, E::Fr::zero());
@@ -1199,7 +1201,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 return Err(SynthesisError::Unsatisfiable);
             }
 
-            entries.push(table_entries);
+            entries.write().unwrap().push(table_entries);
         }
 
         self.num_table_lookups += 1;
@@ -1240,7 +1242,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     
             assert!(table.is_valid_entry(&table_entries));
 
-            entries.push(table_entries);
+            entries.write().unwrap().push(table_entries);
         }
 
         self.num_multitable_lookups += 1;
@@ -1370,7 +1372,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             tables: vec![],
             multitables: vec![],
-            table_selectors: std::collections::HashMap::new(),
+            table_selectors: Arc::new(RwLock::new(std::collections::HashMap::new())),
             multitable_selectors: std::collections::HashMap::new(),
             table_ids_poly: vec![],
             total_length_of_all_tables: 0,
@@ -1449,7 +1451,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             }
 
             // pad lookup selectors
-            for (_, selector) in self.table_selectors.iter_mut() {
+            for (_, selector) in self.table_selectors.write().unwrap().iter_mut() {
                 selector.grow(new_size_for_aux, false);
             }
 
@@ -2006,7 +2008,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         for single_application in self.tables.iter() {
             // copy all queries from witness
             let table_name = single_application.functional_name();
-            for kv_values in self.individual_table_entries.get(&table_name).unwrap() {
+            for kv_values in self.individual_table_entries.get(&table_name).unwrap().read().unwrap().iter() {
                 let entry = KeyValueSet::<E>::from_slice(&kv_values[..3]);
                 kv_set_entries.push(entry);
             }
@@ -2101,7 +2103,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         for single_application in self.tables.iter() {
             let table_name = single_application.functional_name();
-            let selector_bitvec = self.table_selectors.get(&table_name).unwrap();
+            let lock = self.table_selectors.read().unwrap();
+            let selector_bitvec = lock.get(&table_name).unwrap();
 
             for aux_gate_idx in 0..num_aux_gates {
                 if selector_bitvec[aux_gate_idx] {
@@ -2138,7 +2141,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         for single_application in self.tables.iter() {
             let table_name = single_application.functional_name();
             let keys_and_values = single_application.applies_over();
-            let selector_bitvec = self.table_selectors.get(&table_name).unwrap();
+            let lock = self.table_selectors.read().unwrap();
+            let selector_bitvec = lock.get(&table_name).unwrap();
 
             for aux_gate_idx in 0..num_aux_gates {
                 if selector_bitvec[aux_gate_idx] {

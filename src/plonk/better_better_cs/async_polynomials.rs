@@ -92,7 +92,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
 
     pub async fn distribute_powers(&mut self, worker: Worker, is_background: bool, g: F) {
         let num_cpus = worker.num_cpus();
-        let mut coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let mut coeffs_chunks = self.coeffs.clone().split_by_num_cpus(num_cpus);
         let chunk_size = coeffs_chunks[0].len();
         let mut handles = vec![];
         for (chunk_id, (child_worker, mut chunk)) in coeffs_chunks
@@ -137,7 +137,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         }
 
         let num_cpus = worker.num_cpus();
-        let mut coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let mut coeffs_chunks = self.coeffs.clone().split_by_num_cpus(num_cpus);
         let mut handles = vec![];
 
         for (chunk_id, (child_worker, mut coeffs, mut chunk)) in coeffs_chunks
@@ -326,7 +326,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
     ) -> Result<Vec<Polynomial<F, Coefficients>>, SynthesisError> {
         // TODO
 
-        let splited_coeffs = self.coeffs.split_into_chunks_with_chunk_size(size);
+        let splited_coeffs = self.coeffs.split_by_chunk_size(size);
 
         let mut results = Vec::with_capacity(splited_coeffs.len());
 
@@ -422,7 +422,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
     pub async fn evaluate_at(&self, worker: Worker, is_background: bool, g: F) -> F {
         let num_cpus = worker.num_cpus();
         
-        let coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let coeffs_chunks = self.coeffs.clone().split_by_num_cpus(num_cpus);
         let chunk_size = coeffs_chunks[0].len();
 
         let mut handles = vec![];
@@ -732,8 +732,8 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut grand_products = SubVec::new(vec![F::one(); num_items]);
         let mut sub_products = SubVec::new(vec![F::one(); num_cpus]);
 
-        let mut grand_products_chunks = grand_products.clone().split_into_chunks_with_chunks_number(num_cpus);
-        let coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let mut grand_products_chunks = grand_products.clone().split_by_num_cpus(num_cpus);
+        let coeffs_chunks = self.coeffs.clone().split_by_num_cpus(num_cpus);
         let mut chunk_size = coeffs_chunks[0].len();
 
         let mut handles = vec![];
@@ -800,9 +800,9 @@ impl<F: PrimeField> Polynomial<F, Values> {
         }
 
         let mut sub_inverses = SubVec::new(sub_inverses);
-        let mut grand_products_chunks = grand_products.split_into_chunks_with_chunks_number(num_cpus);
+        let mut grand_products_chunks = grand_products.split_by_num_cpus(num_cpus);
 
-        let coeffs_chunks = self.coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
+        let coeffs_chunks = self.coeffs.clone().split_by_num_cpus(num_cpus);
         let mut handles = vec![];
         for (chunk_id, (child_worker, mut coeffs_chunk, mut grand_products_chunk, mut sub_inverses)) in itertools::izip!(
             coeffs_chunks.into_iter(),
@@ -944,7 +944,7 @@ async fn op<F: PrimeField>(
     this: SubVec<F>,
 ) {
     let num_cpus = worker.num_cpus();
-    let mut this_chunks = this.clone().split_into_chunks_with_chunks_number(num_cpus);
+    let mut this_chunks = this.clone().split_by_num_cpus(num_cpus);
     let chunk_size = this_chunks[0].len();
     let mut handles = vec![];
 
@@ -993,8 +993,8 @@ async fn bin_op_scaled<F: PrimeField>(
     let num_cpus = worker.num_cpus();
     assert_eq!(this.len(), other.len());
 
-    let this_chunks = this.clone().split_into_chunks_with_chunks_number(num_cpus);
-    let other_chunks = other.clone().split_into_chunks_with_chunks_number(num_cpus);
+    let this_chunks = this.clone().split_by_num_cpus(num_cpus);
+    let other_chunks = other.clone().split_by_num_cpus(num_cpus);
 
     let mut handles = vec![];
     for (child_worker, mut this_chunk, other_chunk) in this_chunks
@@ -1040,8 +1040,8 @@ pub async fn calculate_grand_product<F: PrimeField>(
 ) {
     let num_cpus = worker.num_cpus();
     let mut sub_products = SubVec::new(vec![F::one(); num_cpus]);
-    let mut coeffs_chunks = coeffs.clone().split_into_chunks_with_chunks_number(num_cpus);
-    let mut result_chunks = result.clone().split_into_chunks_with_chunks_number(num_cpus);
+    let mut coeffs_chunks = coeffs.clone().split_by_num_cpus(num_cpus);
+    let mut result_chunks = result.clone().split_by_num_cpus(num_cpus);
 
     let mut handles = vec![];
     for (chunk_id, (child_worker, mut coeffs_chunk, mut result_chunk, mut sub_products)) in itertools::izip!(
@@ -1087,7 +1087,7 @@ pub async fn calculate_grand_product<F: PrimeField>(
         *s = tmp;
     }
 
-    let mut result_chunks = result.split_into_chunks_with_chunks_number(num_cpus);
+    let mut result_chunks = result.split_by_num_cpus(num_cpus);
     let mut handles = vec![];
     for (worker, mut result_chunk, sub_product) in result_chunks
         .into_iter().skip(1)
@@ -1145,4 +1145,33 @@ mod tests {
 
 
     }
+
+//     #[test]
+//     fn test_grand_product(){
+//         use rand::{thread_rng, Rand};
+//         use futures::executor::block_on;
+//         let rng = &mut thread_rng();
+//         let old_worker = OldWorker::new();
+//         let manager = ResourceManagerProxy::new(num_cpus::get_physical(), 0, 1);
+//         let worker = manager.create_worker();
+
+//         let degree = 32;
+//         let values = vec![Fr::rand(rng); degree];
+
+//         let poly = Polynomial::from_values(values).unwrap();
+
+//         // let expected = poly.calculate_grand_product(&old_worker).unwrap();
+//         // let actual = block_on(calculate_grand_product(worker.child(), false, &poly)).unwrap();
+//         // assert_eq!(&expected.coeffs[..], &actual.coeffs[..]);
+        
+        
+//         let expected = poly.calculate_shifted_grand_product(&old_worker).unwrap();
+//         let actual = block_on(calculate_shifted_grand_product(worker.child(), false, &poly)).unwrap();
+
+//         for (e, a) in expected.coeffs[1..].iter().zip(actual.coeffs.iter()){
+//             assert_eq!(e, a);
+//         }
+//         // assert_eq!(&expected.coeffs[..], &actual.coeffs.deref()[..]);
+
+//     }
 }
