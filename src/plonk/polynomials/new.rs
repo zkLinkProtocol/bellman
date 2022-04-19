@@ -15,7 +15,7 @@ use crate::plonk::fft::cooley_tukey_ntt::partial_reduction;
 
 use crate::plonk::transparent_engine::PartialTwoBitReductionField;
 
-use async_utils::SubVec;
+use super::sub_vec::*;
 
 pub trait PolynomialForm: Sized + Copy + Clone {}
 
