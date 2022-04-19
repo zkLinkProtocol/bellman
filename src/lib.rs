@@ -1,3 +1,4 @@
+#![feature(get_mut_unchecked)]
 #![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments, unreachable_patterns ) ]
 
 #[macro_use]
