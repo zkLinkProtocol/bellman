@@ -2,7 +2,7 @@ use crate::pairing::ff::PrimeField;
 use crate::worker::*;
 use crate::plonk::domains::*;
 
-pub(crate) mod partial_reduction;
+pub mod partial_reduction;
 
 pub trait CTPrecomputations<F: PrimeField>: Send + Sync {
     fn new_for_domain_size(size: usize) -> Self;
@@ -168,7 +168,7 @@ pub(crate) fn log2_floor(num: usize) -> u32 {
     pow
 }
 
-pub(crate) fn best_ct_ntt<F: PrimeField, P: CTPrecomputations<F>>(
+pub fn best_ct_ntt<F: PrimeField, P: CTPrecomputations<F>>(
     a: &mut [F], 
     worker: &Worker, 
     log_n: u32, 

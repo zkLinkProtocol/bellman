@@ -6,4 +6,4 @@ pub trait FftPrecomputations<F: PrimeField>: Send + Sync {
     fn domain_size(&self) -> usize;
 }
 
-pub(crate) mod fft;
+pub mod fft;

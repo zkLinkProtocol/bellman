@@ -941,7 +941,7 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
 }
 
 #[cfg(test)]
-pub(crate) mod test {
+pub mod test {
     use super::*;
     use crate::pairing::bn256::{Bn256, Fr};
     use crate::worker::Worker;

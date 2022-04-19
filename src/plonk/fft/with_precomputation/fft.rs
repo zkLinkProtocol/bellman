@@ -14,7 +14,7 @@ fn log2_floor(num: usize) -> u32 {
     pow
 }
 
-pub(crate) fn best_fft<F: PrimeField, P: FftPrecomputations<F>>(
+pub fn best_fft<F: PrimeField, P: FftPrecomputations<F>>(
     a: &mut [F], 
     worker: &Worker, 
     omega: &F, 

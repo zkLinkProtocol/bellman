@@ -6,7 +6,7 @@ use crate::plonk::transparent_engine::PartialTwoBitReductionField;
 use super::CTPrecomputations;
 use super::log2_floor;
 
-pub(crate) fn best_ct_ntt_partial_reduction<F: PartialTwoBitReductionField, P: CTPrecomputations<F>>(
+pub fn best_ct_ntt_partial_reduction<F: PartialTwoBitReductionField, P: CTPrecomputations<F>>(
     a: &mut [F], 
     worker: &Worker, 
     log_n: u32, 
