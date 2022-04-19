@@ -15,7 +15,8 @@ use crate::plonk::fft::cooley_tukey_ntt::partial_reduction;
 
 use crate::plonk::transparent_engine::PartialTwoBitReductionField;
 
-use super::sub_vec::*;
+// use super::sub_vec::*;
+use async_utils::*;
 
 pub trait PolynomialForm: Sized + Copy + Clone {}
 
@@ -30,7 +31,7 @@ impl PolynomialForm for Values{}
 
 // TODO: Enforce bitreversed values as a separate form
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
     pub coeffs: SubVec<F>,
     pub exp: u32,
@@ -40,6 +41,13 @@ pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
     pub minv: F,
     _marker: std::marker::PhantomData<P>
 }
+
+impl<F: PrimeField, P: PolynomialForm> PartialEq for Polynomial<F, P>{
+    fn eq(&self, other: &Self) -> bool {
+        todo!();
+    }
+}
+impl<F: PrimeField, P: PolynomialForm> Eq for Polynomial<F, P>{}
 
 impl<F: PrimeField, P: PolynomialForm> Clone for Polynomial<F, P> {
     fn clone(&self) -> Self {
