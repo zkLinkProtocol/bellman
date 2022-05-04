@@ -67,11 +67,11 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     }
 
     pub fn as_ref(&self) -> &[F] {
-        &self.coeffs
+        self.coeffs.as_ref()
     }
 
     pub fn as_mut(&mut self) -> &mut [F] {
-        &mut self.coeffs
+        self.coeffs.as_mut()
     }
 
     pub fn as_arc(&self) -> SubVec<F>{
@@ -88,12 +88,12 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
 
     pub fn distribute_powers(&mut self, worker: &Worker, g: F)
     {
-        distribute_powers(&mut self.coeffs, &worker, g);
+        distribute_powers(self.coeffs.as_mut(), &worker, g);
     }
 
     pub fn reuse_allocation<PP: PolynomialForm> (&mut self, other: &Polynomial<F, PP>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
-        self.coeffs.copy_from_slice(&other.coeffs);
+        self.coeffs.as_mut().copy_from_slice(other.coeffs.as_ref());
     }
 
     pub fn bitreverse_enumeration(&mut self, worker: &Worker) {
@@ -103,7 +103,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
             for j in 0..total_len {
                 let rj = cooley_tukey_ntt::bitreverse(j, log_n);
                 if j < rj {
-                    self.coeffs.swap(j, rj);
+                    self.coeffs.as_mut().swap(j, rj);
                 }  
             }
 
@@ -111,7 +111,8 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         }
 
         // FIXME
-        let r = &mut self.coeffs[..] as *mut [F];
+        let r = self.coeffs.as_mut() as *mut [F];
+        // let r = self.coeffs.as_mut();
 
         let to_spawn = worker.cpus;
 
@@ -122,6 +123,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         worker.scope(0, |scope, _| {
             for thread_id in 0..to_spawn {
                 let r = unsafe {&mut *r};
+                // let r = r.as_mut();
                 scope.spawn(move |_| {
                     let start = thread_id * chunk;
                     let end = if start + chunk <= total_len {
@@ -147,7 +149,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         }
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for v in self.coeffs.chunks_mut(chunk) {
+            for v in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         v.mul_assign(&g);
@@ -160,7 +162,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     pub fn negate(&mut self, worker: &Worker)
     {
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for v in self.coeffs.chunks_mut(chunk) {
+            for v in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         v.negate();
@@ -173,7 +175,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     pub fn map<M: Fn(&mut F) -> () + Send + Copy>(&mut self, worker: &Worker, func: M)
     {
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for v in self.coeffs.chunks_mut(chunk) {
+            for v in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         func(v);
@@ -186,7 +188,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     pub fn map_indexed<M: Fn(usize, &mut F) -> () + Send + Copy>(&mut self, worker: &Worker, func: M)
     {
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (chunk_idx, v) in self.coeffs.chunks_mut(chunk).enumerate() {
+            for (chunk_idx, v) in self.coeffs.as_mut().chunks_mut(chunk).enumerate() {
                 scope.spawn(move |_| {
                     let base = chunk_idx * chunk;
                     for (in_chunk_idx, v) in v.iter_mut().enumerate() {
@@ -368,8 +370,8 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         domain_size: u64
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
         assert_eq!(self.coeffs.len(), 2);
-        let alpha = self.coeffs[1];
-        let c = self.coeffs[0];
+        let alpha = self.coeffs.as_ref()[1];
+        let c = self.coeffs.as_ref()[0];
 
         let domain = Domain::<F>::new_for_size(domain_size)?;
 
@@ -399,8 +401,8 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         domain_size: u64
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
         assert_eq!(self.coeffs.len(), 2);
-        let alpha = self.coeffs[1];
-        let c = self.coeffs[0];
+        let alpha = self.coeffs.as_ref()[1];
+        let c = self.coeffs.as_ref()[0];
 
         let domain = Domain::<F>::new_for_size(domain_size)?;
 
@@ -539,7 +541,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         let mut lde = self.coeffs;
         lde.resize(new_size as usize, F::zero());
-        best_lde(&mut lde, worker, &domain.generator, domain.power_of_two as u32, factor);
+        best_lde(lde.as_mut(), worker, &domain.generator, domain.power_of_two as u32, factor);
 
         Polynomial::from_values_subvec(lde)
     }
@@ -710,8 +712,8 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
                 scope.spawn(move |_| {
                     let mut coset_generator = coset_omega.pow(&[i as u64]);
                     for r in r.iter_mut() {
-                        distribute_powers(&mut r[..], &worker, coset_generator);
-                        with_precomputation::fft::best_fft(&mut r[..], &worker, &this_domain_omega, log_n, num_cpus_hint, precomputed_omegas);
+                        distribute_powers(r.as_mut(), &worker, coset_generator);
+                        with_precomputation::fft::best_fft(r.as_mut(), &worker, &this_domain_omega, log_n, num_cpus_hint, precomputed_omegas);
                         coset_generator.mul_assign(&coset_omega);
                     }
                 });
@@ -729,7 +731,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
                     for v in v.iter_mut() {
                         let coset_idx = idx % factor;
                         let element_idx = idx / factor; 
-                        *v = results_ref[coset_idx][element_idx];
+                        *v = results_ref[coset_idx].as_ref()[element_idx];
 
                         idx += 1;
                     }
@@ -793,10 +795,10 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
                     let mut gen_power = i;
                     for r in r.iter_mut() {
                         if gen_power != 0 {
-                            distribute_powers_serial(&mut r[..], coset_generator);
+                            distribute_powers_serial(r.as_mut(), coset_generator);
                         }
                         // distribute_powers(&mut r[..], &worker, coset_generator);
-                        cooley_tukey_ntt::best_ct_ntt(&mut r[..], &worker, log_n_u32, num_cpus_hint, precomputed_omegas);
+                        cooley_tukey_ntt::best_ct_ntt(r.as_mut(), &worker, log_n_u32, num_cpus_hint, precomputed_omegas);
 
                         coset_generator.mul_assign(&coset_omega);
                         gen_power += 1;
@@ -824,7 +826,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
                         let coset_idx = idx % factor;
                         let element_idx = idx / factor;
                         let element_idx = cooley_tukey_ntt::bitreverse(element_idx, log_n); 
-                        *v = results_ref[coset_idx][element_idx];
+                        *v = results_ref[coset_idx].as_ref()[element_idx];
 
                         idx += 1;
                     }
@@ -1054,7 +1056,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         let mut lde = self.coeffs;
         lde.resize(new_size as usize, F::zero());
-        best_lde(&mut lde, worker, &domain.generator, domain.power_of_two as u32, factor);
+        best_lde(lde.as_mut(), worker, &domain.generator, domain.power_of_two as u32, factor);
 
         Polynomial::from_values_subvec(lde)
     }
@@ -1177,7 +1179,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
     pub fn fft(mut self, worker: &Worker) -> Polynomial<F, Values>
     {
         debug_assert!(self.coeffs.len().is_power_of_two());
-        best_fft(&mut self.coeffs, worker, &self.omega, self.exp, None);
+        best_fft(self.coeffs.as_mut(), worker, &self.omega, self.exp, None);
 
         Polynomial::<F, Values> {
             coeffs: self.coeffs,
@@ -1208,7 +1210,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         assert!(self.coeffs.len() >= other.coeffs.len());
 
         worker.scope(other.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.add_assign(&b);
@@ -1222,7 +1224,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         assert!(self.coeffs.len() >= other.coeffs.len());
 
         worker.scope(other.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         let mut tmp = *b;
@@ -1239,7 +1241,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         assert!(self.coeffs.len() >= other.coeffs.len());
 
         worker.scope(other.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.sub_assign(&b);
@@ -1253,7 +1255,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         assert!(self.coeffs.len() >= other.coeffs.len());
 
         worker.scope(other.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         let mut tmp = *b;
@@ -1270,7 +1272,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         let mut subvalues = vec![F::zero(); num_threads];
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (i, (a, s)) in self.coeffs.chunks(chunk)
+            for (i, (a, s)) in self.coeffs.as_ref().chunks(chunk)
                         .zip(subvalues.chunks_mut(1))
                         .enumerate() {
                 scope.spawn(move |_| {
@@ -1376,7 +1378,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let start = 0;
         let end = new_size;
 
-        result.copy_from_slice(&self.coeffs[start..end]);
+        result.copy_from_slice(&self.coeffs.as_ref()[start..end]);
         
         // unsafe { result.set_len(new_size)};
         // let copy_to_start_pointer: *mut F = result[..].as_mut_ptr();
@@ -1393,7 +1395,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
             return self.square(&worker);
         }
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for v in self.coeffs.chunks_mut(chunk) {
+            for v in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         *v = v.pow([exp]);
@@ -1406,7 +1408,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
     pub fn square(&mut self, worker: &Worker)
     {
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for v in self.coeffs.chunks_mut(chunk) {
+            for v in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v.iter_mut() {
                         v.square();
@@ -1419,12 +1421,12 @@ impl<F: PrimeField> Polynomial<F, Values> {
     pub fn ifft(mut self, worker: &Worker) -> Polynomial<F, Coefficients>
     {
         debug_assert!(self.coeffs.len().is_power_of_two());
-        best_fft(&mut self.coeffs, worker, &self.omegainv, self.exp, None);
+        best_fft(self.coeffs.as_mut(), worker, &self.omegainv, self.exp, None);
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
             let minv = self.minv;
 
-            for v in self.coeffs.chunks_mut(chunk) {
+            for v in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v {
                         v.mul_assign(&minv);
@@ -1468,7 +1470,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.add_assign(&b);
@@ -1480,7 +1482,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
     pub fn add_constant(&mut self, worker: &Worker, constant: &F) {
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for a in self.coeffs.chunks_mut(chunk) {
+            for a in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for a in a.iter_mut() {
                         a.add_assign(&constant);
@@ -1492,7 +1494,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
     pub fn sub_constant(&mut self, worker: &Worker, constant: &F) {
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for a in self.coeffs.chunks_mut(chunk) {
+            for a in self.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for a in a.iter_mut() {
                         a.sub_assign(&constant);
@@ -1559,7 +1561,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         worker.scope(values.size(), |scope, chunk| {
             for (i, (vals, coeffs)) in values.as_mut().chunks_mut(chunk)
-                            .zip(self.coeffs.chunks(chunk))
+                            .zip(self.coeffs.as_ref().chunks(chunk))
                         .enumerate() {
                 scope.spawn(move |_| {
                     let mut omega_power = generator.pow([(i*chunk) as u64]);
@@ -1633,7 +1635,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         worker.scope(values.size(), |scope, chunk| {
             for (i, (vals, coeffs)) in values.as_mut().chunks_mut(chunk)
-                            .zip(self.coeffs.chunks(chunk))
+                            .zip(self.coeffs.as_ref().chunks(chunk))
                         .enumerate() {
                 scope.spawn(move |_| {
                     let mut omega_power = generator.pow([(i*chunk) as u64]);
@@ -1809,7 +1811,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for ((g, c), s) in work_chunk.chunks_mut(chunk)
-                        .zip(self.coeffs.chunks(chunk))
+                        .zip(self.coeffs.as_ref().chunks(chunk))
                         .zip(subproducts.chunks_mut(1)) {
                 scope.spawn(move |_| {
                     for (g, c) in g.iter_mut()
@@ -1856,7 +1858,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for ((g, c), s) in result.chunks_mut(chunk)
-                        .zip(self.coeffs.chunks(chunk))
+                        .zip(self.coeffs.as_ref().chunks(chunk))
                         .zip(subproducts.chunks_mut(1)) {
                 scope.spawn(move |_| {
                     for (g, c) in g.iter_mut()
@@ -1900,7 +1902,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut result = Vec::with_capacity(self.coeffs.len());
 
         let mut tmp = F::one();
-        for c in self.coeffs.iter() {
+        for c in self.coeffs.as_ref().iter() {
             tmp.mul_assign(&c);
             result.push(tmp);
         }
@@ -1913,7 +1915,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut subresults = vec![F::zero(); num_threads as usize];
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (c, s) in self.coeffs.chunks(chunk)
+            for (c, s) in self.coeffs.as_ref().chunks(chunk)
                         .zip(subresults.chunks_mut(1)) {
                 scope.spawn(move |_| {
                     for c in c.iter() {
@@ -1941,7 +1943,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for ((g, c), s) in result[1..].chunks_mut(chunk)
-                        .zip(self.coeffs.chunks(chunk))
+                        .zip(self.coeffs.as_ref().chunks(chunk))
                         .zip(subsums.chunks_mut(1)) {
                 scope.spawn(move |_| {
                     for (g, c) in g.iter_mut()
@@ -1991,7 +1993,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(other.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         let mut tmp = *b;
@@ -2008,7 +2010,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.sub_assign(&b);
@@ -2022,7 +2024,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(other.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         let mut tmp = *b;
@@ -2039,7 +2041,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self.coeffs.as_mut().chunks_mut(chunk).zip(other.coeffs.as_ref().chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.mul_assign(&b);
@@ -2056,7 +2058,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let mut subproducts = vec![F::one(); num_threads as usize];
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for ((a, g), s) in self.coeffs.chunks(chunk)
+            for ((a, g), s) in self.coeffs.as_ref().chunks(chunk)
                         .zip(grand_products.chunks_mut(chunk))
                         .zip(subproducts.chunks_mut(1)) {
                 scope.spawn(move |_| {
@@ -2095,7 +2097,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         }
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for ((a, g), s) in self.coeffs.chunks_mut(chunk)
+            for ((a, g), s) in self.coeffs.as_mut().chunks_mut(chunk)
                         .zip(grand_products.chunks(chunk))
                         .zip(subinverses.chunks_mut(1)) {
                 scope.spawn(move |_| {
@@ -2126,8 +2128,8 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let len = self.coeffs.len();
         assert!(by < len);
         let mut new_coeffs = vec![F::zero(); self.coeffs.len()];
-        new_coeffs[..(len - by)].copy_from_slice(&self.coeffs[by..]);
-        new_coeffs[(len-by)..].copy_from_slice(&self.coeffs[..by]);
+        new_coeffs[..(len - by)].copy_from_slice(&self.coeffs.as_ref()[by..]);
+        new_coeffs[(len-by)..].copy_from_slice(&self.coeffs.as_ref()[..by]);
 
         Self::from_values(new_coeffs)
     }
@@ -2136,7 +2138,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let len = self.coeffs.len();
         assert!(by < len);
         let mut extended_clone = Vec::with_capacity(len + by);
-        extended_clone.extend_from_slice(&self.coeffs);
+        extended_clone.extend_from_slice(self.coeffs.as_ref());
         let mut tmp = Self::from_values(extended_clone)?;
         tmp.bitreverse_enumeration(&worker);
 
@@ -2273,7 +2275,7 @@ impl<F: PartialTwoBitReductionField> Polynomial<F, Values> {
 
         let mut coeffs: SubVec<_> = self.coeffs;
         let exp = self.exp;
-        cooley_tukey_ntt::partial_reduction::best_ct_ntt_partial_reduction(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        cooley_tukey_ntt::partial_reduction::best_ct_ntt_partial_reduction(coeffs.as_mut(), worker, exp, Some(worker.cpus), precomputed_omegas);
 
         let mut this = Polynomial::from_coeffs_subvec(coeffs)?;
         
@@ -2284,7 +2286,7 @@ impl<F: PartialTwoBitReductionField> Polynomial<F, Values> {
         worker.scope(this.coeffs.len(), |scope, chunk| {
             let minv = this.minv;
 
-            for v in this.coeffs.chunks_mut(chunk) {
+            for v in this.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v {
                         v.mul_assign(&minv);
@@ -2316,7 +2318,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
         let mut coeffs: SubVec<_> = self.coeffs;
         let exp = self.exp;
-        cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        cooley_tukey_ntt::best_ct_ntt(coeffs.as_mut(), worker, exp, Some(worker.cpus), precomputed_omegas);
         let mut this = Polynomial::from_coeffs_subvec(coeffs)?;
         
         this.bitreverse_enumeration(&worker);
@@ -2326,7 +2328,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         worker.scope(this.coeffs.len(), |scope, chunk| {
             let minv = this.minv;
 
-            for v in this.coeffs.chunks_mut(chunk) {
+            for v in this.coeffs.as_mut().chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for v in v {
                         v.mul_assign(&minv);
@@ -2471,7 +2473,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         let mut coeffs: SubVec<_> = this.coeffs;
         let exp = this.exp;
-        cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        cooley_tukey_ntt::best_ct_ntt(coeffs.as_mut(), worker, exp, Some(worker.cpus), precomputed_omegas);
         let mut this = Polynomial::from_values_subvec(coeffs)?;
         
         this.bitreverse_enumeration(&worker);
@@ -2498,7 +2500,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         let mut coeffs: SubVec<_> = this.coeffs;
         let exp = this.exp;
-        cooley_tukey_ntt::best_ct_ntt(&mut coeffs, worker, exp, Some(worker.cpus), precomputed_omegas);
+        cooley_tukey_ntt::best_ct_ntt(coeffs.as_mut(), worker, exp, Some(worker.cpus), precomputed_omegas);
         let this = Polynomial::from_values_subvec(coeffs)?;
     
         Ok(this)
