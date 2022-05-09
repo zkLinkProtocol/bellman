@@ -9,7 +9,7 @@ pub trait FieldBinop<F: PrimeField>: 'static + Copy + Clone + Send + Sync + std:
     fn apply(&self, dest: &mut F, source: &F);
 }
 
-pub(crate) fn binop_over_slices<F: PrimeField, B: FieldBinop<F>>(worker: &Worker, binop: &B, dest: &mut [F], source: &[F]) {
+pub fn binop_over_slices<F: PrimeField, B: FieldBinop<F>>(worker: &Worker, binop: &B, dest: &mut [F], source: &[F]) {
     assert_eq!(dest.len(), source.len());
     worker.scope(dest.len(), |scope, chunk| {
         for (dest, source) in dest.chunks_mut(chunk)

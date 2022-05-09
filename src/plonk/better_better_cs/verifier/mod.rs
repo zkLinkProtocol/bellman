@@ -166,7 +166,7 @@ pub fn aggregate<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
     for commitment in proof.quotient_poly_parts_commitments.iter() {
         commit_point_as_xy::<E, T>(&mut transcript, commitment);
     }
-
+    
     let z = transcript.get_challenge();
 
     let z_in_domain_size = z.pow(&[required_domain_size as u64]);

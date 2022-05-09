@@ -618,18 +618,18 @@ pub fn table_id_from_string<F: PrimeField>(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct KeyValueSet<E: Engine> {
-    pub(crate) inner: [E::Fr; 3]
+pub struct KeyValueSet<E: Engine> {
+    pub inner: [E::Fr; 3]
 }
 
 impl<E: Engine> KeyValueSet<E> {
-    pub(crate) fn new(set: [E::Fr; 3]) -> Self {
+    pub fn new(set: [E::Fr; 3]) -> Self {
         Self {
             inner: set
         }
     }
 
-    pub(crate) fn from_slice(input: &[E::Fr]) -> Self {
+    pub fn from_slice(input: &[E::Fr]) -> Self {
         debug_assert_eq!(input.len(), 3);
         let mut inner = [E::Fr::zero(); 3];
         inner.copy_from_slice(input);
@@ -683,7 +683,7 @@ impl<E: Engine> std::fmt::Debug for KeyValueSet<E> {
     }
 }
 
-pub(crate) struct LookupDataHolder<E: Engine> {
+pub struct LookupDataHolder<E: Engine> {
     pub(crate) eta: E::Fr,
     pub(crate) f_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
     pub(crate) t_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,

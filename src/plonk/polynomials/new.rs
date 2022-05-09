@@ -77,6 +77,9 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
     pub fn as_arc(&self) -> SubVec<F>{
         self.coeffs.clone()
     }
+    pub fn as_arc_mut(&mut self) -> &mut SubVec<F>{
+        &mut self.coeffs
+    }
 
     pub fn into_coeffs(&self) -> Vec<F> {
         let len = self.coeffs.len();

@@ -63,7 +63,7 @@ impl<F: PrimeField> Domain<F> {
     }
 }
 
-pub(crate) fn materialize_domain_elements_with_natural_enumeration<F: PrimeField>(
+pub fn materialize_domain_elements_with_natural_enumeration<F: PrimeField>(
     domain: &Domain<F>, 
     worker: &Worker
 ) -> Vec<F> {
