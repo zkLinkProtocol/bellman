@@ -39,7 +39,8 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 # rescue_hash = {git = "https://github.com/shamatar/rescue_hash.git", optional = true }
 # rescue_hash = {path = "../rescue_hash", optional = true }
 # poseidon_hash = {path = "../poseidon_hash", optional = true }
-async-utils = {path = "../async-utils"}
+#async-utils = {path = "../async-utils"}
+async-utils = {git = "ssh://git@github.com/matter-labs/heavy-ops-service", package = "async-utils", branch = "dev"}
 hex = "*"
 
 [features]
