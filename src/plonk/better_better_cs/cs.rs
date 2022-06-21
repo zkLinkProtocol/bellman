@@ -1895,7 +1895,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(column_contributions)
     }
 
-    fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
+    pub fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
         let entries = table.get_table_values_for_polys();
         assert_eq!(entries.len(), 3);
 
