@@ -79,6 +79,10 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> Setup<E, C, A> {
         }
     }
 
+    pub fn reallocate<B: Allocator + Clone + Default>(&self) -> Setup<E, C, B> {
+        todo!();
+    }
+
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
         writer.write_u64::<BigEndian>(self.n as u64)?;
         writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
@@ -445,6 +449,10 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
             BitReversedOmegas::new_for_domain_size(setup.permutation_monomials[0].size());
 
         Self::from_setup_and_precomputations(setup, worker, &precomps)
+    }
+
+    pub fn reallocate<B: Allocator + Clone + Default>(&self) -> SetupPrecomputations<E, C, B> {
+        todo!();
     }
 
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
