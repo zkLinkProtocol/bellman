@@ -25,9 +25,10 @@ impl PolynomialForm for Values{}
 
 // TODO: Enforce bitreversed values as a separate form
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
-    coeffs: Vec<F>,
+use std::alloc::{Allocator, Global};
+#[derive(Clone, Debug)]
+pub struct Polynomial<F: PrimeField, P: PolynomialForm, A: Allocator + Clone = Global> {
+    coeffs: Vec<F, A>,
     pub exp: u32,
     pub omega: F,
     pub omegainv: F,
@@ -36,8 +37,20 @@ pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
     _marker: std::marker::PhantomData<P>
 }
 
+impl<F: PrimeField, P: PolynomialForm, A: Allocator + Clone> PartialEq for Polynomial<F, P, A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.exp == other.exp &&
+        self.omega == other.omega &&
+        self.omegainv == other.omegainv &&
+        self.geninv == other.geninv &&
+        self.minv == other.minv &&
+        self.coeffs[..] == other.coeffs[..]
+    }
+}
 
-impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
+impl<F: PrimeField, P: PolynomialForm, A: Allocator + Clone> Eq for Polynomial<F, P, A> {}
+
+impl<F: PrimeField, P: PolynomialForm, A: Allocator + Clone> Polynomial<F, P, A> {
     pub fn size(&self) -> usize {
         self.coeffs.len()
     }
@@ -50,7 +63,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         &mut self.coeffs
     }
 
-    pub fn into_coeffs(self) -> Vec<F> {
+    pub fn into_coeffs(self) -> Vec<F, A> {
         self.coeffs
     }
 
@@ -59,7 +72,7 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
         distribute_powers(&mut self.coeffs, &worker, g);
     }
 
-    pub fn reuse_allocation<PP: PolynomialForm> (&mut self, other: &Polynomial<F, PP>) {
+    pub fn reuse_allocation<PP: PolynomialForm> (&mut self, other: &Polynomial<F, PP, A>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
         self.coeffs.copy_from_slice(&other.coeffs);
     }
@@ -217,8 +230,8 @@ impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
 
     pub fn clone_padded_to_domain(&self) -> Result<Self, SynthesisError> {
         let mut padded = self.clone();
-        let domain = Domain::<F>::new_for_size(self.coeffs.len() as u64)?;
-        padded.coeffs.resize(domain.size as usize, F::zero());
+        // let domain = Domain::<F>::new_for_size(self.coeffs.len() as u64)?;
+        // padded.coeffs.resize(domain.size as usize, F::zero());
 
         Ok(padded)
     }
@@ -242,7 +255,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         Self::from_coeffs(coeffs)
     }
 
-    pub fn from_coeffs(mut coeffs: Vec<F>) -> Result<Polynomial<F, Coefficients>, SynthesisError>
+    pub fn from_coeffs<A: Allocator + Clone>(mut coeffs: Vec<F, A>) -> Result<Polynomial<F, Coefficients, A>, SynthesisError>
     {
         let coeffs_len = coeffs.len();
 
@@ -253,7 +266,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
         coeffs.resize(m, F::zero());
 
-        Ok(Polynomial::<F, Coefficients> {
+        Ok(Polynomial::<F, Coefficients, A> {
             coeffs: coeffs,
             exp: exp,
             omega: omega,
@@ -1283,7 +1296,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         })
     }
 
-    pub fn from_values_unpadded(values: Vec<F>) -> Result<Polynomial<F, Values>, SynthesisError>
+    pub fn from_values_unpadded<A: Allocator + Clone>(values: Vec<F, A>) -> Result<Polynomial<F, Values, A>, SynthesisError>
     {
         let coeffs_len = values.len();
 
@@ -1292,7 +1305,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         let m = domain.size as usize;
         let omega = domain.generator;
 
-        Ok(Polynomial::<F, Values> {
+        Ok(Polynomial::<F, Values, A> {
             coeffs: values,
             exp: exp,
             omega: omega,

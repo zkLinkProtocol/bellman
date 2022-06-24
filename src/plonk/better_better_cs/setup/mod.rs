@@ -20,28 +20,29 @@ use std::io::{Read, Write};
 
 use crate::plonk::better_cs::keys::*;
 
+use std::alloc::{Allocator, Global};
 #[derive(Clone, PartialEq, Eq)]
-pub struct Setup<E: Engine, C: Circuit<E>> {
+pub struct Setup<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
     pub n: usize,
     pub num_inputs: usize,
     pub state_width: usize,
     pub num_witness_polys: usize,
 
-    pub gate_setup_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
-    pub gate_selectors_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
+    pub gate_setup_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
+    pub gate_selectors_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
     pub permutation_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
 
     pub total_lookup_entries_length: usize,
-    pub lookup_selector_monomial: Option<Polynomial<E::Fr, Coefficients>>,
-    pub lookup_tables_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
-    pub lookup_table_type_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+    pub lookup_selector_monomial: Option<Polynomial<E::Fr, Coefficients, A>>,
+    pub lookup_tables_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
+    pub lookup_table_type_monomial: Option<Polynomial<E::Fr, Coefficients, A>>,
 
     pub non_residues: Vec<E::Fr>,
 
     _marker: std::marker::PhantomData<C>
 }
 
-impl<E: Engine, C: Circuit<E>> std::fmt::Debug for Setup<E, C> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + std::fmt::Debug> std::fmt::Debug for Setup<E, C, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Setup")
             .field("n", &self.n)
@@ -57,7 +58,7 @@ impl<E: Engine, C: Circuit<E>> std::fmt::Debug for Setup<E, C> {
     }
 }
 
-impl<E: Engine, C: Circuit<E>> Setup<E, C> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> Setup<E, C, A> {
     pub fn empty() -> Self {
         Self {
             n: 0,
@@ -345,26 +346,27 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct SetupPrecomputations<E: Engine, C: Circuit<E>> {
-    pub gate_setup_ldes: Vec<Polynomial<E::Fr, Values>>,
-    pub gate_selectors_ldes: Vec<Polynomial<E::Fr, Values>>,
-    pub permutation_ldes: Vec<Polynomial<E::Fr, Values>>,
+pub struct SetupWithPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
 
-    pub lookup_selector_lde: Option<Polynomial<E::Fr, Values>>,
-    pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values>>,
+    pub gate_setup_ldes: Vec<Polynomial<E::Fr, Values, A>>,
+    pub gate_selectors_ldes: Vec<Polynomial<E::Fr, Values, A>>,
+    pub permutation_ldes: Vec<Polynomial<E::Fr, Values, A>>,
+
+    pub lookup_selector_lde: Option<Polynomial<E::Fr, Values, A>>,
+    pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values, A>>,
 
     _marker: std::marker::PhantomData<C>
 }
 
 use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
 
-impl<E: Engine, C: Circuit<E>> SetupPrecomputations<E, C> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupWithPrecomputations<E, C, A> {
     pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
-        setup: &Setup<E, C>,
+        setup: &Setup<E, C, Global>,
         worker: &Worker,
         omegas_bitreversed: &CP,
-    ) -> Result<Self, SynthesisError> {
-        let mut new = Self {
+    ) -> Result<SetupWithPrecomputations<E, C, Global>, SynthesisError> {
+        let mut new = SetupWithPrecomputations::<E, C, Global> {
             gate_setup_ldes: vec![],
             gate_selectors_ldes: vec![],
             permutation_ldes: vec![],
@@ -436,9 +438,9 @@ impl<E: Engine, C: Circuit<E>> SetupPrecomputations<E, C> {
     }
 
     pub fn from_setup(
-        setup: &Setup<E, C>,
+        setup: &Setup<E, C, Global>,
         worker: &Worker,
-    ) -> Result<Self, SynthesisError> {
+    ) -> Result<SetupWithPrecomputations<E, C, Global>, SynthesisError> {
         let precomps =
             BitReversedOmegas::new_for_domain_size(setup.permutation_monomials[0].size());
 
@@ -471,9 +473,10 @@ impl<E: Engine, C: Circuit<E>> SetupPrecomputations<E, C> {
             gate_setup_ldes,
             gate_selectors_ldes,
             permutation_ldes,
+
             lookup_selector_lde,
             lookup_table_type_lde,
-            
+
             _marker: std::marker::PhantomData,
         };
 
