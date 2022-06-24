@@ -343,3 +343,140 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
         Ok(())
     }   
 }
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SetupPrecomputations<E: Engine, C: Circuit<E>> {
+    pub gate_setup_ldes: Vec<Polynomial<E::Fr, Values>>,
+    pub gate_selectors_ldes: Vec<Polynomial<E::Fr, Values>>,
+    pub permutation_ldes: Vec<Polynomial<E::Fr, Values>>,
+
+    pub lookup_selector_lde: Option<Polynomial<E::Fr, Values>>,
+    pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values>>,
+
+    _marker: std::marker::PhantomData<C>
+}
+
+use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
+
+impl<E: Engine, C: Circuit<E>> SetupPrecomputations<E, C> {
+    pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
+        setup: &Setup<E, C>,
+        worker: &Worker,
+        omegas_bitreversed: &CP,
+    ) -> Result<Self, SynthesisError> {
+        let mut new = Self {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            _marker: std::marker::PhantomData,
+        };
+
+        let coset_generator = E::Fr::multiplicative_generator();
+
+        for p in setup.gate_setup_monomials.iter() {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.gate_setup_ldes.push(ext);
+        }
+
+        for p in setup.gate_selectors_monomials.iter() {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.gate_selectors_ldes.push(ext);
+        }
+
+        for p in setup.permutation_monomials.iter() {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.permutation_ldes.push(ext);
+        }
+
+        if let Some(p) = &setup.lookup_selector_monomial {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.lookup_selector_lde = Some(ext);
+        }
+
+        if let Some(p) = &setup.lookup_table_type_monomial {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+            
+            new.lookup_table_type_lde = Some(ext);
+        }
+
+        Ok(new)
+    }
+
+    pub fn from_setup(
+        setup: &Setup<E, C>,
+        worker: &Worker,
+    ) -> Result<Self, SynthesisError> {
+        let precomps =
+            BitReversedOmegas::new_for_domain_size(setup.permutation_monomials[0].size());
+
+        Self::from_setup_and_precomputations(setup, worker, &precomps)
+    }
+
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        write_polynomials_vec(&self.gate_setup_ldes, &mut writer)?;
+        write_polynomials_vec(&self.gate_selectors_ldes, &mut writer)?;
+        write_polynomials_vec(&self.permutation_ldes, &mut writer)?;
+
+        write_optional_polynomial(&self.lookup_selector_lde, &mut writer)?;
+        write_optional_polynomial(&self.lookup_table_type_lde, &mut writer)?;
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        use crate::pairing::CurveAffine;
+        use crate::pairing::EncodedPoint;
+
+        let gate_setup_ldes = read_polynomials_values_unpadded_vec(&mut reader)?;
+        let gate_selectors_ldes = read_polynomials_values_unpadded_vec(&mut reader)?;
+        let permutation_ldes = read_polynomials_values_unpadded_vec(&mut reader)?;
+
+        let lookup_selector_lde = read_optional_polynomial_values_unpadded(&mut reader)?;
+        let lookup_table_type_lde = read_optional_polynomial_values_unpadded(&mut reader)?;
+
+        let new = Self {
+            gate_setup_ldes,
+            gate_selectors_ldes,
+            permutation_ldes,
+            lookup_selector_lde,
+            lookup_table_type_lde,
+            
+            _marker: std::marker::PhantomData,
+        };
+
+        Ok(new)
+    }
+}
