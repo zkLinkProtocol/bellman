@@ -346,7 +346,7 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct SetupWithPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
+pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
 
     pub gate_setup_ldes: Vec<Polynomial<E::Fr, Values, A>>,
     pub gate_selectors_ldes: Vec<Polynomial<E::Fr, Values, A>>,
@@ -360,13 +360,13 @@ pub struct SetupWithPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clo
 
 use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
 
-impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupWithPrecomputations<E, C, A> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputations<E, C, A> {
     pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
         setup: &Setup<E, C, Global>,
         worker: &Worker,
         omegas_bitreversed: &CP,
-    ) -> Result<SetupWithPrecomputations<E, C, Global>, SynthesisError> {
-        let mut new = SetupWithPrecomputations::<E, C, Global> {
+    ) -> Result<SetupPrecomputations<E, C, Global>, SynthesisError> {
+        let mut new = SetupPrecomputations::<E, C, Global> {
             gate_setup_ldes: vec![],
             gate_selectors_ldes: vec![],
             permutation_ldes: vec![],
@@ -440,7 +440,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupWithPrecompu
     pub fn from_setup(
         setup: &Setup<E, C, Global>,
         worker: &Worker,
-    ) -> Result<SetupWithPrecomputations<E, C, Global>, SynthesisError> {
+    ) -> Result<SetupPrecomputations<E, C, Global>, SynthesisError> {
         let precomps =
             BitReversedOmegas::new_for_domain_size(setup.permutation_monomials[0].size());
 
