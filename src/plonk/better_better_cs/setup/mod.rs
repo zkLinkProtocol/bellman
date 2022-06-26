@@ -359,6 +359,12 @@ pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone =
     pub lookup_selector_lde: Option<Polynomial<E::Fr, Values, A>>,
     pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values, A>>,
 
+    pub permutation_values: Vec<Polynomial<E::Fr, Values>>,
+
+    pub lookup_selector_values: Option<Polynomial<E::Fr, Values, A>>,
+    pub lookup_tables_values: Option<Vec<Polynomial<E::Fr, Values, A>>>,
+    pub lookup_table_type_values: Option<Polynomial<E::Fr, Values, A>>,
+
     _marker: std::marker::PhantomData<C>
 }
 
@@ -377,6 +383,12 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
 
             lookup_selector_lde: None,
             lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: None,
+            lookup_table_type_values: None,
 
             _marker: std::marker::PhantomData,
         };
@@ -438,6 +450,48 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
             new.lookup_table_type_lde = Some(ext);
         }
 
+        for p in setup.permutation_monomials.iter() {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.permutation_values.push(ext);
+        }
+
+        if let Some(p) = &setup.lookup_selector_monomial {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.lookup_selector_values = Some(ext);
+        }
+
+        if let Some(p) = &setup.lookup_table_type_monomial {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+            
+            new.lookup_table_type_values = Some(ext);
+        }
+
+        for p in setup.lookup_tables_monomials.iter() {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            if let Some(val) = &mut new.lookup_tables_values {
+                val.push(ext);
+            }
+        }
+
         Ok(new)
     }
 
@@ -463,6 +517,14 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
         write_optional_polynomial(&self.lookup_selector_lde, &mut writer)?;
         write_optional_polynomial(&self.lookup_table_type_lde, &mut writer)?;
 
+        write_polynomials_vec(&self.permutation_values, &mut writer)?;
+
+        write_optional_polynomial(&self.lookup_selector_values, &mut writer)?;
+        if let Some(p) = &self.lookup_tables_values {
+            write_polynomials_vec(p, &mut writer)?;
+        }
+        write_optional_polynomial(&self.lookup_table_type_values, &mut writer)?;
+
         Ok(())
     }
 
@@ -477,6 +539,12 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
         let lookup_selector_lde = read_optional_polynomial_values_unpadded(&mut reader)?;
         let lookup_table_type_lde = read_optional_polynomial_values_unpadded(&mut reader)?;
 
+        let permutation_values = read_polynomials_values_unpadded_vec(&mut reader)?;
+
+        let lookup_selector_values = read_optional_polynomial_values_unpadded(&mut reader)?;
+        let lookup_tables_values = Some(read_polynomials_values_unpadded_vec(&mut reader)?);
+        let lookup_table_type_values = read_optional_polynomial_values_unpadded(&mut reader)?;
+
         let new = Self {
             gate_setup_ldes,
             gate_selectors_ldes,
@@ -484,6 +552,12 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
 
             lookup_selector_lde,
             lookup_table_type_lde,
+
+            permutation_values,
+
+            lookup_selector_values,
+            lookup_tables_values,
+            lookup_table_type_values,
 
             _marker: std::marker::PhantomData,
         };
