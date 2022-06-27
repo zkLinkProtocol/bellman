@@ -1731,6 +1731,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let setup_polys = gate.setup_polynomials();
             for id in setup_polys.into_iter() {
                 let values = setup_polys_values_map.remove(&id).expect("must contain setup poly").clone_padded_to_domain()?;
+                println!("{:?} VALUES N", values.as_ref().len());
                 let mon = values.icoset_fft_for_generator(&worker, &E::Fr::one());
 
                 setup.gate_setup_monomials.push(mon);
