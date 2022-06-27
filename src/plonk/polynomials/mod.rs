@@ -77,6 +77,23 @@ impl<F: PrimeField, P: PolynomialForm, A: Allocator + Clone> Polynomial<F, P, A>
         self.coeffs.copy_from_slice(&other.coeffs);
     }
 
+    pub fn reallocate<B: Allocator + Clone + Default> (&self) -> Polynomial<F, P, B> {
+        let size = self.size();
+        let mut new_coeffs = Vec::with_capacity_in(size, B::default());
+        unsafe { new_coeffs.set_len(size) };
+        new_coeffs.copy_from_slice(&self.coeffs);
+
+        Polynomial::<F, P, B> {
+            coeffs: new_coeffs,
+            exp: self.exp,
+            omega: self.omega,
+            omegainv: self.omegainv,
+            geninv: self.geninv,
+            minv: self.minv,
+            _marker:  std::marker::PhantomData::<P>::default(),
+        }
+    }
+
     pub fn bitreverse_enumeration(&mut self, worker: &Worker) {
         let total_len = self.coeffs.len();
         let log_n = self.exp as usize;

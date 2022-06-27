@@ -80,7 +80,38 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> Setup<E, C, A> {
     }
 
     pub fn reallocate<B: Allocator + Clone + Default>(&self) -> Setup<E, C, B> {
-        todo!();
+        let mut new = Setup::<E, C, B>::empty();
+
+        new.n = self.n;
+        new.num_inputs = self.num_inputs;
+        new.num_witness_polys = self.num_witness_polys;
+        new.total_lookup_entries_length = self.total_lookup_entries_length;
+
+        for poly in self.gate_setup_monomials.iter() {
+            new.gate_setup_monomials.push(poly.reallocate());
+        }
+        for poly in self.gate_selectors_monomials.iter() {
+            new.gate_selectors_monomials.push(poly.reallocate());
+        }
+        for poly in self.permutation_monomials.iter() {
+            new.permutation_monomials.push(poly.reallocate());
+        }
+
+        if let Some(poly) = &self.lookup_selector_monomial {
+            new.lookup_selector_monomial = Some(poly.reallocate());
+        }
+
+        for poly in self.lookup_tables_monomials.iter() {
+            new.lookup_tables_monomials.push(poly.reallocate());
+        }
+
+        if let Some(poly) = &self.lookup_table_type_monomial {
+            new.lookup_table_type_monomial = Some(poly.reallocate());
+        }
+        
+        new.non_residues = self.non_residues.clone();
+
+        new
     }
 
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
@@ -362,7 +393,7 @@ pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone =
     pub permutation_values: Vec<Polynomial<E::Fr, Values>>,
 
     pub lookup_selector_values: Option<Polynomial<E::Fr, Values, A>>,
-    pub lookup_tables_values: Option<Vec<Polynomial<E::Fr, Values, A>>>,
+    pub lookup_tables_values: Vec<Polynomial<E::Fr, Values, A>>,
     pub lookup_table_type_values: Option<Polynomial<E::Fr, Values, A>>,
 
     _marker: std::marker::PhantomData<C>
@@ -387,7 +418,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
             permutation_values: vec![],
 
             lookup_selector_values: None,
-            lookup_tables_values: None,
+            lookup_tables_values: vec![],
             lookup_table_type_values: None,
 
             _marker: std::marker::PhantomData,
@@ -487,9 +518,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
                 &coset_generator,
             )?;
 
-            if let Some(val) = &mut new.lookup_tables_values {
-                val.push(ext);
-            }
+            new.lookup_tables_values.push(ext);
         }
 
         Ok(new)
@@ -506,7 +535,60 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
     }
 
     pub fn reallocate<B: Allocator + Clone + Default>(&self) -> SetupPrecomputations<E, C, B> {
-        todo!();
+        let mut new = SetupPrecomputations::<E, C, B> {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: vec![],
+            lookup_table_type_values: None,
+
+            _marker: std::marker::PhantomData,
+        };
+
+        for lde in self.gate_setup_ldes.iter() {
+            new.gate_setup_ldes.push(lde.reallocate());
+        }
+
+        for lde in self.gate_selectors_ldes.iter() {
+            new.gate_selectors_ldes.push(lde.reallocate());
+        }
+        
+        for lde in self.permutation_ldes.iter() {
+            new.permutation_ldes.push(lde.reallocate());
+        }
+
+        if let Some(lde) = &self.lookup_selector_lde {
+            new.lookup_selector_lde = Some(lde.reallocate());
+        }
+        
+        if let Some(lde) = &self.lookup_table_type_lde {
+            new.lookup_table_type_lde = Some(lde.reallocate());
+        }
+
+        for values in self.permutation_values.iter() {
+            new.permutation_values.push(values.reallocate());
+        }
+
+        if let Some(values) = &self.lookup_selector_values {
+            new.lookup_selector_values = Some(values.reallocate());
+        }
+
+        for values in self.lookup_tables_values.iter() {
+            new.lookup_tables_values.push(values.reallocate());
+        }
+
+        if let Some(values) = &self.lookup_table_type_values {
+            new.lookup_table_type_values = Some(values.reallocate());
+        }
+
+        new
     }
 
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
@@ -520,9 +602,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
         write_polynomials_vec(&self.permutation_values, &mut writer)?;
 
         write_optional_polynomial(&self.lookup_selector_values, &mut writer)?;
-        if let Some(p) = &self.lookup_tables_values {
-            write_polynomials_vec(p, &mut writer)?;
-        }
+        write_polynomials_vec(&self.lookup_tables_values, &mut writer)?;
         write_optional_polynomial(&self.lookup_table_type_values, &mut writer)?;
 
         Ok(())
@@ -542,7 +622,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
         let permutation_values = read_polynomials_values_unpadded_vec(&mut reader)?;
 
         let lookup_selector_values = read_optional_polynomial_values_unpadded(&mut reader)?;
-        let lookup_tables_values = Some(read_polynomials_values_unpadded_vec(&mut reader)?);
+        let lookup_tables_values = read_polynomials_values_unpadded_vec(&mut reader)?;
         let lookup_table_type_values = read_optional_polynomial_values_unpadded(&mut reader)?;
 
         let new = Self {
