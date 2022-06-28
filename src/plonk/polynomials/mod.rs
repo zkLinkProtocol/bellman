@@ -247,8 +247,8 @@ impl<F: PrimeField, P: PolynomialForm, A: Allocator + Clone> Polynomial<F, P, A>
 
     pub fn clone_padded_to_domain(&self) -> Result<Self, SynthesisError> {
         let mut padded = self.clone();
-        // let domain = Domain::<F>::new_for_size(self.coeffs.len() as u64)?;
-        // padded.coeffs.resize(domain.size as usize, F::zero());
+        let domain = Domain::<F>::new_for_size(self.coeffs.len() as u64)?;
+        padded.coeffs.resize(domain.size as usize, F::zero());
 
         Ok(padded)
     }
