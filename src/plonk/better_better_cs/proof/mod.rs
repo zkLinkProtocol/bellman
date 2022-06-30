@@ -395,16 +395,20 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             proof.witness_polys_commitments.push(commitment);
         }
 
+        let mut lookup_events = HashMap::<[E::Fr; 4], usize>::new();
+
         // step 1.5 - if there are lookup tables then draw random "eta" to linearlize over tables
         let mut lookup_data: Option<data_structures::LookupDataHolder<E>> = if self.tables.len() > 0 {
             let eta = transcript.get_challenge();
-            // let eta = E::Fr::from_str("987").unwrap();
 
             // these are selected rows from witness (where lookup applies)
 
             let (selector_poly, table_type_mononial, table_type_values) = if S::PRODUCE_SETUP {
                 let selector_for_lookup_values = self.calculate_lookup_selector_values()?;
+                assert!((selector_for_lookup_values.len() + 1).is_power_of_two());
                 let table_type_values = self.calculate_table_type_values()?;
+
+                assert_eq!(selector_for_lookup_values.len(), table_type_values.len());
 
                 let table_type_poly_monomial = {
                     let mon = Polynomial::from_values(table_type_values.clone())?;
@@ -440,17 +444,27 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &omegas_bitreversed,
                     &E::Fr::one()
                 )?.into_coeffs();
+
                 table_type_values.pop().unwrap();
 
                 (selector_poly, table_type_poly, table_type_values)
             };
 
+            assert!((table_type_values.len() + 1).is_power_of_two());
             let witness_len = required_domain_size - 1;
+            assert!((witness_len + 1).is_power_of_two());
+            assert_eq!(table_type_values.len(), witness_len);
 
             let f_poly_values_aggregated = {
-                let mut table_contributions_values = if S::PRODUCE_SETUP {
-                    self.calculate_masked_lookup_entries(&values_storage)?
+                let mut table_contributions_values = if S::PRODUCE_SETUP && S::PRODUCE_WITNESS {
+                    let masked_entries_using_bookkept_bitmasks = self.calculate_masked_lookup_entries(&values_storage)?;
+
+                    let typical_len = masked_entries_using_bookkept_bitmasks[0].len();
+                    assert!((typical_len+1).is_power_of_two());
+
+                    masked_entries_using_bookkept_bitmasks
                 } else {
+                    assert!(S::PRODUCE_WITNESS);
                     // let selector_values = PolynomialProxy::from_owned(selector_poly.as_ref().clone().fft(&worker));
                     let selector_values = selector_poly.as_ref().clone().fft_using_bitreversed_ntt(
                         &worker,
@@ -465,7 +479,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                         &selector_values
                     )?
                 };
-                
+
+                assert_eq!(table_type_values.len(), table_contributions_values[0].len());
+            
                 assert_eq!(table_contributions_values.len(), 3);
 
                 assert_eq!(witness_len, table_contributions_values[0].len());
@@ -487,10 +503,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 Polynomial::from_values_unpadded(f_poly_values_aggregated)?
             };
 
+            dbg!(f_poly_values_aggregated.as_ref().len());
+
             let (t_poly_values, t_poly_values_shifted, t_poly_monomial) = if S::PRODUCE_SETUP {
                 // these are unsorted rows of lookup tables
                 let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables()?;
-
                 assert_eq!(t_poly_ends.len(), 4);
 
                 let mut t_poly_values_aggregated = t_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
@@ -541,15 +558,24 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     current.mul_assign(&eta);
                 }
 
-                // let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft(&worker);
+                assert!(t_poly_values_monomial_aggregated.size().is_power_of_two());
+
                 let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft_using_bitreversed_ntt(
                     &worker,
                     &omegas_bitreversed,
                     &E::Fr::one()
                 )?;
-                let mut t_values_shifted_coeffs = t_poly_values.clone().into_coeffs();
-                let _ = t_poly_values.pop_last()?;
+                assert!(t_poly_values.as_ref().last().unwrap().is_zero());
+                assert!(t_poly_values.size().is_power_of_two());
 
+                // let mut t_values_shifted_coeffs = vec![E::Fr::zero(); t_poly_values.size()];
+                // // manually shift by 1
+                // t_values_shifted_coeffs[1..].copy_from_slice(&t_poly_values.as_ref()[0..(t_poly_values.size()-1)]);
+                // t_values_shifted_coeffs[0] = t_poly_values.as_ref()[(t_poly_values.size()-1)];
+
+                let mut t_values_shifted_coeffs = t_poly_values.clone().into_coeffs();
+                let _last = t_poly_values.pop_last()?;
+                assert!(_last.is_zero());
                 let _: Vec<_> = t_values_shifted_coeffs.drain(0..1).collect();
 
                 let t_poly_values_shifted = Polynomial::from_values_unpadded(t_values_shifted_coeffs)?;
@@ -564,8 +590,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 )
             };
 
+            dbg!(t_poly_values.as_data_ref().len());
+            dbg!(t_poly_values_shifted.as_data_ref().len());
+            dbg!(t_poly_monomial.as_data_ref().len());
+
             let (s_poly_monomial, s_poly_unpadded_values, s_shifted_unpadded_values) = {
                 let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
+
                 assert_eq!(s_poly_ends.len(), 4);
 
                 let mut s_poly_values_aggregated = s_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
@@ -644,9 +675,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let beta_for_copy_permutation = transcript.get_challenge();
         let gamma_for_copy_permutation = transcript.get_challenge();
-
-        // let beta_for_copy_permutation = E::Fr::from_str("123").unwrap();
-        // let gamma_for_copy_permutation = E::Fr::from_str("456").unwrap();
 
         // copy permutation grand product argument
 
@@ -1363,10 +1391,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         {
             // degree is 4n-4
             let l = t_poly.as_ref().len();
+            assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
             if &t_poly.as_ref()[(l-4)..] != &[E::Fr::zero(); 4][..] {
                 return Err(SynthesisError::Unsatisfiable);
             }
-            // assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
         }
 
         // println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));

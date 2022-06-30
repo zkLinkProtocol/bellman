@@ -918,8 +918,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
     fn begin_gates_batch_for_step(&mut self) -> Result<(), SynthesisError> {
         debug_assert!(self.trace_step_for_batch.is_none());
-        self.num_aux_gates += 1;
         let n = self.num_aux_gates;
+        self.num_aux_gates += 1;
         self.trace_step_for_batch = Some(n);
 
         Ok(())
@@ -936,7 +936,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let n = self.trace_step_for_batch.unwrap();
         // make zero-enumerated index
-        let n = n - 1;
         
         Self::allocate_into_storage(
             gate,
@@ -975,7 +974,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     ) -> Result<(), SynthesisError> {
         let n = self.trace_step_for_batch.expect("may only be called in a batch");
         // make zero-enumerated index
-        let n = n - 1;
 
         let empty_coefficients = Self::MainGate::empty_coefficients();
 
@@ -1149,7 +1147,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     fn apply_single_lookup_gate(&mut self, variables: &[Variable], table: Arc<LookupTableApplication<E>>) -> Result<(), SynthesisError> {
         let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
         // make zero-enumerated index
-        let n = n - 1;
 
         if S::PRODUCE_SETUP {
             debug_assert!(self.tables.contains(&table));
@@ -1157,7 +1154,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             assert!(table.applies_over().len() == 3);
 
             let table_name = table.functional_name();
-
+            let table_id = table.table_id();
+        
             // we need to:
             // - mark that this table applies at this row
             // - add values into the list to later on make a sorted polynomial
@@ -1172,7 +1170,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             // keep track of what table is applied at what row
             self.table_ids_poly.resize(n, E::Fr::zero());
-            self.table_ids_poly.push(table.table_id());
+            self.table_ids_poly.push(table_id);
         }
 
         if S::PRODUCE_WITNESS {
@@ -1208,8 +1206,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     #[track_caller]
     fn apply_multi_lookup_gate(&mut self, variables: &[Variable], table: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError> {
         let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
-        // make zero-enumerated index
-        let n = n - 1;
 
         if S::PRODUCE_SETUP {
             let table_name = table.functional_name();
@@ -1407,9 +1403,18 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
         min_space_for_lookups += self.n();
 
-        let new_size_candidates = [(self.n() + 1).next_power_of_two() - 1, (min_space_for_lookups + 1).next_power_of_two() - 1];
+        let total_number_of_table_entries = self.num_table_lookups + self.total_length_of_all_tables;
 
-        let new_size = *new_size_candidates.iter().max().unwrap();
+        let new_size_candidates = [(self.n() + 1).next_power_of_two() - 1, (min_space_for_lookups + 1).next_power_of_two() - 1];
+        // let new_size_candidates = [(self.n() + 1).next_power_of_two() - 1, (total_number_of_table_entries + 1).next_power_of_two() - 1];
+
+        let mut new_size = *new_size_candidates.iter().max().unwrap();
+        if new_size < total_number_of_table_entries * 2 {
+            new_size = new_size.next_power_of_two() * 2 - 1;
+        }
+        assert!(new_size >= total_number_of_table_entries * 2, "circuit size to fit is {}, but lookup entries need {} elements alone", new_size, total_number_of_table_entries);
+        assert!(new_size <= 1usize << E::Fr::S);
+        assert!(new_size <= (1usize << E::Fr::S) / <Self as ConstraintSystem<E>>::Params::STATE_WIDTH);
 
         let dummy = Self::get_dummy_variable();
 
@@ -1880,6 +1885,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         for table in self.tables.iter() {
             // let entries = table.get_table_values_for_polys();
             let entries = Self::ensure_sorted_table(table);
+            assert!(entries[0].len() == table.size(), "invalid number of elements in table {}", table.functional_name());
             // these are individual column vectors, so just copy
             for (idx, e) in entries.into_iter().enumerate() {
                 column_contributions[idx].extend(e);
@@ -1899,12 +1905,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let entries = table.get_table_values_for_polys();
         assert_eq!(entries.len(), 3);
 
+        let mut uniqueness_checker = std::collections::HashSet::with_capacity(entries[0].len());
+
         // sort them in a standard lexicographic way, so our sorting is always simple
         let size = entries[0].len();
         let mut kv_set_entries = Vec::with_capacity(size);
         for i in 0..size {
             let entry = KeyValueSet::<E>::new([entries[0][i], entries[1][i], entries[2][i]]);
-            kv_set_entries.push(entry)
+            let is_unique = uniqueness_checker.insert(entry);
+            assert!(is_unique);
+            kv_set_entries.push(entry);
         }
 
         kv_set_entries.sort();
@@ -1960,6 +1970,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         for single_application in self.tables.iter() {
             // let entries = single_application.get_table_values_for_polys();
+            println!("Sorting table {}", single_application.functional_name());
             let entries = Self::ensure_sorted_table(single_application);
             assert_eq!(entries.len(), 3);
             let table_id = single_application.table_id();
@@ -2001,10 +2012,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let mut kv_set_entries = vec![];
         let mut contributions_per_column = vec![vec![]; 4];
-        for single_application in self.tables.iter() {
+        for (_table_idx, single_application) in self.tables.iter().enumerate() {
             // copy all queries from witness
             let table_name = single_application.functional_name();
-            for kv_values in self.individual_table_entries.get(&table_name).unwrap() {
+            for kv_values in self.individual_table_entries.get(&table_name).unwrap().iter() {
                 let entry = KeyValueSet::<E>::from_slice(&kv_values[..3]);
                 kv_set_entries.push(entry);
             }
@@ -2134,10 +2145,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let mut contributions_per_column = vec![vec![E::Fr::zero(); size]; 3];
         for single_application in self.tables.iter() {
+            let table_id = single_application.table_id();
             let table_name = single_application.functional_name();
             let keys_and_values = single_application.applies_over();
             let selector_bitvec = self.table_selectors.get(&table_name).unwrap();
 
+            // let num_non_empty = selector_bitvec.iter().filter(|x| *x).count();
+            // println!("{} lookups for table {}", num_non_empty, table_name);
+
+            assert!(selector_bitvec.len() >= num_aux_gates);
             for aux_gate_idx in 0..num_aux_gates {
                 if selector_bitvec[aux_gate_idx] {
                     let global_gate_idx = aux_gate_idx + aux_gates_start;
@@ -2306,6 +2322,10 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 });
             }
         });
+
+        for a in full_assignments.iter() {
+            assert_eq!(a.len(), self.num_input_gates + self.num_aux_gates);
+        }
 
         for p in full_assignments.iter_mut() {
             p.resize(pad_to - 1, E::Fr::zero());

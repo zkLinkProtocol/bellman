@@ -1304,6 +1304,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
     }
 
     // this function should only be used on the values that are bitreverse enumerated
+    #[track_caller]
     pub fn clone_subset_assuming_bitreversed(
         &self, 
         subset_factor: usize,
@@ -1339,6 +1340,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Polynomial::from_values(result)
     }
 
+    #[track_caller]
     pub fn pow(&mut self, worker: &Worker, exp: u64)
     {
         if exp == 2 {
@@ -1355,6 +1357,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         });
     }
 
+    #[track_caller]
     pub fn square(&mut self, worker: &Worker)
     {
         worker.scope(self.coeffs.len(), |scope, chunk| {
@@ -1396,6 +1399,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         }
     }
 
+    #[track_caller]
     pub fn icoset_fft(self, worker: &Worker) -> Polynomial<F, Coefficients>
     {
         debug_assert!(self.coeffs.len().is_power_of_two());
@@ -1406,6 +1410,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         res
     }
 
+    #[track_caller]
     pub fn icoset_fft_for_generator(self, worker: &Worker, coset_generator: &F) -> Polynomial<F, Coefficients>
     {
         debug_assert!(self.coeffs.len().is_power_of_two());
@@ -1416,7 +1421,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         res
     }
 
-
+    #[track_caller]
     pub fn add_assign(&mut self, worker: &Worker, other: &Polynomial<F, Values>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
@@ -1431,6 +1436,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         });
     }
 
+    #[track_caller]
     pub fn add_constant(&mut self, worker: &Worker, constant: &F) {
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for a in self.coeffs.chunks_mut(chunk) {
@@ -1443,6 +1449,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         });
     }
 
+    #[track_caller]
     pub fn sub_constant(&mut self, worker: &Worker, constant: &F) {
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for a in self.coeffs.chunks_mut(chunk) {
@@ -1455,6 +1462,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         });
     }
 
+    #[track_caller]
     pub fn rotate(mut self, by: usize) -> Result<Polynomial<F, Values>, SynthesisError>{
         let mut values: Vec<_> = self.coeffs.drain(by..).collect();
 
@@ -1465,6 +1473,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Polynomial::from_values(values)
     }
 
+    #[track_caller]
     pub fn barycentric_evaluate_at(&self, worker: &Worker, g: F) -> Result<F, SynthesisError> {
         // use a barycentric formula
 
@@ -1528,6 +1537,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         values.calculate_sum(&worker)
     }
 
+    #[track_caller]
     pub fn barycentric_over_coset_evaluate_at(&self, worker: &Worker, x: F, coset_factor: &F) -> Result<F, SynthesisError> {
         // use a barycentric formula
         // L_i(x) = \prod_{i != j} (X - x_j) / \prod_{i != j} (x_i - x_j)
@@ -1654,6 +1664,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
     //     Ok((even, odd))
     // }
 
+    #[track_caller]
     pub fn split_into_even_and_odd_assuming_natural_ordering(
         self, 
         worker: &Worker, 
@@ -1743,6 +1754,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Ok((even, odd))
     }
 
+    #[track_caller]
     pub fn calculate_shifted_grand_product(&self, worker: &Worker) -> Result<Polynomial<F, Values>, SynthesisError> {
         let mut result = vec![F::zero(); self.coeffs.len() + 1];
         result[0] = F::one();
@@ -1799,6 +1811,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Polynomial::from_values(result)
     }
 
+    #[track_caller]
     pub fn calculate_grand_product(&self, worker: &Worker) -> Result<Polynomial<F, Values>, SynthesisError> {
         let mut result = vec![F::zero(); self.coeffs.len()];
 
@@ -1847,6 +1860,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Polynomial::from_values_unpadded(result)
     }
 
+    #[track_caller]
     pub fn calculate_grand_product_serial(&self) -> Result<Polynomial<F, Values>, SynthesisError> {
         let mut result = Vec::with_capacity(self.coeffs.len());
 
@@ -1859,6 +1873,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Polynomial::from_values_unpadded(result)
     }
 
+    #[track_caller]
     pub fn calculate_sum(&self, worker: &Worker) -> Result<F, SynthesisError> {
         let num_threads = worker.get_num_spawned_threads(self.coeffs.len());
         let mut subresults = vec![F::zero(); num_threads as usize];
@@ -1883,6 +1898,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Ok(sum)
     }
 
+    #[track_caller]
     pub fn calculate_grand_sum(&self, worker: &Worker) -> Result<(F, Polynomial<F, Values>), SynthesisError> {
         // first value is zero, then first element, then first + second, ...
         let mut result = vec![F::zero(); self.coeffs.len() + 1];
@@ -1938,6 +1954,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Ok((domain_sum, Polynomial::from_values_unpadded(result)?))
     }
 
+    #[track_caller]
     pub fn add_assign_scaled(&mut self, worker: &Worker, other: &Polynomial<F, Values>, scaling: &F) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
@@ -1955,6 +1972,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
     }
 
     /// Perform O(n) subtraction of one polynomial from another in the domain.
+    #[track_caller]
     pub fn sub_assign(&mut self, worker: &Worker, other: &Polynomial<F, Values>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
@@ -1969,6 +1987,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         });
     }
 
+    #[track_caller]
     pub fn sub_assign_scaled(&mut self, worker: &Worker, other: &Polynomial<F, Values>, scaling: &F) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
@@ -1986,6 +2005,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
     }
 
     /// Perform O(n) multiplication of two polynomials in the domain.
+    #[track_caller]
     pub fn mul_assign(&mut self, worker: &Worker, other: &Polynomial<F, Values>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
@@ -2067,12 +2087,14 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Ok(())
     }
 
+    #[track_caller]
     pub fn pop_last(&mut self) -> Result<F, SynthesisError> {
         let last = self.coeffs.pop().ok_or(SynthesisError::AssignmentMissing)?;
 
         Ok(last)
     }
 
+    #[track_caller]
     pub fn clone_shifted_assuming_natural_ordering(&self, by: usize) -> Result<Self, SynthesisError> {
         let len = self.coeffs.len();
         assert!(by < len);
@@ -2083,6 +2105,7 @@ impl<F: PrimeField> Polynomial<F, Values> {
         Self::from_values(new_coeffs)
     }
 
+    #[track_caller]
     pub fn clone_shifted_assuming_bitreversed(&self, by: usize, worker: &Worker) -> Result<Self, SynthesisError> {
         let len = self.coeffs.len();
         assert!(by < len);
