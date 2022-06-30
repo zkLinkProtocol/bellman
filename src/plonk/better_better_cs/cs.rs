@@ -1006,7 +1006,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     fn end_gates_batch_for_step(&mut self) -> Result<(), SynthesisError> {
         debug_assert!(self.trace_step_for_batch.is_some());
         let n = self.trace_step_for_batch.take().unwrap();
-        debug_assert_eq!(n, self.num_aux_gates, "invalid batch id");
+        debug_assert_eq!(n+1, self.num_aux_gates, "invalid batch id");
 
         Ok(())
     }
