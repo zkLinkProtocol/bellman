@@ -4,6 +4,7 @@ use crate::bit_vec::BitVec;
 
 use crate::{SynthesisError};
 use std::marker::PhantomData;
+use std::alloc::{Allocator, Global};
 
 use crate::worker::Worker;
 use crate::plonk::domains::*;
@@ -736,13 +737,13 @@ impl<E: Engine> PlonkConstraintSystemParams<E> for PlonkCsWidth4WithNextStepAndC
 use crate::plonk::polynomials::*;
 
 #[derive(Clone)]
-pub struct PolynomialStorage<E: Engine> {
+pub struct PolynomialStorage<E: Engine, A: Allocator + Clone = Global> {
     pub state_map: std::collections::HashMap<PolyIdentifier, Vec<Variable>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
+    pub witness_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr, A>>,
+    pub setup_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr, A>>,
 }
 
-impl<E: Engine> PolynomialStorage<E> {
+impl<E: Engine, A: Allocator + Clone> PolynomialStorage<E, A> {
     pub fn new() -> Self {
         Self {
             state_map: std::collections::HashMap::new(),
@@ -818,15 +819,21 @@ pub type ProvingAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeProve>;
 pub type SetupAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeGenerateSetup>;
 
 #[derive(Clone)]
-pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> {
-    pub inputs_storage: PolynomialStorage<E>,
-    pub aux_storage: PolynomialStorage<E>,
+pub struct Assembly<
+    E: Engine, 
+    P: PlonkConstraintSystemParams<E>, 
+    MG: MainGate<E>, 
+    S: SynthesisMode,
+    A: Allocator + Clone = Global
+> {
+    pub inputs_storage: PolynomialStorage<E, A>,
+    pub aux_storage: PolynomialStorage<E, A>,
     pub num_input_gates: usize,
     pub num_aux_gates: usize,
     pub max_constraint_degree: usize,
     pub main_gate: MG,
-    pub input_assingments: Vec<E::Fr>,
-    pub aux_assingments: Vec<E::Fr>,
+    pub input_assingments: Vec<E::Fr, A>,
+    pub aux_assingments: Vec<E::Fr, A>,
     pub num_inputs: usize,
     pub num_aux: usize,
     pub trace_step_for_batch: Option<usize>,
@@ -857,7 +864,14 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     _marker_s: std::marker::PhantomData<S>,
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> ConstraintSystem<E> for Assembly<E, P, MG, S> {
+use std::marker::{Send, Sync};
+impl<
+    E: Engine, 
+    P: PlonkConstraintSystemParams<E>, 
+    MG: MainGate<E>, 
+    S: SynthesisMode, 
+    A: Allocator + Clone + Sync + Send + Default
+> ConstraintSystem<E> for Assembly<E, P, MG, S, A> {
     type Params = P;
     type MainGate = MG;
 
@@ -1255,10 +1269,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     }
 }
 
-impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> Assembly<E, P, MG, S> {
+impl<
+    E: Engine, 
+    P: PlonkConstraintSystemParams<E>, 
+    MG: MainGate<E>, 
+    S: SynthesisMode,
+    A: Allocator + Clone + Sync + Send + Default
+> Assembly<E, P, MG, S, A> {
     fn allocate_into_storage<G: Gate<E>>(
         gate: &G,
-        storage: &mut PolynomialStorage<E>, 
+        storage: &mut PolynomialStorage<E, A>, 
         n: usize,
         coefficients_assignments: &[E::Fr],
         variables_assignments: &[Variable],
@@ -1271,7 +1291,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let mut coeffs_it = coefficients_assignments.iter();
 
             for setup_poly in gate.setup_polynomials().into_iter() {
-                let poly_ref = storage.setup_map.entry(setup_poly).or_insert(vec![]);
+                let poly_ref = storage.setup_map.entry(setup_poly)
+                    .or_insert(Vec::with_capacity_in(0, A::default()));
                 if poly_ref.len() < n {
                     poly_ref.resize(n, E::Fr::zero());
                 }
@@ -1301,7 +1322,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let mut witness_it = witness_assignments.iter();
 
         for key in gate.witness_polynomials().into_iter() {
-            let poly_ref = storage.witness_map.entry(key).or_insert(vec![]);
+            let poly_ref = storage.witness_map.entry(key)
+                .or_insert(Vec::with_capacity_in(0, A::default()));
             if poly_ref.len() < n {
                 poly_ref.resize(n, E::Fr::zero());
             } 
@@ -1346,8 +1368,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             num_inputs: 0,
             num_aux: 0,
 
-            input_assingments: vec![],
-            aux_assingments: vec![],
+            input_assingments: Vec::with_capacity_in(0, A::default()),
+            aux_assingments: Vec::with_capacity_in(0, A::default()),
 
             main_gate: MG::default(),
 
@@ -1459,7 +1481,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         self.is_finalized = true;
     }
 
-    fn get_storage_for_trace_step(&self, step: usize) -> &PolynomialStorage<E> {
+    fn get_storage_for_trace_step(&self, step: usize) -> &PolynomialStorage<E, A> {
         if step < self.num_input_gates {
             &self.inputs_storage
         } else {
@@ -1467,58 +1489,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
     }
 
-    pub fn is_satisfied(&self) -> bool {
-        if !S::PRODUCE_SETUP || !S::PRODUCE_WITNESS {
-            // only testing mode can run this check for now
-            return true;
-        }
-        // expect a small number of inputs
-
-        if self.n() == 0 {
-            return true;
-        }
-
-        // TODO: handle public inputs
-
-        // for i in 0..self.num_input_gates {
-        //     let gate = self.input_assingments
-        // }
-
-        // let one = E::Fr::one();
-        // let mut minus_one = E::Fr::one();
-        // minus_one.negate();
-
-        let n = self.n() - 1;
-
-        let worker = Worker::new();
-
-        let storage = self.make_assembled_poly_storage(&worker, false).unwrap();
-
-        for (gate_type, density) in self.aux_gate_density.0.iter() {
-            for (gate_index, is_applicable) in density.iter().enumerate() {
-                if is_applicable == false {
-                    continue;
-                }
-
-                let trace_index = self.num_input_gates + gate_index;
-
-                let last = trace_index == n;
-
-                let value = gate_type.verify_on_row(trace_index, &storage, last);
-
-                if value.is_zero() == false {
-                    println!("Unsatisfied at aux gate {} (zero enumerated)", gate_index);
-                    println!("Constraint value = {}", value);
-                    println!("Gate {:?}", gate_type.name());
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-
-    pub fn make_permutations(&self, worker: &Worker) -> Result<Vec<Polynomial::<E::Fr, Values>>, SynthesisError> {
+    pub fn make_permutations(&self, worker: &Worker) -> Result<Vec<Polynomial::<E::Fr, Values, A>>, SynthesisError> {
         assert!(self.is_finalized);
 
         if !S::PRODUCE_SETUP {
@@ -1648,7 +1619,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     fn make_setup_polynomials(
         &self,
         with_finalization: bool
-    ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, SynthesisError> {
+    ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values, A>>, SynthesisError> {
         if with_finalization {
             assert!(self.is_finalized);
         }
@@ -1665,11 +1636,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let setup_poly_ids: Vec<_> = self.aux_storage.setup_map.keys().collect();
 
         for &id in setup_poly_ids.into_iter() {
-            let mut assembled_poly = vec![E::Fr::zero(); total_num_gates];
+            let mut assembled_poly = Vec::with_capacity_in(total_num_gates, A::default()); // vec![E::Fr::zero(); total_num_gates];
             if num_input_gates != 0 {
+                unsafe{assembled_poly.set_len(num_input_gates)};
                 let input_gates_coeffs = &mut assembled_poly[..num_input_gates];
                 input_gates_coeffs.copy_from_slice(&self.inputs_storage.setup_map.get(&id).unwrap()[..]);
             }
+            
+            assembled_poly.resize(total_num_gates, E::Fr::zero());
 
             {
                 let src = &self.aux_storage.setup_map.get(&id).unwrap()[..];
@@ -1690,7 +1664,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     pub fn create_setup<C: Circuit<E>>(
         &self,
         worker: &Worker
-    ) -> Result<Setup<E, C>, SynthesisError> {
+    ) -> Result<Setup<E, C, A>, SynthesisError> {
         assert!(self.is_finalized);
 
         assert!(S::PRODUCE_SETUP);
@@ -1717,7 +1691,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             // }
         }
 
-        let mut setup = Setup::<E, C>::empty();
+        let mut setup = Setup::<E, C, A>::empty();
 
         setup.n = self.n();
         setup.num_inputs = self.num_inputs;
@@ -1774,7 +1748,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let copy_start = size - tails_len;
 
             for tail in table_tails.into_iter() {
-                let mut values = vec![E::Fr::zero(); size];
+                let mut values = Vec::with_capacity_in(size, A::default());
+                values.resize(copy_start, E::Fr::zero());
+                unsafe { values.set_len(size); }
                 values[copy_start..].copy_from_slice(&tail[..]);
 
                 let poly = Polynomial::from_values(values)?;
@@ -1801,7 +1777,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         &self, 
         worker: &Worker
     ) -> Result<
-    (std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, Vec<Polynomial<E::Fr, Values>>), 
+    (std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values, A>>, Vec<Polynomial<E::Fr, Values, A>>), 
     SynthesisError
     > {
         let map = self.make_setup_polynomials(true)?;
@@ -1810,7 +1786,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok((map, permutation_polys))
     }
 
-    pub fn output_gate_selectors(&self, worker: &Worker) -> Result<Vec<Vec<E::Fr>>, SynthesisError> {
+    pub fn output_gate_selectors(&self, worker: &Worker) -> Result<Vec<Vec<E::Fr, A>>, SynthesisError> {
         if self.sorted_gates.len() == 1 {
             return Ok(vec![]);
         }
@@ -1818,7 +1794,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let num_gate_selectors = self.sorted_gates.len();
 
         let one = E::Fr::one();
-        let empty_poly_values = vec![E::Fr::zero(); self.n()];
+        let mut empty_poly_values = Vec::with_capacity_in(self.n(), A::default());
+        empty_poly_values.resize(self.n(), E::Fr::zero());
         let mut poly_values = vec![empty_poly_values.clone(); num_gate_selectors];
         let num_input_gates = self.num_input_gates;
 
@@ -2045,7 +2022,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     pub fn calculate_table_type_values(
         &self
     ) -> 
-        Result<Vec<E::Fr>, SynthesisError>
+        Result<Vec<E::Fr, A>, SynthesisError>
     {
         assert!(self.is_finalized);
 
@@ -2054,7 +2031,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
 
         if self.tables.len() == 0 {
-            return Ok(vec![]);
+            return Ok(Vec::with_capacity_in(0, A::default()));
         }
 
         let table_ids_vector_on_aux_gates = &self.table_ids_poly;
@@ -2067,7 +2044,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let aux_gates_start = self.num_input_gates;
         let aux_gates_end = aux_gates_start + num_aux_gates;
 
-        let mut values = vec![E::Fr::zero(); size];
+        let mut values = Vec::with_capacity_in(size, A::default());
+        values.resize(size, E::Fr::zero());
+        
         assert_eq!(num_aux_gates, table_ids_vector_on_aux_gates.len());
 
         values[aux_gates_start..aux_gates_end].copy_from_slice(table_ids_vector_on_aux_gates);
@@ -2077,7 +2056,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
     pub fn calculate_lookup_selector_values(
         &self
-    ) -> Result<Vec<E::Fr>, SynthesisError> {
+    ) -> Result<Vec<E::Fr, A>, SynthesisError> {
         assert!(self.is_finalized);
 
         if !S::PRODUCE_SETUP {
@@ -2085,7 +2064,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
 
         if self.tables.len() == 0 {
-            return Ok(vec![]);
+            return Ok(Vec::with_capacity_in(0, A::default()));
         }
 
         // total number of gates, Input + Aux
@@ -2096,7 +2075,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let num_aux_gates = self.num_aux_gates;
         // input + aux gates without t-polys
 
-        let mut lookup_selector_values = vec![E::Fr::zero(); size];
+        let mut lookup_selector_values = Vec::with_capacity_in(size, A::default());
+        lookup_selector_values.resize(aux_gates_start, E::Fr::zero());
+        unsafe{ lookup_selector_values.set_len(size); }
 
         for single_application in self.tables.iter() {
             let table_name = single_application.functional_name();
@@ -2160,7 +2141,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         storage: &AssembledPolynomialStorage<E>,
         selector: &PolynomialProxy<'a, E::Fr, Values>
     ) -> 
-        Result<Vec<Vec<E::Fr>>, SynthesisError>
+        Result<Vec<Vec<E::Fr, A>>, SynthesisError>
     {
         assert!(self.is_finalized);
         if self.tables.len() == 0 {
@@ -2179,7 +2160,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let one = E::Fr::one();
 
-        let mut contributions_per_column = vec![vec![E::Fr::zero(); size]; 3];
+        let mut contributions_per_column = vec![Vec::with_capacity_in(size, A::default()); 3];
+        for contr in contributions_per_column.iter_mut() {
+            contr.resize(size, E::Fr::zero());
+        }
+
         for single_application in self.tables.iter() {
             let keys_and_values = single_application.applies_over();
 
@@ -2254,7 +2239,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         &self,
         worker: &Worker,
         with_finalization: bool
-    ) -> Result<(Vec<Vec<E::Fr>>, Vec<Vec<E::Fr>>), SynthesisError>
+    ) -> Result<(Vec<Vec<E::Fr, A>>, Vec<Vec<E::Fr, A>>), SynthesisError>
     {
         if with_finalization {
             assert!(self.is_finalized);
@@ -2265,9 +2250,9 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
 
         let mut full_assignments = if with_finalization {
-            vec![Vec::with_capacity((self.n()+1).next_power_of_two()); P::STATE_WIDTH]
+            vec![Vec::with_capacity_in((self.n()+1).next_power_of_two(), A::default()); P::STATE_WIDTH]
         } else {
-            vec![Vec::with_capacity(self.n()+1); P::STATE_WIDTH]
+            vec![Vec::with_capacity_in(self.n()+1, A::default()); P::STATE_WIDTH]
         };
 
         let pad_to = if with_finalization {
@@ -2323,7 +2308,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         &self, 
         worker: &Worker, 
         with_finalization: bool
-    ) -> Result<AssembledPolynomialStorage<'a, E>, SynthesisError> {
+    ) -> Result<AssembledPolynomialStorage<'a, E, A>, SynthesisError> {
         if with_finalization {
             assert!(self.is_finalized);
         }
@@ -2367,7 +2352,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             }
         }
 
-        let assembled = AssembledPolynomialStorage::<E> {
+        let assembled = AssembledPolynomialStorage::<E, A> {
             state_map: state_polys_map,
             witness_map: witness_polys_map,
             setup_map: setup_map,
@@ -2384,13 +2369,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
     pub fn create_monomial_storage<'a, 'b>(
         worker: &Worker,
         omegas_inv: &OmegasInvBitreversed<E::Fr>,
-        value_form_storage: &'a AssembledPolynomialStorage<E>,
+        value_form_storage: &'a AssembledPolynomialStorage<E, A>,
         include_setup: bool,
-    ) -> Result<AssembledPolynomialStorageForMonomialForms<'b, E>, SynthesisError> {
+    ) -> Result<AssembledPolynomialStorageForMonomialForms<'b, E, A>, SynthesisError> {
         assert_eq!(value_form_storage.lde_factor, 1);
         assert!(value_form_storage.is_bitreversed == false);
 
-        let mut monomial_storage = AssembledPolynomialStorageForMonomialForms::<E>::new();
+        let mut monomial_storage = AssembledPolynomialStorageForMonomialForms::<E, A>::new();
 
         for (&k, v) in value_form_storage.state_map.iter() {
             let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
@@ -2435,6 +2420,65 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         }
 
         Ok(monomial_storage)
+    }
+}
+
+impl<
+    E: Engine, 
+    P: PlonkConstraintSystemParams<E>, 
+    MG: MainGate<E>, 
+    S: SynthesisMode,
+> Assembly<E, P, MG, S> {
+    
+    pub fn is_satisfied(&self) -> bool {
+        if !S::PRODUCE_SETUP || !S::PRODUCE_WITNESS {
+            // only testing mode can run this check for now
+            return true;
+        }
+        // expect a small number of inputs
+
+        if self.n() == 0 {
+            return true;
+        }
+
+        // TODO: handle public inputs
+
+        // for i in 0..self.num_input_gates {
+        //     let gate = self.input_assingments
+        // }
+
+        // let one = E::Fr::one();
+        // let mut minus_one = E::Fr::one();
+        // minus_one.negate();
+
+        let n = self.n() - 1;
+
+        let worker = Worker::new();
+
+        let storage = self.make_assembled_poly_storage(&worker, false).unwrap();
+
+        for (gate_type, density) in self.aux_gate_density.0.iter() {
+            for (gate_index, is_applicable) in density.iter().enumerate() {
+                if is_applicable == false {
+                    continue;
+                }
+
+                let trace_index = self.num_input_gates + gate_index;
+
+                let last = trace_index == n;
+
+                let value = gate_type.verify_on_row(trace_index, &storage, last);
+
+                if value.is_zero() == false {
+                    println!("Unsatisfied at aux gate {} (zero enumerated)", gate_index);
+                    println!("Constraint value = {}", value);
+                    println!("Gate {:?}", gate_type.name());
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     pub fn prover_stub(self, worker: &Worker) -> Result<(), SynthesisError> {

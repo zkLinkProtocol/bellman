@@ -2,6 +2,7 @@ use crate::pairing::ff::*;
 use crate::pairing::*;
 use crate::plonk::polynomials::*;
 use super::cs::GateInternal;
+use std::alloc::{Allocator, Global};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum PolyIdentifier {
@@ -34,21 +35,29 @@ impl PolynomialInConstraint{
     }
 }
 
-pub enum PolynomialProxy<'a, F: PrimeField, P: PolynomialForm> {
-    Borrowed(&'a Polynomial<F, P>),
-    Owned(Polynomial<F, P>),
+pub enum PolynomialProxy<'a, 
+    F: PrimeField, 
+    P: PolynomialForm, 
+    A: Allocator + Clone = Global
+> {
+    Borrowed(&'a Polynomial<F, P, A>),
+    Owned(Polynomial<F, P, A>),
 }
 
-impl<'a, F: PrimeField, P: PolynomialForm> PolynomialProxy<'a, F, P> {
-    pub fn from_owned(poly: Polynomial<F, P>) -> Self {
+impl<'a, 
+    F: PrimeField, 
+    P: PolynomialForm, 
+    A: Allocator + Clone,
+> PolynomialProxy<'a, F, P, A> {
+    pub fn from_owned(poly: Polynomial<F, P, A>) -> Self {
         PolynomialProxy::Owned(poly)
     }
 
-    pub fn from_borrowed(poly: &'a Polynomial<F, P>) -> Self {
+    pub fn from_borrowed(poly: &'a Polynomial<F, P, A>) -> Self {
         PolynomialProxy::Borrowed(poly)
     }
 
-    pub fn as_ref(&self) -> &Polynomial<F, P> {
+    pub fn as_ref(&self) -> &Polynomial<F, P, A> {
         match self {
             PolynomialProxy::Borrowed(b) => {
                 &*b
@@ -81,7 +90,7 @@ impl<'a, F: PrimeField, P: PolynomialForm> PolynomialProxy<'a, F, P> {
         }
     }
 
-    pub fn into_poly(self) -> Polynomial<F, P> {
+    pub fn into_poly(self) -> Polynomial<F, P, A> {
         match self {
             PolynomialProxy::Borrowed(b) => {
                 b.clone()
@@ -104,9 +113,9 @@ impl<'a, F: PrimeField, P: PolynomialForm> PolynomialProxy<'a, F, P> {
     }
 }
 
-pub fn clone_as_borrowed<'a, 'b: 'a, F: PrimeField, P: PolynomialForm>(
-    src: &'a PolynomialProxy<'b, F, P>
-) -> PolynomialProxy<'a, F, P> {
+pub fn clone_as_borrowed<'a, 'b: 'a, F: PrimeField, P: PolynomialForm, A: Allocator + Clone>(
+    src: &'a PolynomialProxy<'b, F, P, A>
+) -> PolynomialProxy<'a, F, P, A> {
     match src {
         PolynomialProxy::Borrowed(ref b) => {
             PolynomialProxy::Borrowed(*b)
@@ -131,27 +140,27 @@ pub fn clone_as_borrowed<'a, 'b: 'a, F: PrimeField, P: PolynomialForm>(
 // }
 
 
-pub struct AssembledPolynomialStorage<'a, E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub scratch_space: std::collections::HashMap<PolynomialInConstraint, PolynomialProxy<'a, E::Fr, Values>>,
-    pub gate_selectors: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
-    pub named_polys: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values>>,
+pub struct AssembledPolynomialStorage<'a, E: Engine, A: Allocator + Clone = Global> {
+    pub state_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub witness_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub setup_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub scratch_space: std::collections::HashMap<PolynomialInConstraint, PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub gate_selectors: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub named_polys: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Values, A>>,
     pub is_bitreversed: bool,
     pub lde_factor: usize
 }
 
-pub struct AssembledPolynomialStorageForMonomialForms<'a, E: Engine> {
-    pub state_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub witness_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub setup_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub gate_selectors: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub named_polys: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients>>,
+pub struct AssembledPolynomialStorageForMonomialForms<'a, E: Engine, A: Allocator + Clone = Global> {
+    pub state_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients, A>>,
+    pub witness_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients, A>>,
+    pub setup_map: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients, A>>,
+    pub gate_selectors: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients, A>>,
+    pub named_polys: std::collections::HashMap<PolyIdentifier, PolynomialProxy<'a, E::Fr, Coefficients, A>>,
 }
 
-impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
-    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values> {
+impl<'a, E: Engine, A: Allocator + Clone> AssembledPolynomialStorage<'a, E, A> {
+    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Values, A> {
         match id {
             p @ PolyIdentifier::VariablesPolynomial(..) => {
                 self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
@@ -189,7 +198,7 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
         p.as_ref()[step]
     }
 
-    pub fn get_selector_for_gate(&self, gate: &dyn GateInternal<E>) -> &Polynomial<E::Fr, Values> {
+    pub fn get_selector_for_gate(&self, gate: &dyn GateInternal<E>) -> &Polynomial<E::Fr, Values, A> {
         let gate_name = gate.name();
         let p = PolyIdentifier::GateSelector(gate_name);
         self.gate_selectors.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
@@ -208,7 +217,7 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
         }
     }
 
-    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Values>]) {
+    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Values, A>]) {
         assert_eq!(ids.len(), polys.len());
         for (id, poly) in ids.iter().zip(polys.iter()) {
             let proxy = PolynomialProxy::from_borrowed(poly);
@@ -240,8 +249,8 @@ impl<'a, E: Engine> AssembledPolynomialStorage<'a, E> {
     }
 }
 
-impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
-    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Coefficients> {
+impl<'a, E: Engine, A: Allocator + Clone> AssembledPolynomialStorageForMonomialForms<'a, E, A> {
+    pub fn get_poly(&self, id: PolyIdentifier) -> &Polynomial<E::Fr, Coefficients, A> {
         match id {
             p @ PolyIdentifier::VariablesPolynomial(..) => {
                 self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
@@ -280,13 +289,13 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
         }
     }
 
-    pub fn get_selector_for_gate(&self, gate: &dyn GateInternal<E>) -> &Polynomial<E::Fr, Coefficients> {
+    pub fn get_selector_for_gate(&self, gate: &dyn GateInternal<E>) -> &Polynomial<E::Fr, Coefficients, A> {
         let gate_name = gate.name();
         let p = PolyIdentifier::GateSelector(gate_name);
         self.state_map.get(&p).expect(&format!("poly {:?} must exist", p)).as_ref()
     }
 
-    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Coefficients>]) {
+    pub fn add_setup_polys<'b: 'a>(&mut self, ids: &[PolyIdentifier], polys: &'b [Polynomial<E::Fr, Coefficients, A>]) {
         assert_eq!(ids.len(), polys.len());
         for (id, poly) in ids.iter().zip(polys.iter()) {
             let proxy = PolynomialProxy::from_borrowed(poly);
@@ -318,15 +327,15 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
     }
 }
 
-pub struct LookupDataHolder<'a, E: Engine> {
+pub struct LookupDataHolder<'a, E: Engine, A: Allocator + Clone = Global> {
     pub eta: E::Fr,
-    pub f_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub t_poly_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values>>,
-    pub t_shifted_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values>>,
-    pub s_poly_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values>>,
-    pub t_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub s_poly_monomial: Option<Polynomial<E::Fr, Coefficients>>,
-    pub selector_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
-    pub table_type_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients>>,
+    pub f_poly_unpadded_values: Option<Polynomial<E::Fr, Values, A>>,
+    pub t_poly_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub t_shifted_unpadded_values: Option<PolynomialProxy<'a, E::Fr, Values, A>>,
+    pub s_poly_unpadded_values: Option<Polynomial<E::Fr, Values, A>>,
+    pub s_shifted_unpadded_values: Option<Polynomial<E::Fr, Values, A>>,
+    pub t_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients, A>>,
+    pub s_poly_monomial: Option<Polynomial<E::Fr, Coefficients, A>>,
+    pub selector_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients, A>>,
+    pub table_type_poly_monomial: Option<PolynomialProxy<'a, E::Fr, Coefficients, A>>,
 }
