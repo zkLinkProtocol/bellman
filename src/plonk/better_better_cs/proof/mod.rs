@@ -503,8 +503,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 Polynomial::from_values_unpadded(f_poly_values_aggregated)?
             };
 
-            dbg!(f_poly_values_aggregated.as_ref().len());
-
             let (t_poly_values, t_poly_values_shifted, t_poly_monomial) = if S::PRODUCE_SETUP {
                 // these are unsorted rows of lookup tables
                 let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables()?;
@@ -589,10 +587,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     PolynomialProxy::from_owned(t_poly_values_monomial_aggregated)
                 )
             };
-
-            dbg!(t_poly_values.as_data_ref().len());
-            dbg!(t_poly_values_shifted.as_data_ref().len());
-            dbg!(t_poly_monomial.as_data_ref().len());
 
             let (s_poly_monomial, s_poly_unpadded_values, s_shifted_unpadded_values) = {
                 let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
@@ -1391,7 +1385,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         {
             // degree is 4n-4
             let l = t_poly.as_ref().len();
-            assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
+            // assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
             if &t_poly.as_ref()[(l-4)..] != &[E::Fr::zero(); 4][..] {
                 return Err(SynthesisError::Unsatisfiable);
             }
@@ -2107,20 +2101,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         multiopening_challenge.mul_assign(&v);
         let mut poly_to_divide_at_z_omega = copy_permutation_z_in_monomial_form;
         poly_to_divide_at_z_omega.scale(&worker, multiopening_challenge);
-
-        // {
-        //     let tmp = commit_using_monomials(
-        //         &poly_to_divide_at_z_omega,
-        //         &mon_crs,
-        //         &worker
-        //     )?;
-
-        //     dbg!(tmp);
-
-        //     let tmp = poly_to_divide_at_z_omega.evaluate_at(&worker, z_omega);
-
-        //     dbg!(tmp);
-        // }
 
         const NEXT_STEP_DILATION: usize = 1;
 
