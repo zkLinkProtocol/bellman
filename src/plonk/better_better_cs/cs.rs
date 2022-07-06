@@ -1489,7 +1489,10 @@ impl<
         }
     }
 
-    pub fn make_permutations(&self, worker: &Worker) -> Result<Vec<Polynomial::<E::Fr, Values, A>>, SynthesisError> {
+    pub fn make_permutations<B: Allocator + Clone + Default + Send + Sync>(
+        &self, 
+        worker: &Worker
+    ) -> Result<Vec<Polynomial::<E::Fr, Values, B>>, SynthesisError> {
         assert!(self.is_finalized);
 
         if !S::PRODUCE_SETUP {
@@ -1616,10 +1619,10 @@ impl<
         Ok(sigmas)
     }
 
-    fn make_setup_polynomials(
+    fn make_setup_polynomials<B: Allocator + Clone + Default + Send + Sync>(
         &self,
         with_finalization: bool
-    ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values, A>>, SynthesisError> {
+    ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values, B>>, SynthesisError> {
         if with_finalization {
             assert!(self.is_finalized);
         }
@@ -1636,7 +1639,7 @@ impl<
         let setup_poly_ids: Vec<_> = self.aux_storage.setup_map.keys().collect();
 
         for &id in setup_poly_ids.into_iter() {
-            let mut assembled_poly = Vec::with_capacity_in(total_num_gates, A::default()); // vec![E::Fr::zero(); total_num_gates];
+            let mut assembled_poly = Vec::with_capacity_in(total_num_gates, B::default());
             if num_input_gates != 0 {
                 unsafe{assembled_poly.set_len(num_input_gates)};
                 let input_gates_coeffs = &mut assembled_poly[..num_input_gates];
@@ -1737,7 +1740,7 @@ impl<
             let num_lookups = self.num_table_lookups;
             setup.total_lookup_entries_length = num_lookups;
 
-            let table_tails = self.calculate_t_polynomial_values_for_single_application_tables()?;
+            let table_tails = self.calculate_t_polynomial_values_for_single_application_tables::<Global>()?;
             assert_eq!(table_tails.len(), 4);
 
             let tails_len = table_tails[0].len();
@@ -1786,7 +1789,10 @@ impl<
         Ok((map, permutation_polys))
     }
 
-    pub fn output_gate_selectors(&self, worker: &Worker) -> Result<Vec<Vec<E::Fr, A>>, SynthesisError> {
+    pub fn output_gate_selectors<B: Allocator + Clone + Default + Send + Sync>(
+        &self, 
+        worker: &Worker
+    ) -> Result<Vec<Vec<E::Fr, B>>, SynthesisError> {
         if self.sorted_gates.len() == 1 {
             return Ok(vec![]);
         }
@@ -1794,7 +1800,7 @@ impl<
         let num_gate_selectors = self.sorted_gates.len();
 
         let one = E::Fr::one();
-        let mut empty_poly_values = Vec::with_capacity_in(self.n(), A::default());
+        let mut empty_poly_values = Vec::with_capacity_in(self.n(), B::default());
         empty_poly_values.resize(self.n(), E::Fr::zero());
         let mut poly_values = vec![empty_poly_values.clone(); num_gate_selectors];
         let num_input_gates = self.num_input_gates;
@@ -1829,8 +1835,8 @@ impl<
         Ok(poly_values)
     }
 
-    pub fn calculate_t_polynomial_values_for_single_application_tables(&self) -> 
-        Result<Vec<Vec<E::Fr>>, SynthesisError> {
+    pub fn calculate_t_polynomial_values_for_single_application_tables<B: Allocator + Clone + Default>(&self) -> 
+        Result<Vec<Vec<E::Fr, B>>, SynthesisError> {
 
         if !S::PRODUCE_SETUP {
             return Err(SynthesisError::AssignmentMissing);
@@ -1853,7 +1859,7 @@ impl<
 
         assert_eq!(width, 3, "only support tables that span over 3 polynomials for now");
 
-        let mut column_contributions = vec![vec![]; width + 1];
+        let mut column_contributions = vec![Vec::with_capacity_in(self.n() + 1, B::default()); width + 1];
 
         for table in self.tables.iter() {
             // let entries = table.get_table_values_for_polys();
@@ -1934,7 +1940,7 @@ impl<
         // make it shifted for ease of rotations later one
         let mut place_into_idx = aux_gates_start + 1;
 
-        let lookup_selector = self.calculate_lookup_selector_values()?;
+        let lookup_selector = self.calculate_lookup_selector_values::<Global>()?;
 
         for single_application in self.tables.iter() {
             // let entries = single_application.get_table_values_for_polys();
@@ -1967,8 +1973,8 @@ impl<
         Ok(contributions)
     }
 
-    pub fn calculate_s_poly_contributions_from_witness(&self) ->
-        Result<Vec<Vec<E::Fr>>, SynthesisError> 
+    pub fn calculate_s_poly_contributions_from_witness<B: Allocator + Clone + Default + Send + Sync>(&self) ->
+        Result<Vec<Vec<E::Fr, B>>, SynthesisError> 
     {
         if self.tables.len() == 0 {
             return Ok(vec![]);
@@ -1978,7 +1984,7 @@ impl<
         // and then sort this set
 
         let mut kv_set_entries = vec![];
-        let mut contributions_per_column = vec![vec![]; 4];
+        let mut contributions_per_column = vec![Vec::with_capacity_in(self.n() + 1, B::default()); 4];
         for single_application in self.tables.iter() {
             // copy all queries from witness
             let table_name = single_application.functional_name();
@@ -2019,10 +2025,10 @@ impl<
         Ok(contributions_per_column)
     }
 
-    pub fn calculate_table_type_values(
+    pub fn calculate_table_type_values<B: Allocator + Clone + Default + Send + Sync>(
         &self
     ) -> 
-        Result<Vec<E::Fr, A>, SynthesisError>
+        Result<Vec<E::Fr, B>, SynthesisError>
     {
         assert!(self.is_finalized);
 
@@ -2031,7 +2037,7 @@ impl<
         }
 
         if self.tables.len() == 0 {
-            return Ok(Vec::with_capacity_in(0, A::default()));
+            return Ok(Vec::with_capacity_in(0, B::default()));
         }
 
         let table_ids_vector_on_aux_gates = &self.table_ids_poly;
@@ -2044,7 +2050,7 @@ impl<
         let aux_gates_start = self.num_input_gates;
         let aux_gates_end = aux_gates_start + num_aux_gates;
 
-        let mut values = Vec::with_capacity_in(size, A::default());
+        let mut values = Vec::with_capacity_in(size, B::default());
         values.resize(size, E::Fr::zero());
         
         assert_eq!(num_aux_gates, table_ids_vector_on_aux_gates.len());
@@ -2054,9 +2060,9 @@ impl<
         Ok(values)
     }
 
-    pub fn calculate_lookup_selector_values(
+    pub fn calculate_lookup_selector_values<B: Allocator + Clone + Default + Send + Sync>(
         &self
-    ) -> Result<Vec<E::Fr, A>, SynthesisError> {
+    ) -> Result<Vec<E::Fr, B>, SynthesisError> {
         assert!(self.is_finalized);
 
         if !S::PRODUCE_SETUP {
@@ -2064,7 +2070,7 @@ impl<
         }
 
         if self.tables.len() == 0 {
-            return Ok(Vec::with_capacity_in(0, A::default()));
+            return Ok(Vec::with_capacity_in(0, B::default()));
         }
 
         // total number of gates, Input + Aux
@@ -2075,7 +2081,7 @@ impl<
         let num_aux_gates = self.num_aux_gates;
         // input + aux gates without t-polys
 
-        let mut lookup_selector_values = Vec::with_capacity_in(size, A::default());
+        let mut lookup_selector_values = Vec::with_capacity_in(size, B::default());
         lookup_selector_values.resize(aux_gates_start, E::Fr::zero());
         unsafe{ lookup_selector_values.set_len(size); }
 
@@ -2095,11 +2101,11 @@ impl<
         Ok(lookup_selector_values)
     }
 
-    pub fn calculate_masked_lookup_entries(
+    pub fn calculate_masked_lookup_entries<B: Allocator + Clone + Default + Send + Sync>(
         &self,
-        storage: &AssembledPolynomialStorage<E>
+        storage: &AssembledPolynomialStorage<E, B>
     ) -> 
-        Result<Vec<Vec<E::Fr>>, SynthesisError>
+        Result<Vec<Vec<E::Fr, B>>, SynthesisError>
     {
         assert!(self.is_finalized);
         if self.tables.len() == 0 {
@@ -2114,7 +2120,10 @@ impl<
         let num_aux_gates = self.num_aux_gates;
         // input + aux gates without t-polys
 
-        let mut contributions_per_column = vec![vec![E::Fr::zero(); size]; 3];
+        let mut contributions_per_column = vec![Vec::with_capacity_in(size, B::default()); 3];
+        for poly in contributions_per_column.iter_mut() {
+            poly.resize(size, E::Fr::zero());
+        }
         for single_application in self.tables.iter() {
             let table_name = single_application.functional_name();
             let keys_and_values = single_application.applies_over();
@@ -2136,12 +2145,12 @@ impl<
         Ok(contributions_per_column)
     }
 
-    pub fn calculate_masked_lookup_entries_using_selector<'a>(
+    pub fn calculate_masked_lookup_entries_using_selector<'a, B: Allocator + Clone + Default + Send + Sync>(
         &self,
-        storage: &AssembledPolynomialStorage<E>,
-        selector: &PolynomialProxy<'a, E::Fr, Values>
+        storage: &AssembledPolynomialStorage<E, B>,
+        selector: &PolynomialProxy<'a, E::Fr, Values, B>
     ) -> 
-        Result<Vec<Vec<E::Fr, A>>, SynthesisError>
+        Result<Vec<Vec<E::Fr, B>>, SynthesisError>
     {
         assert!(self.is_finalized);
         if self.tables.len() == 0 {
@@ -2160,7 +2169,7 @@ impl<
 
         let one = E::Fr::one();
 
-        let mut contributions_per_column = vec![Vec::with_capacity_in(size, A::default()); 3];
+        let mut contributions_per_column = vec![Vec::with_capacity_in(size, B::default()); 3];
         for contr in contributions_per_column.iter_mut() {
             contr.resize(size, E::Fr::zero());
         }
@@ -2235,11 +2244,11 @@ impl<
         Ok(column_contributions)
     }
 
-    pub fn make_state_and_witness_polynomials(
+    pub fn make_state_and_witness_polynomials<B: Allocator + Clone + Default + Send + Sync>(
         &self,
         worker: &Worker,
         with_finalization: bool
-    ) -> Result<(Vec<Vec<E::Fr, A>>, Vec<Vec<E::Fr, A>>), SynthesisError>
+    ) -> Result<(Vec<Vec<E::Fr, B>>, Vec<Vec<E::Fr, B>>), SynthesisError>
     {
         if with_finalization {
             assert!(self.is_finalized);
@@ -2250,9 +2259,9 @@ impl<
         }
 
         let mut full_assignments = if with_finalization {
-            vec![Vec::with_capacity_in((self.n()+1).next_power_of_two(), A::default()); P::STATE_WIDTH]
+            vec![Vec::with_capacity_in((self.n()+1).next_power_of_two(), B::default()); P::STATE_WIDTH]
         } else {
-            vec![Vec::with_capacity_in(self.n()+1, A::default()); P::STATE_WIDTH]
+            vec![Vec::with_capacity_in(self.n()+1, B::default()); P::STATE_WIDTH]
         };
 
         let pad_to = if with_finalization {
@@ -2304,11 +2313,11 @@ impl<
         Ok((full_assignments, vec![]))
     }
 
-    pub fn make_assembled_poly_storage<'a>(
+    pub fn make_assembled_poly_storage<'a, B: Allocator + Clone + Default + Send + Sync>(
         &self, 
         worker: &Worker, 
         with_finalization: bool
-    ) -> Result<AssembledPolynomialStorage<'a, E, A>, SynthesisError> {
+    ) -> Result<AssembledPolynomialStorage<'a, E, B>, SynthesisError> {
         if with_finalization {
             assert!(self.is_finalized);
         }
@@ -2336,7 +2345,7 @@ impl<
 
         if S::PRODUCE_SETUP {
             let setup_polys_map = self.make_setup_polynomials(with_finalization)?;
-            let gate_selectors = self.output_gate_selectors(&worker)?;
+            let gate_selectors = self.output_gate_selectors::<B>(&worker)?;
 
             for (gate, poly) in self.sorted_gates.iter().zip(gate_selectors.into_iter()) {
                 // let key = gate.clone();
@@ -2352,7 +2361,7 @@ impl<
             }
         }
 
-        let assembled = AssembledPolynomialStorage::<E, A> {
+        let assembled = AssembledPolynomialStorage::<E, B> {
             state_map: state_polys_map,
             witness_map: witness_polys_map,
             setup_map: setup_map,
@@ -2455,7 +2464,7 @@ impl<
 
         let worker = Worker::new();
 
-        let storage = self.make_assembled_poly_storage(&worker, false).unwrap();
+        let storage = self.make_assembled_poly_storage::<Global>(&worker, false).unwrap();
 
         for (gate_type, density) in self.aux_gate_density.0.iter() {
             for (gate_index, is_applicable) in density.iter().enumerate() {
@@ -2489,7 +2498,7 @@ impl<
         let num_state_polys = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
         let num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
 
-        let mut values_storage = self.make_assembled_poly_storage(worker, true)?;
+        let mut values_storage = self.make_assembled_poly_storage::<Global>(worker, true)?;
         let permutation_polys = self.make_permutations(&worker)?;
         assert_eq!(permutation_polys.len(), num_state_polys);
 
@@ -2578,7 +2587,7 @@ impl<
             };
 
             // these are unsorted rows of lookup tables
-            let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables()?;
+            let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables::<Global>()?;
 
             assert_eq!(t_poly_ends.len(), 4);
 
@@ -2625,7 +2634,7 @@ impl<
 
             // assert!(full_t_poly_values[0].is_zero());
 
-            let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
+            let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness::<Global>()?;
             assert_eq!(s_poly_ends.len(), 4);
 
             let mut s_poly_values_aggregated = s_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
