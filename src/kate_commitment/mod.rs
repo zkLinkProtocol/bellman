@@ -325,7 +325,7 @@ pub fn commit_using_monomials<E: Engine>(
     crs: &Crs<E, CrsForMonomialForm>,
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
-    println!("Committing coefficients");
+    // println!("Committing coefficients");
 
     use std::time::Instant;
 
@@ -338,7 +338,7 @@ pub fn commit_using_monomials<E: Engine>(
         &poly.as_ref()
     )?;
 
-    println!("Scalars conversion taken {:?}", subtime.elapsed());
+    // println!("Scalars conversion taken {:?}", subtime.elapsed());
 
     let subtime = Instant::now();
 
@@ -348,9 +348,10 @@ pub fn commit_using_monomials<E: Engine>(
         &scalars_repr
     )?;
 
-    println!("Multiexp taken {:?}", subtime.elapsed());
+    // println!("CPU MEXP RES {:?}", res);
+    // println!("Multiexp taken {:?}", subtime.elapsed());
 
-    println!("Commtiment taken {:?}", now.elapsed());
+    // println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }

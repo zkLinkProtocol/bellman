@@ -364,17 +364,22 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         for i in 0..num_state_polys {
             let key = PolyIdentifier::VariablesPolynomial(i);
             let poly_ref = monomials_storage.get_poly(key);
+            println!("CPU MON {:?} {:?}", key, poly_ref.as_ref()[1023]);
+            // println!("CPU LEN {:?} {:?}", key, poly_ref.as_ref().len());
             let commitment = commit_using_monomials(
                 poly_ref,
                 mon_crs,
                 &worker
             )?;
 
+            println!("CPU MEXP RES INTO AFFINE {:?}", commitment);
+
             commit_point_as_xy::<E, T>(
                 &mut transcript,
                 &commitment
             );
 
+            // println!("CPU commitment {:?} {:?}", key, commitment);
             proof.state_polys_commitments.push(commitment);
         }
 
