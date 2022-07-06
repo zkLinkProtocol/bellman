@@ -2082,8 +2082,7 @@ impl<
         // input + aux gates without t-polys
 
         let mut lookup_selector_values = Vec::with_capacity_in(size, B::default());
-        lookup_selector_values.resize(aux_gates_start, E::Fr::zero());
-        unsafe{ lookup_selector_values.set_len(size); }
+        lookup_selector_values.resize(size, E::Fr::zero());
 
         for single_application in self.tables.iter() {
             let table_name = single_application.functional_name();
