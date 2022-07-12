@@ -482,40 +482,40 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputati
         }
 
         for p in setup.permutation_monomials.iter() {
-            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+            let ext = p.clone().fft_using_bitreversed_ntt(
                 &worker,
                 omegas_bitreversed,
-                &coset_generator,
+                &E::Fr::one(),
             )?;
 
             new.permutation_values.push(ext);
         }
 
         if let Some(p) = &setup.lookup_selector_monomial {
-            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+            let ext = p.clone().fft_using_bitreversed_ntt(
                 &worker,
                 omegas_bitreversed,
-                &coset_generator,
+                &E::Fr::one(),
             )?;
 
             new.lookup_selector_values = Some(ext);
         }
 
         if let Some(p) = &setup.lookup_table_type_monomial {
-            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+            let ext = p.clone().fft_using_bitreversed_ntt(
                 &worker,
                 omegas_bitreversed,
-                &coset_generator,
+                &E::Fr::one(),
             )?;
             
             new.lookup_table_type_values = Some(ext);
         }
 
         for p in setup.lookup_tables_monomials.iter() {
-            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+            let ext = p.clone().fft_using_bitreversed_ntt(
                 &worker,
                 omegas_bitreversed,
-                &coset_generator,
+                &E::Fr::one(),
             )?;
 
             new.lookup_tables_values.push(ext);

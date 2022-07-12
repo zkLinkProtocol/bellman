@@ -364,15 +364,11 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         for i in 0..num_state_polys {
             let key = PolyIdentifier::VariablesPolynomial(i);
             let poly_ref = monomials_storage.get_poly(key);
-            println!("CPU MON {:?} {:?}", key, poly_ref.as_ref()[1023]);
-            // println!("CPU LEN {:?} {:?}", key, poly_ref.as_ref().len());
             let commitment = commit_using_monomials(
                 poly_ref,
                 mon_crs,
                 &worker
             )?;
-
-            println!("CPU MEXP RES INTO AFFINE {:?}", commitment);
 
             commit_point_as_xy::<E, T>(
                 &mut transcript,
@@ -744,7 +740,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         assert!(z.size().is_power_of_two());
 
         assert!(z.as_ref()[0] == E::Fr::one());
-
+       
         let copy_permutation_z_in_monomial_form = z.ifft_using_bitreversed_ntt(
             &worker, 
             &omegas_inv_bitreversed, 
@@ -1358,7 +1354,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
 
         drop(inverse_divisor_on_coset_lde_natural_ordering);
-        
+
         let t_poly = t_poly.icoset_fft_for_generator(&worker, &coset_factor);
 
         println!("Lde factor = {}", lde_factor);
