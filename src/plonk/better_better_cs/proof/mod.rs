@@ -4,6 +4,7 @@ use crate::pairing::ff::*;
 use crate::pairing::{Engine, CurveAffine, CurveProjective};
 use crate::plonk::polynomials::*;
 use std::collections::HashMap;
+use std::alloc::Global;
 
 use crate::plonk::domains::*;
 use crate::worker::Worker;
@@ -490,7 +491,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             let (t_poly_values, t_poly_values_shifted, t_poly_monomial) = if S::PRODUCE_SETUP {
                 // these are unsorted rows of lookup tables
-                let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables()?;
+                let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables::<Global>()?;
 
                 assert_eq!(t_poly_ends.len(), 4);
 
@@ -566,7 +567,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             };
 
             let (s_poly_monomial, s_poly_unpadded_values, s_shifted_unpadded_values) = {
-                let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
+                let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness::<Global>()?;
                 assert_eq!(s_poly_ends.len(), 4);
 
                 let mut s_poly_values_aggregated = s_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();

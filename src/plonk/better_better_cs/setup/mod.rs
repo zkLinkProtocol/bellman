@@ -30,7 +30,7 @@ pub struct Setup<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
 
     pub gate_setup_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
     pub gate_selectors_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
-    pub permutation_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
+    pub permutation_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
 
     pub total_lookup_entries_length: usize,
     pub lookup_selector_monomial: Option<Polynomial<E::Fr, Coefficients, A>>,
@@ -58,7 +58,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + std::fmt::Debug> std::fmt:
     }
 }
 
-impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> Setup<E, C, A> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default + Send + Sync> Setup<E, C, A> {
     pub fn empty() -> Self {
         Self {
             n: 0,
@@ -79,7 +79,7 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> Setup<E, C, A> {
         }
     }
 
-    pub fn reallocate<B: Allocator + Clone + Default>(&self) -> Setup<E, C, B> {
+    pub fn reallocate<B: Allocator + Clone + Default + Send + Sync>(&self) -> Setup<E, C, B> {
         let mut new = Setup::<E, C, B>::empty();
 
         new.n = self.n;
@@ -401,7 +401,7 @@ pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone =
 
 use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
 
-impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default> SetupPrecomputations<E, C, A> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default + Send + Sync> SetupPrecomputations<E, C, A> {
     pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
         setup: &Setup<E, C, Global>,
         worker: &Worker,
