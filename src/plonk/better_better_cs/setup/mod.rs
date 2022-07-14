@@ -390,7 +390,7 @@ pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone =
     pub lookup_selector_lde: Option<Polynomial<E::Fr, Values, A>>,
     pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values, A>>,
 
-    pub permutation_values: Vec<Polynomial<E::Fr, Values>>,
+    pub permutation_values: Vec<Polynomial<E::Fr, Values, A>>,
 
     pub lookup_selector_values: Option<Polynomial<E::Fr, Values, A>>,
     pub lookup_tables_values: Vec<Polynomial<E::Fr, Values, A>>,
