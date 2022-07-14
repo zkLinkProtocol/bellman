@@ -402,6 +402,25 @@ pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone =
 use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
 
 impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default + Send + Sync> SetupPrecomputations<E, C, A> {
+    pub fn empty() -> Self {
+        Self {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: vec![],
+            lookup_table_type_values: None,
+        
+            _marker: std::marker::PhantomData
+        }
+    }
+
     pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
         setup: &Setup<E, C, Global>,
         worker: &Worker,
