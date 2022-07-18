@@ -642,6 +642,12 @@ impl<E: Engine> KeyValueSet<E> {
 
 impl<E: Engine> Copy for KeyValueSet<E> {}
 
+impl<E: Engine> std::hash::Hash for KeyValueSet<E> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.inner.hash(state);
+    }
+}
+
 impl<E: Engine> std::cmp::PartialEq for KeyValueSet<E> {
     fn eq(&self, other: &Self) -> bool {
         self.inner == other.inner
@@ -654,15 +660,23 @@ impl<E: Engine> std::cmp::Ord for KeyValueSet<E> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.inner[0].into_repr().cmp(&other.inner[0].into_repr()) {
             std::cmp::Ordering::Equal => {
-                return self.inner[1].into_repr().cmp(&other.inner[1].into_repr());
-                // match self.inner[1].into_repr().cmp(&other.inner[1].into_repr()) {
-                //     std::cmp::Ordering::Equal => {
-                //         unreachable!("keys and values set must have no duality");
-                //     }
-                //     ord @ _ => {
-                //         return ord;
-                //     }
-                // }
+                // return self.inner[1].into_repr().cmp(&other.inner[1].into_repr());
+                match self.inner[1].into_repr().cmp(&other.inner[1].into_repr()) {
+                    std::cmp::Ordering::Equal => {
+                        self.inner[2].into_repr().cmp(&other.inner[2].into_repr())
+                        // match self.inner[2].into_repr().cmp(&other.inner[2].into_repr()) {
+                        //     std::cmp::Ordering::Equal => {
+                        //         panic!("keys and values have duality for {:?} and {:?}", &self, &other);
+                        //     }
+                        //     ord @ _ => {
+                        //         return ord;
+                        //     }
+                        // }
+                    }
+                    ord @ _ => {
+                        return ord;
+                    }
+                }
             },
             ord @ _ => {
                 return ord;

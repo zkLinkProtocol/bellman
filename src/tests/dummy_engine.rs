@@ -24,7 +24,7 @@ use std::num::Wrapping;
 
 const MODULUS_R: Wrapping<u32> = Wrapping(64513);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, ::serde::Serialize, ::serde::Deserialize)]
 pub struct Fr(Wrapping<u32>);
 
 impl fmt::Display for Fr {
@@ -160,7 +160,7 @@ impl SqrtField for Fr {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, ::serde::Serialize, ::serde::Deserialize)]
 pub struct FrRepr([u64; 1]);
 
 impl Ord for FrRepr {
@@ -300,7 +300,7 @@ impl PrimeField for Fr {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct DummyEngine;
 
 impl ScalarEngine for DummyEngine {
