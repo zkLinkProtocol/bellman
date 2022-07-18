@@ -25,7 +25,8 @@ impl PolynomialForm for Values{}
 
 // TODO: Enforce bitreversed values as a separate form
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(bound(deserialize = "F: serde::de::DeserializeOwned"))]
 pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
     coeffs: Vec<F>,
     pub exp: u32,
@@ -33,6 +34,10 @@ pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
     pub omegainv: F,
     pub geninv: F,
     pub minv: F,
+
+    #[serde(skip_serializing, default)]
+    #[serde(bound(serialize = ""))]
+    #[serde(bound(deserialize = ""))]
     _marker: std::marker::PhantomData<P>
 }
 

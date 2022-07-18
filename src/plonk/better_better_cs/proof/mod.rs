@@ -98,7 +98,7 @@ pub fn read_tuple_with_two_indexes_vec<F: PrimeField, R: Read>(mut reader: R) ->
     Ok(elements)
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Proof<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub inputs: Vec<E::Fr>,
@@ -138,6 +138,9 @@ pub struct Proof<E: Engine, C: Circuit<E>> {
     pub opening_proof_at_z: E::G1Affine,
     pub opening_proof_at_z_omega: E::G1Affine,
 
+    #[serde(skip_serializing, default)]
+    #[serde(bound(serialize = ""))]
+    #[serde(bound(deserialize = ""))]
     _marker: std::marker::PhantomData<C>
 }
 
