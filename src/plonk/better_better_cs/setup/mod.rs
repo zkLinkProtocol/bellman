@@ -390,7 +390,7 @@ pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone =
     pub lookup_selector_lde: Option<Polynomial<E::Fr, Values, A>>,
     pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values, A>>,
 
-    pub permutation_values: Vec<Polynomial<E::Fr, Values>>,
+    pub permutation_values: Vec<Polynomial<E::Fr, Values, A>>,
 
     pub lookup_selector_values: Option<Polynomial<E::Fr, Values, A>>,
     pub lookup_tables_values: Vec<Polynomial<E::Fr, Values, A>>,
@@ -532,6 +532,25 @@ impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default + Send + Sync> Set
             BitReversedOmegas::new_for_domain_size(setup.permutation_monomials[0].size());
 
         Self::from_setup_and_precomputations(setup, worker, &precomps)
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: vec![],
+            lookup_table_type_values: None,
+
+            _marker: std::marker::PhantomData,
+        }
     }
 
     pub fn reallocate<B: Allocator + Clone + Default>(&self) -> SetupPrecomputations<E, C, B> {
