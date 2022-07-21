@@ -4,6 +4,7 @@ use crate::pairing::ff::*;
 use crate::pairing::*;
 use crate::plonk::polynomials::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::plonk::domains::*;
 use crate::worker::Worker;
@@ -266,6 +267,31 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
         // new.non_residues
         //     .extend(make_non_residues::<E::Fr>(state_width - 1));
 
+        Ok(new)
+    }
+
+    pub fn empty() -> Result<Self, SynthesisError> {
+        use crate::pairing::CurveAffine;
+
+        let mut new = Self {
+            n: 0,
+            num_inputs: 0,
+            state_width: 0,
+            num_witness_polys: 0,
+            gate_setup_commitments: vec![],
+            gate_selectors_commitments: vec![],
+            permutation_commitments: vec![],
+
+            total_lookup_entries_length: 0,
+            lookup_selector_commitment: None,
+            lookup_tables_commitments: vec![],
+            lookup_table_type_commitment: None,
+        
+            non_residues: vec![],
+            g2_elements: [CurveAffine::zero(); 2],
+
+            _marker: std::marker::PhantomData,
+        };
         Ok(new)
     }
 
