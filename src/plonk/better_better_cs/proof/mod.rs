@@ -98,7 +98,7 @@ pub fn read_tuple_with_two_indexes_vec<F: PrimeField, R: Read>(mut reader: R) ->
     Ok(elements)
 }
 
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Debug, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Proof<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub inputs: Vec<E::Fr>,
@@ -1381,7 +1381,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         
         let t_poly = t_poly.icoset_fft_for_generator(&worker, &coset_factor);
 
-        println!("Lde factor = {}", lde_factor);
+        // println!("Lde factor = {}", lde_factor);
 
         // println!("Quotient poly = {:?}", t_poly.as_ref());
 
@@ -1390,6 +1390,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let l = t_poly.as_ref().len();
             // assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..], "quotient degree is too large");
             if &t_poly.as_ref()[(l-4)..] != &[E::Fr::zero(); 4][..] {
+                println!("End coeffs are {:?}", &t_poly.as_ref()[(l-4)..]);
                 return Err(SynthesisError::Unsatisfiable);
             }
         }
