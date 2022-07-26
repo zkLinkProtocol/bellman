@@ -325,32 +325,16 @@ pub fn commit_using_monomials<E: Engine>(
     crs: &Crs<E, CrsForMonomialForm>,
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
-    println!("Committing coefficients");
-
-    use std::time::Instant;
-
-    let now = Instant::now();
-
-    let subtime = Instant::now();
-
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()
     )?;
-
-    println!("Scalars conversion taken {:?}", subtime.elapsed());
-
-    let subtime = Instant::now();
 
     let res = multiexp::dense_multiexp::<E::G1Affine>(
         &worker,
         &crs.g1_bases[..scalars_repr.len()],
         &scalars_repr
     )?;
-
-    println!("Multiexp taken {:?}", subtime.elapsed());
-
-    println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }
@@ -360,33 +344,18 @@ pub fn commit_using_values<E: Engine>(
     crs: &Crs<E, CrsForLagrangeForm>,
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
-    println!("Committing values over domain");
     assert_eq!(poly.size(), crs.g1_bases.len());
-
-    use std::time::Instant;
-
-    let now = Instant::now();
-
-    let subtime = Instant::now();
 
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &poly.as_ref()
     )?;
 
-    println!("Scalars conversion taken {:?}", subtime.elapsed());
-
-    let subtime = Instant::now();
-
     let res = multiexp::dense_multiexp::<E::G1Affine>(
         &worker,
         &crs.g1_bases,
         &scalars_repr
     )?;
-
-    println!("Multiexp taken {:?}", subtime.elapsed());
-
-    println!("Commtiment taken {:?}", now.elapsed());
 
     Ok(res.into_affine())
 }
@@ -397,7 +366,6 @@ pub fn commit_using_raw_values<E: Engine>(
     worker: &Worker
 ) -> Result<E::G1Affine, SynthesisError> {
     assert_eq!(values.len().next_power_of_two(), crs.g1_bases.len());
-    println!("Committing raw values over domain");
     let scalars_repr = elements_into_representations::<E>(
         &worker,
         &values
@@ -425,7 +393,6 @@ pub fn commit_using_values_with_density<E: Engine, D, Q> (
 {
     use futures::Future;
 
-    println!("Committing values over domain with density");
     // assert_eq!(values.len(), crs.g1_bases.len());
     let scalars_repr = elements_into_representations::<E>(
         &worker,
@@ -449,7 +416,6 @@ pub fn commit_using_values_on_coset<E: Engine>(
     crs: &Crs<E, CrsForLagrangeFormOnCoset>,
     worker: &Worker
 ) -> Result<E::G1Affine , SynthesisError> {
-    println!("Committing values over coset");
     assert_eq!(poly.size(), crs.g1_bases.len());
     let scalars_repr = elements_into_representations::<E>(
         &worker,
