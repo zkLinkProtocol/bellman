@@ -1624,7 +1624,7 @@ impl<
         Ok(sigmas)
     }
 
-    fn make_setup_polynomials<B: Allocator + Clone + Default + Send + Sync>(
+    pub fn make_setup_polynomials<B: Allocator + Clone + Default + Send + Sync>(
         &self,
         with_finalization: bool
     ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values, B>>, SynthesisError> {
