@@ -1595,40 +1595,6 @@ impl<E: Engine> ProvingAssembly<E> where E::Fr : PartialTwoBitReductionField {
         )?;
 
         Ok(())
-
-        
-        // let proof = PlonkChunkedNonhomomorphicProof::<E, S> {
-        //     a_opening_value: a_at_z,
-        //     b_opening_value: b_at_z,
-        //     c_opening_value: c_at_z,
-        //     q_l_opening_value: q_l_at_z,
-        //     q_r_opening_value: q_r_at_z,
-        //     q_o_opening_value: q_o_at_z,
-        //     q_m_opening_value: q_m_at_z,
-        //     q_c_opening_value: q_c_at_z,
-        //     s_id_opening_value: s_id_at_z,
-        //     sigma_1_opening_value: sigma_1_at_z,
-        //     sigma_2_opening_value: sigma_2_at_z,
-        //     sigma_3_opening_value: sigma_3_at_z,
-        //     z_1_unshifted_opening_value: z_1_at_z,
-        //     z_2_unshifted_opening_value: z_2_at_z,
-        //     z_1_shifted_opening_value: z_1_shifted_at_z,
-        //     z_2_shifted_opening_value: z_2_shifted_at_z,
-        //     t_low_opening_value: t_low_at_z,
-        //     t_mid_opening_value: t_mid_at_z,
-        //     t_high_opening_value: t_high_at_z,
-        //     a_commitment: a_commitment,
-        //     b_commitment: b_commitment,
-        //     c_commitment: c_commitment,
-        //     z_1_commitment: z_1_commitment,
-        //     z_2_commitment: z_2_commitment,
-        //     t_low_commitment: t_low_commitment,
-        //     t_mid_commitment: t_mid_commitment,
-        //     t_high_commitment: t_high_commitment,
-        //     openings_proof: multiopen_proof,
-        // };
-
-        // Ok(proof)
     }
 }
 

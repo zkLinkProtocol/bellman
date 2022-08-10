@@ -119,7 +119,14 @@ impl<
     fn commit_single(&self, poly: &Polynomial<F, Coefficients>) -> (Self::Commitment, Option<Self::IntermediateData>) {
         println!("Start commit single");
         let start = Instant::now();
-        let original_poly_lde = poly.clone().lde_using_bitreversed_ntt(&self.worker, self.lde_factor, &self.precomputed_bitreversed_omegas).expect("must make an LDE");
+        // let mut original_poly_lde = poly.clone().lde_using_bitreversed_ntt(&self.worker, self.lde_factor, &self.precomputed_bitreversed_omegas).expect("must make an LDE");
+        let mut original_poly_lde = poly.clone().bitreversed_lde_using_bitreversed_ntt(
+            &self.worker, 
+            self.lde_factor, 
+            &self.precomputed_bitreversed_omegas,
+            &F::one(),
+        ).expect("must make an LDE");
+        original_poly_lde.bitreverse_enumeration(&self.worker);
         // let original_poly_lde = poly.clone().lde(&self.worker, self.lde_factor).expect("must make an LDE");
         let original_tree = < < FRI as FriIop<F> >::IopType as IOP<F> >::create(&original_poly_lde.as_ref());
         let commitment = original_tree.get_root();
@@ -282,9 +289,14 @@ impl<
 
         let q_poly = q_poly.expect("now it's aggregated");
 
-        let q_poly_lde = q_poly.lde_using_bitreversed_ntt(&self.worker, self.lde_factor, &self.precomputed_bitreversed_omegas).expect("must make an LDE");
-
         // let q_poly_lde = q_poly.lde(&self.worker, self.lde_factor).expect("must make an LDE");
+        let mut q_poly_lde = q_poly.bitreversed_lde_using_bitreversed_ntt(
+            &self.worker, 
+            self.lde_factor, 
+            &self.precomputed_bitreversed_omegas,
+            &F::one(),
+        ).expect("must make an LDE");
+        q_poly_lde.bitreverse_enumeration(&self.worker);
 
         let lde_size = q_poly_lde.size();
 
@@ -462,6 +474,7 @@ impl<
         valid
     }
 
+    #[track_caller]
     fn verify_multiple_openings(
         &self, 
         commitments: Vec<&Self::Commitment>, 
@@ -516,18 +529,25 @@ impl<
 
         // accumulate value of the q poly over subpolys
 
+        // we know claimed values of every polynomial at opening point,
+        // so we can compute something like (poly_1(x) - poly_1(z))/(x-z) + alpha * () + ...
+
+        // structure of original_poly_queries_vec is vector over [vector of queries into the same poly]
+
         let mut alpha = F::one();
 
         for subpoly_index in 0..original_poly_queries_vec.len() {
-            let subpoly_queries = &original_poly_queries_vec[subpoly_index];
+            let queries_to_the_same_poly = &original_poly_queries_vec[subpoly_index];
             let claimed_value = claimed_values[subpoly_index];
             let subpoly_commitment = commitments[subpoly_index];
             let opening_at = &at_points[subpoly_index];
 
+            assert_eq!(queries_to_the_same_poly.len(), domain_indexes.len());
+
             let mut simulated_q_poly_subvalues = vec![];
 
             for (domain_idx, original_poly_query) in domain_indexes.clone().into_iter()
-                                        .zip(subpoly_queries.iter()) {
+                                        .zip(queries_to_the_same_poly.iter()) {
 
                 let x = lde_domain.generator.pow(&[domain_idx as u64]);
 
@@ -556,8 +576,10 @@ impl<
             // in simulated_q_poly_values now there are values of this polynomial for all the queries, 
             // now we need to sum them up with a proper coefficients starting with 0
 
-            for (a, s) in simulated_q_poly_values.iter_mut().zip(simulated_q_poly_subvalues.iter()) {
-                let mut tmp = *s;
+            assert_eq!(simulated_q_poly_values.len(), simulated_q_poly_subvalues.len());
+
+            for (a, s) in simulated_q_poly_values.iter_mut().zip(simulated_q_poly_subvalues.into_iter()) {
+                let mut tmp = s;
                 tmp.mul_assign(&alpha);
                 a.add_assign(&tmp);
             }

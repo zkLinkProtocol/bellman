@@ -1,6 +1,8 @@
 use crate::pairing::ff::PrimeField;
 
 use crate::plonk::domains::Domain;
+use crate::plonk::fft::cooley_tukey_ntt::bitreverse;
+use crate::plonk::polynomials::Polynomial;
 use crate::worker::Worker;
 use crate::plonk::fft::distribute_powers;
 use crate::plonk::commitments::transparent::fri::FriPrecomputations;
@@ -10,6 +12,7 @@ pub struct PrecomputedOmegas<F: PrimeField> {
     pub omegas: Vec<F>,
     pub coset: Vec<F>,
     pub omegas_inv: Vec<F>,
+    pub omegas_inv_bitreversed: Vec<F>,
     domain_size: usize
 }
 
@@ -48,6 +51,10 @@ impl<F: PrimeField> PrecomputedOmegas<F> {
             }
         });
 
+        let mut omegas_inv_bitreversed = Polynomial::from_values(omegas_inv.clone()).unwrap();
+        omegas_inv_bitreversed.bitreverse_enumeration(worker);
+        let omegas_inv_bitreversed = omegas_inv_bitreversed.into_coeffs();
+
         let mut coset = omegas.clone();
         let mult_generator = F::multiplicative_generator();
 
@@ -65,6 +72,7 @@ impl<F: PrimeField> PrecomputedOmegas<F> {
             omegas,
             coset,
             omegas_inv,
+            omegas_inv_bitreversed,
             domain_size
         }
     }
@@ -79,6 +87,10 @@ impl<F: PrimeField> FriPrecomputations<F> for PrecomputedOmegas<F>{
 
     fn omegas_inv_ref(&self) -> &[F] {
         &self.omegas_inv[..]
+    }
+
+    fn omegas_inv_bitreversed(&self) -> &[F] {
+        &&self.omegas_inv_bitreversed[..]
     }
 
     fn domain_size(&self) -> usize {
@@ -104,6 +116,7 @@ impl<F: PrimeField> FftPrecomputations<F> for PrecomputedOmegas<F>{
 
 pub struct PrecomputedInvOmegas<F: PrimeField> {
     pub omegas_inv: Vec<F>,
+    pub omegas_inv_bitreversed: Vec<F>,
     domain_size: usize
 }
 
@@ -129,8 +142,13 @@ impl<F: PrimeField> PrecomputedInvOmegas<F> {
             }
         });
 
+        let mut omegas_inv_bitreversed = Polynomial::from_values(omegas_inv.clone()).unwrap();
+        omegas_inv_bitreversed.bitreverse_enumeration(worker);
+        let omegas_inv_bitreversed = omegas_inv_bitreversed.into_coeffs();
+
         PrecomputedInvOmegas{
             omegas_inv,
+            omegas_inv_bitreversed,
             domain_size
         }
     }
@@ -145,6 +163,10 @@ impl<F: PrimeField> FriPrecomputations<F> for PrecomputedInvOmegas<F>{
 
     fn omegas_inv_ref(&self) -> &[F] {
         &self.omegas_inv[..]
+    }
+
+    fn omegas_inv_bitreversed(&self) -> &[F] {
+        &self.omegas_inv_bitreversed[..]
     }
 
     fn domain_size(&self) -> usize {

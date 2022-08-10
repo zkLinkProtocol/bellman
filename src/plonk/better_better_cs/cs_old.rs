@@ -1610,802 +1610,801 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGateEquation> Trivial
 
 use crate::pairing::bn256;
 
-#[cfg(feature = "redshift")]
-pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
-    circuit: &C
-) -> Result<(), SynthesisError> {
-    use super::*;
-    use rescue_hash::RescueEngine;
-    use rescue_hash::bn256::Bn256RescueParams;
+// #[cfg(feature = "redshift")]
+// pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
+//     circuit: &C
+// ) -> Result<(), SynthesisError> {
+//     use super::*;
+//     use rescue_hash::RescueEngine;
+//     use rescue_hash::bn256::Bn256RescueParams;
 
-    use super::redshift::setup::*;
-    use super::redshift::prover::*;
-    use super::redshift::tree_hash::*;
+//     use super::redshift::setup::*;
+//     use super::redshift::prover::*;
+//     use super::redshift::tree_hash::*;
 
-    use crate::worker::Worker;
+//     use crate::worker::Worker;
 
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
+//     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+//     circuit.synthesize(&mut assembly)?;
+//     assembly.finalize();
 
-    let num_gates = assembly.n();
+//     let num_gates = assembly.n();
 
-    println!("Performing setup for {} gates", num_gates);
+//     println!("Performing setup for {} gates", num_gates);
 
-    let params = Bn256RescueParams::new_checked_2_into_1(); 
+//     let params = Bn256RescueParams::new_checked_2_into_1(); 
 
-    use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
+//     use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
 
-    let mut prng = rescue_transcript::RescueTranscript::<bn256::Bn256>::from_params(&params);
+//     let mut prng = rescue_transcript::RescueTranscript::<bn256::Bn256>::from_params(&params);
 
-    let hasher = RescueBinaryTreeHasher::<bn256::Bn256>::new(&params);
+//     let hasher = RescueBinaryTreeHasher::<bn256::Bn256>::new(&params);
 
-    let worker = Worker::new();
+//     let worker = Worker::new();
 
-    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-        assembly,
-        hasher.clone(),
-        &worker
-    )?;
+//     let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
+//         assembly,
+//         hasher.clone(),
+//         &worker
+//     )?;
 
-    println!("Setup is done");
+//     println!("Setup is done");
 
-    // cut permutations
-    for p in permutations.iter_mut() {
-        p.pop_last().unwrap();
-    }
+//     // cut permutations
+//     for p in permutations.iter_mut() {
+//         p.pop_last().unwrap();
+//     }
 
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
+//     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+//     circuit.synthesize(&mut assembly)?;
+//     assembly.finalize();
 
-    let num_gates = assembly.n();
+//     let num_gates = assembly.n();
 
-    let start = std::time::Instant::now();
+//     let start = std::time::Instant::now();
 
-    let (prover, first_state, first_message) = RedshiftProver::first_step(
-        assembly, 
-        hasher.clone(), 
-        &worker
-    )?;
+//     let (prover, first_state, first_message) = RedshiftProver::first_step(
+//         assembly, 
+//         hasher.clone(), 
+//         &worker
+//     )?;
 
-    println!("First message");
+//     println!("First message");
 
-    for input in first_message.input_values.iter() {
-        prng.commit_input(input);
-    }
+//     for input in first_message.input_values.iter() {
+//         prng.commit_input(input);
+//     }
 
-    prng.commit_input(&first_message.witness_multioracle_commitment);
+//     prng.commit_input(&first_message.witness_multioracle_commitment);
 
-    let beta = prng.get_challenge();
-    let gamma = prng.get_challenge();
+//     let beta = prng.get_challenge();
+//     let gamma = prng.get_challenge();
 
-    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
-        beta,
-        gamma,
-    };
+//     let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
+//         beta,
+//         gamma,
+//     };
 
-    let (second_state, second_message) = prover.second_step_from_first_step(
-        first_state, 
-        first_verifier_message, 
-        &permutations, 
-        &worker
-    )?;
+//     let (second_state, second_message) = prover.second_step_from_first_step(
+//         first_state, 
+//         first_verifier_message, 
+//         &permutations, 
+//         &worker
+//     )?;
 
-    println!("Second message");
+//     println!("Second message");
 
-    prng.commit_input(&second_message.grand_product_oracle_commitment);
+//     prng.commit_input(&second_message.grand_product_oracle_commitment);
 
-    let alpha = prng.get_challenge();
+//     let alpha = prng.get_challenge();
 
-    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-    };
+//     let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//     };
 
-    let (third_state, third_message) = prover.third_step_from_second_step(
-        second_state, 
-        second_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
+//     let (third_state, third_message) = prover.third_step_from_second_step(
+//         second_state, 
+//         second_verifier_message, 
+//         &setup_multioracle, 
+//         &worker
+//     )?;
 
-    println!("Third message");
+//     println!("Third message");
 
-    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
+//     prng.commit_input(&third_message.quotient_poly_oracle_commitment);
 
-    let z = prng.get_challenge();
+//     let z = prng.get_challenge();
 
-    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-    };
+//     let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//         z,
+//     };
 
-    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-        third_state, 
-        third_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
+//     let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
+//         third_state, 
+//         third_verifier_message, 
+//         &setup_multioracle, 
+//         &worker
+//     )?;
 
-    println!("Fourth message");
+//     println!("Fourth message");
 
-    let mut wire_values_at_z = fourth_message.wire_values_at_z;
-    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
+//     let mut wire_values_at_z = fourth_message.wire_values_at_z;
+//     wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
+//     let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
 
-    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
-    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
+//     let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
+//     wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
+//     let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
 
-    for w in wire_values_at_z.iter()
-        .chain(&wire_values_at_z_omega)
-        .chain(&Some(fourth_message.grand_product_at_z))
-        .chain(&Some(fourth_message.grand_product_at_z_omega))
-        .chain(&fourth_message.quotient_polynomial_parts_at_z)
-        .chain(&fourth_message.setup_values_at_z)
-        .chain(&fourth_message.permutation_polynomials_at_z)
-        .chain(&fourth_message.gate_selector_polynomials_at_z) 
-    {
-        prng.commit_input(&w);
-    }
+//     for w in wire_values_at_z.iter()
+//         .chain(&wire_values_at_z_omega)
+//         .chain(&Some(fourth_message.grand_product_at_z))
+//         .chain(&Some(fourth_message.grand_product_at_z_omega))
+//         .chain(&fourth_message.quotient_polynomial_parts_at_z)
+//         .chain(&fourth_message.setup_values_at_z)
+//         .chain(&fourth_message.permutation_polynomials_at_z)
+//         .chain(&fourth_message.gate_selector_polynomials_at_z) 
+//     {
+//         prng.commit_input(&w);
+//     }
 
-    let v = prng.get_challenge();
+//     let v = prng.get_challenge();
 
-    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-        v,
-    };
+//     let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//         z,
+//         v,
+//     };
 
-    let fifth_message = prover.fifth_step_from_fourth_step(
-        fourth_state, 
-        fourth_verifier_message, 
-        &setup_multioracle, 
-        &mut prng,
-        &worker
-    )?;
+//     let fifth_message = prover.fifth_step_from_fourth_step(
+//         fourth_state, 
+//         fourth_verifier_message, 
+//         &setup_multioracle, 
+//         &mut prng,
+//         &worker
+//     )?;
 
-    println!("Fifth message");
+//     println!("Fifth message");
 
-    println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
+//     println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
 
-    Ok(())
-}
+//     Ok(())
+// }
 
-#[cfg(feature = "redshift")]
-pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
-    circuit: &C
-) -> Result<(), SynthesisError> {
-    use super::*;
-    use poseidon_hash::PoseidonEngine;
-    use poseidon_hash::bn256::Bn256PoseidonParams;
+// #[cfg(feature = "redshift")]
+// pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
+//     circuit: &C
+// ) -> Result<(), SynthesisError> {
+//     use super::*;
+//     use poseidon_hash::PoseidonEngine;
+//     use poseidon_hash::bn256::Bn256PoseidonParams;
 
-    use super::redshift::setup::*;
-    use super::redshift::prover::*;
-    use super::redshift::tree_hash::*;
+//     use super::redshift::setup::*;
+//     use super::redshift::prover::*;
+//     use super::redshift::tree_hash::*;
 
-    use crate::worker::Worker;
+//     use crate::worker::Worker;
 
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
+//     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+//     circuit.synthesize(&mut assembly)?;
+//     assembly.finalize();
 
-    let num_gates = assembly.n();
+//     let num_gates = assembly.n();
 
-    println!("Performing setup for {} gates", num_gates);
+//     println!("Performing setup for {} gates", num_gates);
 
-    let params = Bn256PoseidonParams::new_checked_2_into_1(); 
+//     let params = Bn256PoseidonParams::new_checked_2_into_1(); 
 
-    use crate::plonk::commitments::transcript::{Prng, poseidon_transcript};
+//     use crate::plonk::commitments::transcript::{Prng, poseidon_transcript};
 
-    let mut prng = poseidon_transcript::PoseidonTranscript::<bn256::Bn256>::from_params(&params);
+//     let mut prng = poseidon_transcript::PoseidonTranscript::<bn256::Bn256>::from_params(&params);
 
-    let hasher = PoseidonBinaryTreeHasher::<bn256::Bn256>::new(&params);
+//     let hasher = PoseidonBinaryTreeHasher::<bn256::Bn256>::new(&params);
 
-    let worker = Worker::new();
+//     let worker = Worker::new();
 
-    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-        assembly,
-        hasher.clone(),
-        &worker
-    )?;
+//     let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
+//         assembly,
+//         hasher.clone(),
+//         &worker
+//     )?;
 
-    println!("Setup is done");
+//     println!("Setup is done");
 
-    // cut permutations
-    for p in permutations.iter_mut() {
-        p.pop_last().unwrap();
-    }
+//     // cut permutations
+//     for p in permutations.iter_mut() {
+//         p.pop_last().unwrap();
+//     }
 
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
+//     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+//     circuit.synthesize(&mut assembly)?;
+//     assembly.finalize();
 
-    let num_gates = assembly.n();
+//     let num_gates = assembly.n();
 
-    let start = std::time::Instant::now();
+//     let start = std::time::Instant::now();
 
-    let (prover, first_state, first_message) = RedshiftProver::first_step(
-        assembly, 
-        hasher.clone(), 
-        &worker
-    )?;
+//     let (prover, first_state, first_message) = RedshiftProver::first_step(
+//         assembly, 
+//         hasher.clone(), 
+//         &worker
+//     )?;
 
-    println!("First message");
+//     println!("First message");
 
-    for input in first_message.input_values.iter() {
-        prng.commit_input(input);
-    }
+//     for input in first_message.input_values.iter() {
+//         prng.commit_input(input);
+//     }
 
-    prng.commit_input(&first_message.witness_multioracle_commitment);
+//     prng.commit_input(&first_message.witness_multioracle_commitment);
 
-    let beta = prng.get_challenge();
-    let gamma = prng.get_challenge();
+//     let beta = prng.get_challenge();
+//     let gamma = prng.get_challenge();
 
-    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
-        beta,
-        gamma,
-    };
+//     let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
+//         beta,
+//         gamma,
+//     };
 
-    let (second_state, second_message) = prover.second_step_from_first_step(
-        first_state, 
-        first_verifier_message, 
-        &permutations, 
-        &worker
-    )?;
+//     let (second_state, second_message) = prover.second_step_from_first_step(
+//         first_state, 
+//         first_verifier_message, 
+//         &permutations, 
+//         &worker
+//     )?;
 
-    println!("Second message");
+//     println!("Second message");
 
-    prng.commit_input(&second_message.grand_product_oracle_commitment);
+//     prng.commit_input(&second_message.grand_product_oracle_commitment);
 
-    let alpha = prng.get_challenge();
+//     let alpha = prng.get_challenge();
 
-    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-    };
+//     let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//     };
 
-    let (third_state, third_message) = prover.third_step_from_second_step(
-        second_state, 
-        second_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
+//     let (third_state, third_message) = prover.third_step_from_second_step(
+//         second_state, 
+//         second_verifier_message, 
+//         &setup_multioracle, 
+//         &worker
+//     )?;
 
-    println!("Third message");
+//     println!("Third message");
 
-    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
+//     prng.commit_input(&third_message.quotient_poly_oracle_commitment);
 
-    let z = prng.get_challenge();
+//     let z = prng.get_challenge();
 
-    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-    };
+//     let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//         z,
+//     };
 
-    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-        third_state, 
-        third_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
+//     let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
+//         third_state, 
+//         third_verifier_message, 
+//         &setup_multioracle, 
+//         &worker
+//     )?;
 
-    println!("Fourth message");
+//     println!("Fourth message");
 
-    let mut wire_values_at_z = fourth_message.wire_values_at_z;
-    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
+//     let mut wire_values_at_z = fourth_message.wire_values_at_z;
+//     wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
+//     let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
 
-    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
-    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
+//     let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
+//     wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
+//     let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
 
-    for w in wire_values_at_z.iter()
-        .chain(&wire_values_at_z_omega)
-        .chain(&Some(fourth_message.grand_product_at_z))
-        .chain(&Some(fourth_message.grand_product_at_z_omega))
-        .chain(&fourth_message.quotient_polynomial_parts_at_z)
-        .chain(&fourth_message.setup_values_at_z)
-        .chain(&fourth_message.permutation_polynomials_at_z)
-        .chain(&fourth_message.gate_selector_polynomials_at_z) 
-    {
-        prng.commit_input(&w);
-    }
+//     for w in wire_values_at_z.iter()
+//         .chain(&wire_values_at_z_omega)
+//         .chain(&Some(fourth_message.grand_product_at_z))
+//         .chain(&Some(fourth_message.grand_product_at_z_omega))
+//         .chain(&fourth_message.quotient_polynomial_parts_at_z)
+//         .chain(&fourth_message.setup_values_at_z)
+//         .chain(&fourth_message.permutation_polynomials_at_z)
+//         .chain(&fourth_message.gate_selector_polynomials_at_z) 
+//     {
+//         prng.commit_input(&w);
+//     }
 
-    let v = prng.get_challenge();
+//     let v = prng.get_challenge();
 
-    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-        v,
-    };
+//     let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//         z,
+//         v,
+//     };
 
-    let fifth_message = prover.fifth_step_from_fourth_step(
-        fourth_state, 
-        fourth_verifier_message, 
-        &setup_multioracle, 
-        &mut prng,
-        &worker
-    )?;
+//     let fifth_message = prover.fifth_step_from_fourth_step(
+//         fourth_state, 
+//         fourth_verifier_message, 
+//         &setup_multioracle, 
+//         &mut prng,
+//         &worker
+//     )?;
 
-    println!("Fifth message");
+//     println!("Fifth message");
 
-    println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
+//     println!("Proving {} gates taken {:?}", num_gates, start.elapsed());
 
-    Ok(())
-}
+//     Ok(())
+// }
 
-#[cfg(feature = "redshift")]
-pub fn prove_with_hash_counting_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
-    circuit: &C
-) -> Result<(), SynthesisError> {
-    use super::*;
-    use rescue_hash::RescueEngine;
-    use rescue_hash::bn256::Bn256RescueParams;
+// #[cfg(feature = "redshift")]
+// pub fn prove_with_hash_counting_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG: MainGateEquation, C: Circuit<bn256::Bn256>>(
+//     circuit: &C
+// ) -> Result<(), SynthesisError> {
+//     use super::*;
+//     use rescue_hash::RescueEngine;
+//     use rescue_hash::bn256::Bn256RescueParams;
 
-    use super::redshift::setup::*;
-    use super::redshift::prover::*;
-    use super::redshift::tree_hash::*;
+//     use super::redshift::setup::*;
+//     use super::redshift::prover::*;
+//     use super::redshift::tree_hash::*;
 
-    use crate::worker::Worker;
+//     use crate::worker::Worker;
 
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
+//     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+//     circuit.synthesize(&mut assembly)?;
+//     assembly.finalize();
 
-    let num_gates = assembly.n();
+//     let num_gates = assembly.n();
 
-    println!("Performing setup for {} gates", num_gates);
+//     println!("Performing setup for {} gates", num_gates);
 
-    let params = Bn256RescueParams::new_checked_2_into_1(); 
+//     let params = Bn256RescueParams::new_checked_2_into_1(); 
 
-    use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
+//     use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
 
-    let mut prng = rescue_transcript::RescueTranscript::<bn256::Bn256>::from_params(&params);
+//     let mut prng = rescue_transcript::RescueTranscript::<bn256::Bn256>::from_params(&params);
 
-    let hasher = CountingHash::<bn256::Bn256>::new();
+//     let hasher = CountingHash::<bn256::Bn256>::new();
 
-    let worker = Worker::new();
+//     let worker = Worker::new();
 
-    let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-        assembly,
-        hasher.clone(),
-        &worker
-    )?;
+//     let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
+//         assembly,
+//         hasher.clone(),
+//         &worker
+//     )?;
 
-    println!("Setup is done");
+//     println!("Setup is done");
 
-    // cut permutations
-    for p in permutations.iter_mut() {
-        p.pop_last().unwrap();
-    }
+//     // cut permutations
+//     for p in permutations.iter_mut() {
+//         p.pop_last().unwrap();
+//     }
 
-    let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
-    circuit.synthesize(&mut assembly)?;
-    assembly.finalize();
+//     let mut assembly = TrivialAssembly::<bn256::Bn256, P, MG>::new();
+//     circuit.synthesize(&mut assembly)?;
+//     assembly.finalize();
 
-    let num_gates = assembly.n();
+//     let num_gates = assembly.n();
 
-    let start = std::time::Instant::now();
+//     let start = std::time::Instant::now();
 
-    let (prover, first_state, first_message) = RedshiftProver::first_step(
-        assembly, 
-        hasher.clone(), 
-        &worker
-    )?;
+//     let (prover, first_state, first_message) = RedshiftProver::first_step(
+//         assembly, 
+//         hasher.clone(), 
+//         &worker
+//     )?;
 
-    println!("First message");
+//     println!("First message");
 
-    for input in first_message.input_values.iter() {
-        prng.commit_input(input);
-    }
+//     for input in first_message.input_values.iter() {
+//         prng.commit_input(input);
+//     }
 
-    prng.commit_input(&first_message.witness_multioracle_commitment);
+//     prng.commit_input(&first_message.witness_multioracle_commitment);
 
-    let beta = prng.get_challenge();
-    let gamma = prng.get_challenge();
+//     let beta = prng.get_challenge();
+//     let gamma = prng.get_challenge();
 
-    let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
-        beta,
-        gamma,
-    };
+//     let first_verifier_message = FirstVerifierMessage::<bn256::Bn256> {
+//         beta,
+//         gamma,
+//     };
 
-    let (second_state, second_message) = prover.second_step_from_first_step(
-        first_state, 
-        first_verifier_message, 
-        &permutations, 
-        &worker
-    )?;
+//     let (second_state, second_message) = prover.second_step_from_first_step(
+//         first_state, 
+//         first_verifier_message, 
+//         &permutations, 
+//         &worker
+//     )?;
 
-    println!("Second message");
+//     println!("Second message");
 
-    prng.commit_input(&second_message.grand_product_oracle_commitment);
+//     prng.commit_input(&second_message.grand_product_oracle_commitment);
 
-    let alpha = prng.get_challenge();
+//     let alpha = prng.get_challenge();
 
-    let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-    };
+//     let second_verifier_message = SecondVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//     };
 
-    let (third_state, third_message) = prover.third_step_from_second_step(
-        second_state, 
-        second_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
+//     let (third_state, third_message) = prover.third_step_from_second_step(
+//         second_state, 
+//         second_verifier_message, 
+//         &setup_multioracle, 
+//         &worker
+//     )?;
 
-    println!("Third message");
+//     println!("Third message");
 
-    prng.commit_input(&third_message.quotient_poly_oracle_commitment);
+//     prng.commit_input(&third_message.quotient_poly_oracle_commitment);
 
-    let z = prng.get_challenge();
+//     let z = prng.get_challenge();
 
-    let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-    };
+//     let third_verifier_message = ThirdVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//         z,
+//     };
 
-    let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-        third_state, 
-        third_verifier_message, 
-        &setup_multioracle, 
-        &worker
-    )?;
+//     let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
+//         third_state, 
+//         third_verifier_message, 
+//         &setup_multioracle, 
+//         &worker
+//     )?;
 
-    println!("Fourth message");
+//     println!("Fourth message");
 
-    let mut wire_values_at_z = fourth_message.wire_values_at_z;
-    wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
+//     let mut wire_values_at_z = fourth_message.wire_values_at_z;
+//     wire_values_at_z.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
+//     let wire_values_at_z: Vec<_> = wire_values_at_z.into_iter().map(|el| el.1).collect();
 
-    let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
-    wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
+//     let mut wire_values_at_z_omega = fourth_message.wire_values_at_z_omega;
+//     wire_values_at_z_omega.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
+//     let wire_values_at_z_omega: Vec<_> = wire_values_at_z_omega.into_iter().map(|el| el.1).collect();
 
-    for w in wire_values_at_z.iter()
-        .chain(&wire_values_at_z_omega)
-        .chain(&Some(fourth_message.grand_product_at_z))
-        .chain(&Some(fourth_message.grand_product_at_z_omega))
-        .chain(&fourth_message.quotient_polynomial_parts_at_z)
-        .chain(&fourth_message.setup_values_at_z)
-        .chain(&fourth_message.permutation_polynomials_at_z)
-        .chain(&fourth_message.gate_selector_polynomials_at_z) 
-    {
-        prng.commit_input(&w);
-    }
+//     for w in wire_values_at_z.iter()
+//         .chain(&wire_values_at_z_omega)
+//         .chain(&Some(fourth_message.grand_product_at_z))
+//         .chain(&Some(fourth_message.grand_product_at_z_omega))
+//         .chain(&fourth_message.quotient_polynomial_parts_at_z)
+//         .chain(&fourth_message.setup_values_at_z)
+//         .chain(&fourth_message.permutation_polynomials_at_z)
+//         .chain(&fourth_message.gate_selector_polynomials_at_z) 
+//     {
+//         prng.commit_input(&w);
+//     }
 
-    let v = prng.get_challenge();
+//     let v = prng.get_challenge();
 
-    let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
-        alpha,
-        beta,
-        gamma,
-        z,
-        v,
-    };
+//     let fourth_verifier_message = FourthVerifierMessage::<bn256::Bn256> {
+//         alpha,
+//         beta,
+//         gamma,
+//         z,
+//         v,
+//     };
 
-    let fifth_message = prover.fifth_step_from_fourth_step(
-        fourth_state, 
-        fourth_verifier_message, 
-        &setup_multioracle, 
-        &mut prng,
-        &worker
-    )?;
+//     let fifth_message = prover.fifth_step_from_fourth_step(
+//         fourth_state, 
+//         fourth_verifier_message, 
+//         &setup_multioracle, 
+//         &mut prng,
+//         &worker
+//     )?;
 
-    println!("Fifth message");
+//     println!("Fifth message");
 
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use super::redshift::tree_hash::COUNTER;
+//     use std::sync::atomic::{AtomicUsize, Ordering};
+//     use super::redshift::tree_hash::COUNTER;
 
-    let num_hashes = COUNTER.load(Ordering::Relaxed);
+//     let num_hashes = COUNTER.load(Ordering::Relaxed);
 
-    println!("Num hash invocations: {}", num_hashes);
+//     println!("Num hash invocations: {}", num_hashes);
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 
-#[cfg(test)]
-mod test {
-    use super::*;
+// #[cfg(test)]
+// mod test {
+//     use super::*;
 
-    use crate::pairing::Engine;
-    use crate::pairing::ff::PrimeField;
+//     use crate::pairing::Engine;
+//     use crate::pairing::ff::PrimeField;
 
-    struct TestCircuit4<E:Engine>{
-        _marker: PhantomData<E>
-    }
+//     struct TestCircuit4<E:Engine>{
+//         _marker: PhantomData<E>
+//     }
 
-    impl<E: Engine> Circuit<E> for TestCircuit4<E> {
-        fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-            let a = cs.alloc(|| {
-                Ok(E::Fr::from_str("10").unwrap())
-            })?;
+//     impl<E: Engine> Circuit<E> for TestCircuit4<E> {
+//         fn synthesize<CS: ConstraintSystem<E>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+//             let a = cs.alloc(|| {
+//                 Ok(E::Fr::from_str("10").unwrap())
+//             })?;
 
-            println!("A = {:?}", a);
+//             println!("A = {:?}", a);
 
-            let b = cs.alloc(|| {
-                Ok(E::Fr::from_str("20").unwrap())
-            })?;
+//             let b = cs.alloc(|| {
+//                 Ok(E::Fr::from_str("20").unwrap())
+//             })?;
 
-            println!("B = {:?}", b);
+//             println!("B = {:?}", b);
 
-            let c = cs.alloc(|| {
-                Ok(E::Fr::from_str("200").unwrap())
-            })?;
+//             let c = cs.alloc(|| {
+//                 Ok(E::Fr::from_str("200").unwrap())
+//             })?;
 
-            println!("C = {:?}", c);
+//             println!("C = {:?}", c);
 
-            let d = cs.alloc(|| {
-                Ok(E::Fr::from_str("100").unwrap())
-            })?;
+//             let d = cs.alloc(|| {
+//                 Ok(E::Fr::from_str("100").unwrap())
+//             })?;
 
-            println!("D = {:?}", d);
+//             println!("D = {:?}", d);
 
-            let one = E::Fr::one();
+//             let one = E::Fr::one();
 
-            let mut two = one;
-            two.double();
+//             let mut two = one;
+//             two.double();
 
-            let mut negative_one = one;
-            negative_one.negate();
+//             let mut negative_one = one;
+//             negative_one.negate();
 
-            // 2a - b = 0
+//             // 2a - b = 0
 
-            let two_a = ArithmeticTerm::from_variable_and_coeff(a, two);
-            let minus_b = ArithmeticTerm::from_variable_and_coeff(b, negative_one);
-            let mut term = MainGateTerm::new();
-            term.add_assign(two_a);
-            term.add_assign(minus_b);
+//             let two_a = ArithmeticTerm::from_variable_and_coeff(a, two);
+//             let minus_b = ArithmeticTerm::from_variable_and_coeff(b, negative_one);
+//             let mut term = MainGateTerm::new();
+//             term.add_assign(two_a);
+//             term.add_assign(minus_b);
 
-            cs.allocate_main_gate(term)?;
+//             cs.allocate_main_gate(term)?;
 
-            // c - a*b == 0 
+//             // c - a*b == 0 
 
-            let mut ab_term = ArithmeticTerm::from_variable(a).mul_by_variable(b);
-            ab_term.scale(&negative_one);
-            let c_term = ArithmeticTerm::from_variable(c);
-            let mut term = MainGateTerm::new();
-            term.add_assign(c_term);
-            term.add_assign(ab_term);
+//             let mut ab_term = ArithmeticTerm::from_variable(a).mul_by_variable(b);
+//             ab_term.scale(&negative_one);
+//             let c_term = ArithmeticTerm::from_variable(c);
+//             let mut term = MainGateTerm::new();
+//             term.add_assign(c_term);
+//             term.add_assign(ab_term);
 
-            cs.allocate_main_gate(term)?;
+//             cs.allocate_main_gate(term)?;
 
-            // d - 100 == 0 
+//             // d - 100 == 0 
 
-            let hundred = ArithmeticTerm::constant(E::Fr::from_str("100").unwrap());
-            let d_term = ArithmeticTerm::from_variable(d);
-            let mut term = MainGateTerm::new();
-            term.add_assign(d_term);
-            term.sub_assign(hundred);
+//             let hundred = ArithmeticTerm::constant(E::Fr::from_str("100").unwrap());
+//             let d_term = ArithmeticTerm::from_variable(d);
+//             let mut term = MainGateTerm::new();
+//             term.add_assign(d_term);
+//             term.sub_assign(hundred);
 
-            cs.allocate_main_gate(term)?;
+//             cs.allocate_main_gate(term)?;
 
-            let gamma = cs.alloc_input(|| {
-                Ok(E::Fr::from_str("20").unwrap())
-            })?;
+//             let gamma = cs.alloc_input(|| {
+//                 Ok(E::Fr::from_str("20").unwrap())
+//             })?;
 
-            // gamma - b == 0 
+//             // gamma - b == 0 
 
-            let gamma_term = ArithmeticTerm::from_variable(gamma);
-            let b_term = ArithmeticTerm::from_variable(b);
-            let mut term = MainGateTerm::new();
-            term.add_assign(gamma_term);
-            term.sub_assign(b_term);
+//             let gamma_term = ArithmeticTerm::from_variable(gamma);
+//             let b_term = ArithmeticTerm::from_variable(b);
+//             let mut term = MainGateTerm::new();
+//             term.add_assign(gamma_term);
+//             term.sub_assign(b_term);
 
-            cs.allocate_main_gate(term)?;
+//             cs.allocate_main_gate(term)?;
 
-            // 2a
-            let mut term = MainGateTerm::<E>::new();
-            term.add_assign(ArithmeticTerm::from_variable_and_coeff(a, two));
+//             // 2a
+//             let mut term = MainGateTerm::<E>::new();
+//             term.add_assign(ArithmeticTerm::from_variable_and_coeff(a, two));
 
-            let dummy = CS::get_dummy_variable();
+//             let dummy = CS::get_dummy_variable();
 
-            // 2a - d_next = 0
+//             // 2a - d_next = 0
 
-            let (vars, mut coeffs) = CS::MainGate::format_term(term, dummy)?;
-            *coeffs.last_mut().unwrap() = negative_one;
+//             let (vars, mut coeffs) = CS::MainGate::format_term(term, dummy)?;
+//             *coeffs.last_mut().unwrap() = negative_one;
 
-            // here d is equal = 2a, so we need to place b there
-            // and compensate it with -b somewhere before
+//             // here d is equal = 2a, so we need to place b there
+//             // and compensate it with -b somewhere before
 
-            cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
-                &coeffs, 
-                &vars, 
-                &[]
-            )?;
+//             cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
+//                 &coeffs, 
+//                 &vars, 
+//                 &[]
+//             )?;
 
-            let mut term = MainGateTerm::<E>::new();
-            term.add_assign(ArithmeticTerm::from_variable(b));
+//             let mut term = MainGateTerm::<E>::new();
+//             term.add_assign(ArithmeticTerm::from_variable(b));
 
-            // b + 0 + 0 - b = 0
-            let (mut vars, mut coeffs) = CS::MainGate::format_term(term, dummy)?;
-            coeffs[3] = negative_one;
-            vars[3] = b;
+//             // b + 0 + 0 - b = 0
+//             let (mut vars, mut coeffs) = CS::MainGate::format_term(term, dummy)?;
+//             coeffs[3] = negative_one;
+//             vars[3] = b;
 
-            cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
-                &coeffs, 
-                &vars, 
-                &[]
-            )?;
+//             cs.new_single_gate_for_trace_step(CS::MainGate::static_description(), 
+//                 &coeffs, 
+//                 &vars, 
+//                 &[]
+//             )?;
 
-            Ok(())
-        }
-    }
+//             Ok(())
+//         }
+//     }
 
-    #[test]
-    fn test_trivial_circuit_with_gate_agnostic_cs() {
-        use crate::pairing::bn256::{Bn256, Fr};
-        use crate::worker::Worker;
+//     #[test]
+//     fn test_trivial_circuit_with_gate_agnostic_cs() {
+//         use crate::pairing::bn256::{Bn256, Fr};
+//         use crate::worker::Worker;
 
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
+//         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
 
-        let circuit = TestCircuit4::<Bn256> {
-            _marker: PhantomData
-        };
+//         let circuit = TestCircuit4::<Bn256> {
+//             _marker: PhantomData
+//         };
 
-        circuit.synthesize(&mut assembly).expect("must work");
+//         circuit.synthesize(&mut assembly).expect("must work");
 
-        assert!(assembly.constraints.len() == 1);
+//         assert!(assembly.constraints.len() == 1);
 
-        // println!("Assembly state polys = {:?}", assembly.storage.state_map);
+//         // println!("Assembly state polys = {:?}", assembly.storage.state_map);
 
-        // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
+//         // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
 
-        println!("Assembly contains {} gates", assembly.n());
+//         println!("Assembly contains {} gates", assembly.n());
         
-        assert!(assembly.is_satisfied());
+//         assert!(assembly.is_satisfied());
 
-        assembly.finalize();
+//         assembly.finalize();
 
-        let worker = Worker::new();
+//         let worker = Worker::new();
 
-        let (_storage, _permutation_polys) = assembly.perform_setup(&worker).unwrap();
-    }
+//         let (_storage, _permutation_polys) = assembly.perform_setup(&worker).unwrap();
+//     }
 
-    #[test]
-    #[cfg(feature = "redshift")]
-    fn test_make_setup_for_trivial_circuit() {
-        use crate::pairing::bn256::{Bn256, Fr};
-        use crate::worker::Worker;
+//     #[test]
+//     #[cfg(feature = "redshift")]
+//     fn test_make_setup_for_trivial_circuit() {
+//         use crate::pairing::bn256::{Bn256, Fr};
+//         use crate::worker::Worker;
 
-        use super::super::redshift::setup::*;
-        use super::super::redshift::prover::*;
-        use super::super::redshift::tree_hash::*;
-        use rescue_hash::bn256::Bn256RescueParams;
+//         use super::super::redshift::setup::*;
+//         use super::super::redshift::prover::*;
+//         use super::super::redshift::tree_hash::*;
+//         use rescue_hash::bn256::Bn256RescueParams;
 
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
+//         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
 
-        let circuit = TestCircuit4::<Bn256> {
-            _marker: PhantomData
-        };
+//         let circuit = TestCircuit4::<Bn256> {
+//             _marker: PhantomData
+//         };
 
-        circuit.synthesize(&mut assembly).expect("must work");
+//         circuit.synthesize(&mut assembly).expect("must work");
 
-        assert!(assembly.constraints.len() == 1);
+//         assert!(assembly.constraints.len() == 1);
 
-        // println!("Assembly state polys = {:?}", assembly.storage.state_map);
+//         // println!("Assembly state polys = {:?}", assembly.storage.state_map);
 
-        // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
+//         // println!("Assembly setup polys = {:?}", assembly.storage.setup_map);    
 
-        println!("Assembly contains {} gates", assembly.n());
+//         println!("Assembly contains {} gates", assembly.n());
         
-        assert!(assembly.is_satisfied());
+//         assert!(assembly.is_satisfied());
 
-        assembly.finalize();
+//         assembly.finalize();
 
-        let params = Bn256RescueParams::new_checked_2_into_1();
-        let hasher = RescueBinaryTreeHasher::<Bn256>::new(&params);
+//         let hasher = BinaryTreeHasher::<Bn256>::new();
 
-        let worker = Worker::new();
+//         let worker = Worker::new();
 
-        let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
-            assembly,
-            hasher.clone(),
-            &worker
-        ).unwrap();
+//         let (setup_multioracle, mut permutations) = SetupMultioracle::from_assembly(
+//             assembly,
+//             hasher.clone(),
+//             &worker
+//         ).unwrap();
 
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
+//         let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNextEquation>::new();
 
-        let circuit = TestCircuit4::<Bn256> {
-            _marker: PhantomData
-        };
+//         let circuit = TestCircuit4::<Bn256> {
+//             _marker: PhantomData
+//         };
 
-        circuit.synthesize(&mut assembly).expect("must work");
+//         circuit.synthesize(&mut assembly).expect("must work");
 
-        assembly.finalize();
+//         assembly.finalize();
 
-        let (prover, first_state, first_message) = RedshiftProver::first_step(
-            assembly, 
-            hasher.clone(), 
-            &worker
-        ).unwrap();
+//         let (prover, first_state, first_message) = RedshiftProver::first_step(
+//             assembly, 
+//             hasher.clone(), 
+//             &worker
+//         ).unwrap();
 
-        let first_verifier_message = FirstVerifierMessage::<Bn256> {
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-        };
+//         let first_verifier_message = FirstVerifierMessage::<Bn256> {
+//             beta: Fr::from_str("123").unwrap(),
+//             gamma: Fr::from_str("456").unwrap(),
+//         };
 
-        // cut permutations
+//         // cut permutations
 
-        for p in permutations.iter_mut() {
-            p.pop_last().unwrap();
-        }
+//         for p in permutations.iter_mut() {
+//             p.pop_last().unwrap();
+//         }
 
-        let (second_state, second_message) = prover.second_step_from_first_step(
-            first_state, 
-            first_verifier_message, 
-            &permutations, 
-            &worker
-        ).unwrap();
+//         let (second_state, second_message) = prover.second_step_from_first_step(
+//             first_state, 
+//             first_verifier_message, 
+//             &permutations, 
+//             &worker
+//         ).unwrap();
 
-        let second_verifier_message = SecondVerifierMessage::<Bn256> {
-            alpha: Fr::from_str("789").unwrap(),
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-        };
+//         let second_verifier_message = SecondVerifierMessage::<Bn256> {
+//             alpha: Fr::from_str("789").unwrap(),
+//             beta: Fr::from_str("123").unwrap(),
+//             gamma: Fr::from_str("456").unwrap(),
+//         };
 
-        let (third_state, third_message) = prover.third_step_from_second_step(
-            second_state, 
-            second_verifier_message, 
-            &setup_multioracle, 
-            &worker
-        ).unwrap();
+//         let (third_state, third_message) = prover.third_step_from_second_step(
+//             second_state, 
+//             second_verifier_message, 
+//             &setup_multioracle, 
+//             &worker
+//         ).unwrap();
 
-        let third_verifier_message = ThirdVerifierMessage::<Bn256> {
-            alpha: Fr::from_str("789").unwrap(),
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-            z: Fr::from_str("1337").unwrap()
-        };
+//         let third_verifier_message = ThirdVerifierMessage::<Bn256> {
+//             alpha: Fr::from_str("789").unwrap(),
+//             beta: Fr::from_str("123").unwrap(),
+//             gamma: Fr::from_str("456").unwrap(),
+//             z: Fr::from_str("1337").unwrap()
+//         };
 
-        let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
-            third_state, 
-            third_verifier_message, 
-            &setup_multioracle, 
-            &worker
-        ).unwrap();
+//         let (fourth_state, fourth_message) = prover.fourth_step_from_third_step(
+//             third_state, 
+//             third_verifier_message, 
+//             &setup_multioracle, 
+//             &worker
+//         ).unwrap();
 
-        let fourth_verifier_message = FourthVerifierMessage::<Bn256> {
-            alpha: Fr::from_str("789").unwrap(),
-            beta: Fr::from_str("123").unwrap(),
-            gamma: Fr::from_str("456").unwrap(),
-            z: Fr::from_str("1337").unwrap(),
-            v: Fr::from_str("97531").unwrap(),
-        };
+//         let fourth_verifier_message = FourthVerifierMessage::<Bn256> {
+//             alpha: Fr::from_str("789").unwrap(),
+//             beta: Fr::from_str("123").unwrap(),
+//             gamma: Fr::from_str("456").unwrap(),
+//             z: Fr::from_str("1337").unwrap(),
+//             v: Fr::from_str("97531").unwrap(),
+//         };
 
-        use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
+//         use crate::plonk::commitments::transcript::{Prng, rescue_transcript};
 
-        let mut prng = rescue_transcript::RescueTranscript::<Bn256>::from_params(&params);
-        prng.commit_input(&Fr::from_str("97531").unwrap());
+//         let mut prng = rescue_transcript::RescueTranscript::<Bn256>::from_params(&params);
+//         prng.commit_input(&Fr::from_str("97531").unwrap());
 
-        let fifth_message = prover.fifth_step_from_fourth_step(
-            fourth_state, 
-            fourth_verifier_message, 
-            &setup_multioracle, 
-            &mut prng,
-            &worker
-        ).unwrap();
-    }
-}
+//         let fifth_message = prover.fifth_step_from_fourth_step(
+//             fourth_state, 
+//             fourth_verifier_message, 
+//             &setup_multioracle, 
+//             &mut prng,
+//             &worker
+//         ).unwrap();
+//     }
+// }

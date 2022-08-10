@@ -1424,11 +1424,6 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                     fri_queries.push(query);
             }
 
-            use std::sync::atomic::{AtomicUsize, Ordering};
-
-            let value = super::tree_hash::COUNTER.load(Ordering::SeqCst);
-            super::tree_hash::COUNTER.fetch_sub(value, Ordering::SeqCst);
-
             let hasher = setup.tree.tree_hasher.clone();
 
             let _ = BinaryTree::verify_multiquery(
@@ -1469,10 +1464,6 @@ impl<E: Engine, H: BinaryTreeHasher<E::Fr>> RedshiftProver<E, H> {
                         &hasher
                     );
             }
-
-            let value = super::tree_hash::COUNTER.load(Ordering::SeqCst);
-
-            println!("Single query taken {} hashes", value);
         }
 
         Ok(message)

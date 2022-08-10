@@ -21,6 +21,7 @@ pub trait FriProof<F: PrimeField, I: IOP<F>> {
 
 pub trait FriPrecomputations<F: PrimeField> {
     fn new_for_domain_size(size: usize) -> Self;
+    fn omegas_inv_bitreversed(&self) -> &[F];
     fn omegas_inv_ref(&self) -> &[F];
     fn domain_size(&self) -> usize;
 }

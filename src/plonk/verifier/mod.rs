@@ -396,6 +396,7 @@ pub fn verify_nonhomomorphic<E: Engine, S: CommitmentScheme<E::Fr, Prng = T>, T:
     Ok(valid)
 }
 
+#[track_caller]
 pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng = T>, T: Transcript<E::Fr, Input = S::Commitment>>(
     setup: &PlonkSetup<E, S>,
     proof: &PlonkChunkedNonhomomorphicProof<E, S>, 
@@ -637,19 +638,24 @@ pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng 
         &proof.a_commitment,
         &proof.b_commitment,
         &proof.c_commitment,
+
         &setup.q_l,
         &setup.q_r,
         &setup.q_o,
         &setup.q_m,
         &setup.q_c,
+
         &setup.s_id,
         &setup.sigma_1,
         &setup.sigma_2,
         &setup.sigma_3,
+
         &proof.z_1_commitment,
         &proof.z_2_commitment,
+
         &proof.z_1_commitment,
         &proof.z_2_commitment,
+
         &proof.t_low_commitment,
         &proof.t_mid_commitment,
         &proof.t_high_commitment,
@@ -659,19 +665,24 @@ pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng 
         a_at_z,
         b_at_z,
         c_at_z,
+
         q_l_at_z,
         q_r_at_z,
         q_o_at_z,
         q_m_at_z,
         q_c_at_z,
+
         s_id_at_z,
         sigma_1_at_z,
         sigma_2_at_z,
         sigma_3_at_z,
+
         z_1_at_z,
         z_2_at_z,
+
         z_1_shifted_at_z,
         z_2_shifted_at_z,
+
         t_low_at_z,
         t_mid_at_z,
         t_high_at_z,
@@ -709,7 +720,14 @@ pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng 
         return Ok(false);
     }
 
-    let valid = committer.verify_multiple_openings(commitments, opening_points, &claimed_values, aggregation_challenge, &proof.openings_proof, &mut transcript);
+    let valid = committer.verify_multiple_openings(
+        commitments, 
+        opening_points, 
+        &claimed_values, 
+        aggregation_challenge, 
+        &proof.openings_proof, 
+        &mut transcript
+    );
 
     if !valid {
         println!("Multiopening is invalid");
@@ -933,8 +951,8 @@ mod test {
                 Ok(E::Fr::one())
             })?;
 
-            cs.enforce_zero_2((a, CS::ONE), (one, negative_one))?;
-            cs.enforce_zero_2((b, CS::ONE), (one, negative_one))?;
+            cs.enforce_constant(a, E::Fr::one())?;
+            cs.enforce_constant(b, E::Fr::one())?;
 
             let mut c = cs.alloc(|| {
                 Ok(two)
@@ -1190,7 +1208,7 @@ mod test {
         };
 
         let circuit = BenchmarkCircuit::<Transparent252> {
-            num_steps: 1_000_000,
+            num_steps: 20,
             _marker: PhantomData
         };
 
@@ -1251,6 +1269,7 @@ mod test {
         type Iop = TrivialBlake2sIOP<Fr>;
         type Fri = NaiveFriIop<Fr, Iop>;
         type Committer = StatelessTransparentCommitter<Fr, Fri, Blake2sTranscript<Fr>>;
+        let params = ();
 
         let mut negative_one = Fr::one();
         negative_one.negate();
@@ -1259,12 +1278,12 @@ mod test {
         let meta = TransparentCommitterParameters {
             lde_factor: 16,
             num_queries: 10,
-            output_coeffs_at_degree_plus_one: 16,
-            fri_params: ()
+            output_coeffs_at_degree_plus_one: 2,
+            fri_params: params
         };
 
         let circuit = BenchmarkCircuit::<Transparent252> {
-            num_steps: 1_000_000,
+            num_steps: 20,
             _marker: PhantomData
         };
 
@@ -1292,6 +1311,9 @@ mod test {
         let proof = prove_nonhomomorphic_chunked::<Transparent252, Committer, Blake2sTranscript::<Fr>, _>(&circuit, &aux, meta.clone()).unwrap();
         println!("Proof taken {:?}", start.elapsed());
 
+        let proof_size = proof.estimate_proof_size();
+        dbg!(&proof_size);
+
         println!("Start verifying");
         let start = Instant::now();
         let valid = verify_nonhomomorphic_chunked::<Transparent252, Committer, Blake2sTranscript::<Fr>>(&setup, &proof, meta).unwrap();
@@ -1299,6 +1321,87 @@ mod test {
 
         assert!(valid);
     }
+
+
+    #[test]
+    fn test_bench_chunked_proof_on_transparent_engine_over_sizes() {
+        use crate::plonk::transparent_engine::proth_engine::*;
+        use crate::plonk::utils::*;
+        use crate::plonk::commitments::transparent::fri::*;
+        use crate::plonk::commitments::transparent::iop::*;
+        use crate::plonk::commitments::transcript::*;
+        use crate::plonk::commitments::transparent::fri::naive_fri::naive_fri::*;
+        use crate::plonk::commitments::transparent::iop::blake2s_trivial_iop::*;
+        use crate::plonk::commitments::*;
+        use crate::plonk::commitments::transparent::*;
+        use crate::plonk::tester::*;
+
+        use std::time::Instant;
+
+        type Iop = TrivialBlake2sIOP<Fr>;
+        type Fri = NaiveFriIop<Fr, Iop>;
+        type Committer = StatelessTransparentCommitter<Fr, Fri, Blake2sTranscript<Fr>>;
+        let params = ();
+
+        let mut negative_one = Fr::one();
+        negative_one.negate();
+        println!("-1 = {}", negative_one);
+
+        let num_queries = 20;
+
+        for log2 in 10..=20 {
+            let size = (1<<log2) - 10;
+
+            let meta = TransparentCommitterParameters {
+                lde_factor: 16,
+                num_queries: num_queries,
+                output_coeffs_at_degree_plus_one: 16,
+                fri_params: params
+            };
+
+            let circuit = BenchmarkCircuit::<Transparent252> {
+                num_steps: size,
+                _marker: PhantomData
+            };
+
+            {
+                let mut tester = TestingAssembly::<Transparent252>::new();
+
+                circuit.synthesize(&mut tester).expect("must synthesize");
+
+                let satisfied = tester.is_satisfied();
+
+                assert!(satisfied);
+
+                println!("Circuit is satisfied");
+            }
+
+            println!("Start setup");
+            let start = Instant::now();
+            let (setup, aux) = setup::<Transparent252, Committer, _>(&circuit, meta.clone()).unwrap();
+            println!("Setup taken {:?}", start.elapsed());
+
+            let size_log_2 = setup.n.next_power_of_two().trailing_zeros();
+
+            println!("Using circuit with N = {}", setup.n);
+
+            println!("Start proving");
+            let start = Instant::now();
+            let proof = prove_nonhomomorphic_chunked::<Transparent252, Committer, Blake2sTranscript::<Fr>, _>(&circuit, &aux, meta.clone()).unwrap();
+            println!("Proof taken {:?} for 2^{}", start.elapsed(), size_log_2);
+
+            let proof_size = proof.estimate_proof_size();
+            println!("Proof size is {} for 2^{} for {} queries", proof_size, size_log_2, num_queries);
+
+            println!("Start verifying");
+            let start = Instant::now();
+            let valid = verify_nonhomomorphic_chunked::<Transparent252, Committer, Blake2sTranscript::<Fr>>(&setup, &proof, meta).unwrap();
+            println!("Verification with unnecessary precomputation taken {:?} for 2^{}", start.elapsed(), size_log_2);
+
+            assert!(valid);
+        }
+    }
+
 
     #[test]
     fn test_poly_eval_correctness() {

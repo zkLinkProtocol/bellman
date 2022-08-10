@@ -104,8 +104,8 @@ impl<F: PrimeField> IopTreeHasher<F> for Blake2sTreeHasher<F> {
 }
 
 pub struct Blake2sIopTree<F: PrimeField> {
-    size: usize,
-    nodes: Vec< < Blake2sTreeHasher<F> as IopTreeHasher<F> >::HashOutput >,
+    pub(crate) size: usize,
+    pub(crate) nodes: Vec< < Blake2sTreeHasher<F> as IopTreeHasher<F> >::HashOutput >,
 }
 
 impl<F: PrimeField> Blake2sIopTree<F> {
@@ -340,9 +340,9 @@ impl<F: PrimeField> Eq for TrivialBlake2sIOP<F> {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrivialBlake2sIopQuery<F: PrimeField> {
-    index: usize,
-    value: Vec<F>,
-    path: Vec<[u8; 32]>,
+    pub(crate) index: usize,
+    pub(crate) value: Vec<F>,
+    pub(crate) path: Vec<[u8; 32]>,
 }
 
 impl<F: PrimeField> IopQuery<F> for TrivialBlake2sIopQuery<F> {

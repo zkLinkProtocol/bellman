@@ -17,8 +17,8 @@ use crate::plonk::utils::*;
 struct GeneratorAssembly<E: Engine> {
     m: usize,
     n: usize,
-    input_gates: Vec<Gate<E>>,
-    aux_gates: Vec<Gate<E>>,
+    input_gates: Vec<Gate<E::Fr>>,
+    aux_gates: Vec<Gate<E::Fr>>,
 
     num_inputs: usize,
     num_aux: usize,
@@ -29,9 +29,6 @@ struct GeneratorAssembly<E: Engine> {
 }
 
 impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
-    const ZERO: Variable = Variable(Index::Aux(1));
-    const ONE: Variable = Variable(Index::Aux(2));
-
     // allocate a variable
     fn alloc<F>(&mut self, _value: F) -> Result<Variable, SynthesisError>
     where
@@ -53,7 +50,7 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
 
         let input_var = Variable(Index::Input(index));
 
-        let gate = Gate::<E>::new_enforce_constant_gate(input_var, Some(E::Fr::zero()), self.dummy_variable());
+        let gate = Gate::<E::Fr>::new_enforce_constant_gate(input_var, Some(E::Fr::zero()), self.dummy_variable());
         self.input_gates.push(gate);
 
         Ok(input_var)
@@ -62,7 +59,7 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
 
     // enforce variable as boolean
     fn enforce_boolean(&mut self, variable: Variable) -> Result<(), SynthesisError> {
-        let gate = Gate::<E>::new_enforce_boolean_gate(variable, self.dummy_variable());
+        let gate = Gate::<E::Fr>::new_enforce_boolean_gate(variable, self.dummy_variable());
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -70,17 +67,20 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
     }
 
     // allocate an abstract gate
-    fn new_gate<F>(&mut self, variables: (Variable, Variable, Variable), coeffs:(E::Fr, E::Fr, E::Fr, E::Fr, E::Fr), values: F) -> Result<(), SynthesisError>
-    where
-        F: FnOnce() -> Result<(E::Fr, E::Fr), SynthesisError>
+    fn new_gate(&mut self, variables: (Variable, Variable, Variable), 
+        coeffs:(E::Fr,E::Fr,E::Fr,E::Fr,E::Fr)) -> Result<(), SynthesisError>
     {
-        unimplemented!()
+        let gate = Gate::<E::Fr>::new_gate(variables, coeffs);
+        self.aux_gates.push(gate);
+        self.n += 1;
+
+        Ok(())
     }
 
     // allocate a constant
     fn enforce_constant(&mut self, variable: Variable, constant: E::Fr) -> Result<(), SynthesisError>
     {
-        let gate = Gate::<E>::new_enforce_constant_gate(variable, Some(constant), self.dummy_variable());
+        let gate = Gate::<E::Fr>::new_enforce_constant_gate(variable, Some(constant), self.dummy_variable());
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -94,7 +94,7 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
         let zero = E::Fr::zero();
         let one = E::Fr::one();
 
-        let gate = Gate::<E>::new_gate((v_0, v_1, self.dummy_variable()), (zero, zero, zero, one, zero));
+        let gate = Gate::<E::Fr>::new_gate((v_0, v_1, self.dummy_variable()), (zero, zero, zero, one, zero));
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -103,7 +103,7 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
 
     // allocate a multiplication gate
     fn enforce_mul_3(&mut self, variables: (Variable, Variable, Variable)) -> Result<(), SynthesisError> {
-        let gate = Gate::<E>::new_multiplication_gate(variables);
+        let gate = Gate::<E::Fr>::new_multiplication_gate(variables);
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -117,7 +117,7 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
         let (c_0, c_1) = coeffs;
         let zero = E::Fr::zero();
 
-        let gate = Gate::<E>::new_gate((v_0, v_1, self.dummy_variable()), (c_0, c_1, zero, zero, zero));
+        let gate = Gate::<E::Fr>::new_gate((v_0, v_1, self.dummy_variable()), (c_0, c_1, zero, zero, zero));
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -127,12 +127,16 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
     // allocate a linear combination gate
     fn enforce_zero_3(&mut self, variables: (Variable, Variable, Variable), coeffs:(E::Fr, E::Fr, E::Fr)) -> Result<(), SynthesisError>
     {
-        let gate = Gate::<E>::new_enforce_zero_gate(variables, coeffs);
+        let gate = Gate::<E::Fr>::new_enforce_zero_gate(variables, coeffs);
         self.aux_gates.push(gate);
         self.n += 1;
 
         Ok(())
         
+    }
+
+    fn get_dummy_variable(&self) -> Variable {
+        self.dummy_variable()
     }
 }
 
@@ -141,12 +145,12 @@ impl<E: Engine> GeneratorAssembly<E> {
         self.n += 1;
         let index = self.n;
 
-        self.aux_gates.push(Gate::<E>::empty());
+        self.aux_gates.push(Gate::<E::Fr>::empty());
 
         index
     }
 
-    fn set_gate(&mut self, gate: Gate<E>, index: usize) {
+    fn set_gate(&mut self, gate: Gate<E::Fr>, index: usize) {
         self.aux_gates[index-1] = gate;
     }
 
@@ -169,20 +173,7 @@ impl<E: Engine> GeneratorAssembly<E> {
         let zero = tmp.alloc(|| Ok(E::Fr::zero())).expect("should have no issues");
         tmp.enforce_constant(zero, E::Fr::zero()).expect("should have no issues");
 
-        let one = tmp.alloc(|| Ok(E::Fr::one())).expect("should have no issues");
-        tmp.enforce_constant(one, E::Fr::one()).expect("should have no issues");
-
-        match (zero, <Self as ConstraintSystem<E>>::ZERO) {
-            (Variable(Index::Aux(1)), Variable(Index::Aux(1))) => {},
-            _ => panic!("zero variable is incorrect")
-        }
-
-        match (one, <Self as ConstraintSystem<E>>::ONE) {
-            (Variable(Index::Aux(2)), Variable(Index::Aux(2))) => {},
-            _ => panic!("one variable is incorrect")
-        }
-
-        match (tmp.dummy_variable(), <Self as ConstraintSystem<E>>::ZERO) {
+        match (tmp.dummy_variable(), zero) {
             (Variable(Index::Aux(1)), Variable(Index::Aux(1))) => {},
             _ => panic!("zero variable is incorrect")
         }
@@ -192,8 +183,7 @@ impl<E: Engine> GeneratorAssembly<E> {
 
     // return variable that is not in a constraint formally, but has some value
     fn dummy_variable(&self) -> Variable {
-        <Self as ConstraintSystem<E>>::ZERO
-        // Variable(Index::Aux(0))
+        Variable(Index::Aux(1))
     }
 
     pub(crate) fn make_circuit_description_polynomials(&self, worker: &Worker) -> Result<(
@@ -208,16 +198,16 @@ impl<E: Engine> GeneratorAssembly<E> {
         let mut q_m = vec![E::Fr::zero(); total_num_gates];
         let mut q_c = vec![E::Fr::zero(); total_num_gates];
 
-        fn coeff_into_field_element<E: Engine>(coeff: & Coeff<E>) -> E::Fr {
+        fn coeff_into_field_element<F: PrimeField>(coeff: & Coeff<F>) -> F {
             match coeff {
                 Coeff::Zero => {
-                    E::Fr::zero()
+                    F::zero()
                 },
                 Coeff::One => {
-                    E::Fr::one()
+                    F::one()
                 },
                 Coeff::NegativeOne => {
-                    let mut tmp = E::Fr::one();
+                    let mut tmp = F::one();
                     tmp.negate();
 
                     tmp
@@ -445,7 +435,7 @@ impl<E: Engine> GeneratorAssembly<E> {
             return;
         }
 
-        let empty_gate = Gate::<E>::new_empty_gate(self.dummy_variable());
+        let empty_gate = Gate::<E::Fr>::new_empty_gate(self.dummy_variable());
 
         let new_aux_len = (n+1).next_power_of_two() - 1 - self.input_gates.len();
 

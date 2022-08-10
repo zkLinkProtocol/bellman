@@ -20,8 +20,8 @@ use crate::plonk::generator::*;
 struct ProvingAssembly<E: Engine> {
     m: usize,
     n: usize,
-    input_gates: Vec<Gate<E>>,
-    aux_gates: Vec<Gate<E>>,
+    input_gates: Vec<Gate<E::Fr>>,
+    aux_gates: Vec<Gate<E::Fr>>,
 
     num_inputs: usize,
     num_aux: usize,
@@ -35,9 +35,6 @@ struct ProvingAssembly<E: Engine> {
 }
 
 impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
-    const ZERO: Variable = Variable(Index::Aux(1));
-    const ONE: Variable = Variable(Index::Aux(2));
-
     // allocate a variable
     fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
@@ -65,7 +62,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
 
         let input_var = Variable(Index::Input(index));
 
-        let gate = Gate::<E>::new_enforce_constant_gate(input_var, Some(E::Fr::zero()), self.dummy_variable());
+        let gate = Gate::<E::Fr>::new_enforce_constant_gate(input_var, Some(E::Fr::zero()), self.dummy_variable());
         // let gate = Gate::<E>::new_enforce_constant_gate(input_var, Some(value), self.dummy_variable());
         self.input_gates.push(gate);
 
@@ -75,7 +72,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
 
     // enforce variable as boolean
     fn enforce_boolean(&mut self, variable: Variable) -> Result<(), SynthesisError> {
-        let gate = Gate::<E>::new_enforce_boolean_gate(variable, self.dummy_variable());
+        let gate = Gate::<E::Fr>::new_enforce_boolean_gate(variable, self.dummy_variable());
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -83,17 +80,20 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
     }
 
     // allocate an abstract gate
-    fn new_gate<F>(&mut self, variables: (Variable, Variable, Variable), coeffs:(E::Fr, E::Fr, E::Fr, E::Fr, E::Fr), values: F) -> Result<(), SynthesisError>
-    where
-        F: FnOnce() -> Result<(E::Fr, E::Fr), SynthesisError>
+    fn new_gate(&mut self, variables: (Variable, Variable, Variable), 
+        coeffs:(E::Fr,E::Fr,E::Fr,E::Fr,E::Fr)) -> Result<(), SynthesisError>
     {
-        unimplemented!()
+        let gate = Gate::<E::Fr>::new_gate(variables, coeffs);
+        self.aux_gates.push(gate);
+        self.n += 1;
+
+        Ok(())
     }
 
     // allocate a constant
     fn enforce_constant(&mut self, variable: Variable, constant: E::Fr) -> Result<(), SynthesisError>
     {
-        let gate = Gate::<E>::new_enforce_constant_gate(variable, Some(constant), self.dummy_variable());
+        let gate = Gate::<E::Fr>::new_enforce_constant_gate(variable, Some(constant), self.dummy_variable());
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -107,7 +107,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
         let zero = E::Fr::zero();
         let one = E::Fr::one();
 
-        let gate = Gate::<E>::new_gate((v_0, v_1, self.dummy_variable()), (zero, zero, zero, one, zero));
+        let gate = Gate::<E::Fr>::new_gate((v_0, v_1, self.dummy_variable()), (zero, zero, zero, one, zero));
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -116,7 +116,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
 
     // allocate a multiplication gate
     fn enforce_mul_3(&mut self, variables: (Variable, Variable, Variable)) -> Result<(), SynthesisError> {
-        let gate = Gate::<E>::new_multiplication_gate(variables);
+        let gate = Gate::<E::Fr>::new_multiplication_gate(variables);
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -130,7 +130,7 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
         let (c_0, c_1) = coeffs;
         let zero = E::Fr::zero();
 
-        let gate = Gate::<E>::new_gate((v_0, v_1, self.dummy_variable()), (c_0, c_1, zero, zero, zero));
+        let gate = Gate::<E::Fr>::new_gate((v_0, v_1, self.dummy_variable()), (c_0, c_1, zero, zero, zero));
         self.aux_gates.push(gate);
         self.n += 1;
 
@@ -140,12 +140,16 @@ impl<E: Engine> ConstraintSystem<E> for ProvingAssembly<E> {
     // allocate a linear combination gate
     fn enforce_zero_3(&mut self, variables: (Variable, Variable, Variable), coeffs:(E::Fr, E::Fr, E::Fr)) -> Result<(), SynthesisError>
     {
-        let gate = Gate::<E>::new_enforce_zero_gate(variables, coeffs);
+        let gate = Gate::<E::Fr>::new_enforce_zero_gate(variables, coeffs);
         self.aux_gates.push(gate);
         self.n += 1;
 
         Ok(())
         
+    }
+
+    fn get_dummy_variable(&self) -> Variable {
+        self.dummy_variable()
     }
 }
 
@@ -154,12 +158,12 @@ impl<E: Engine> ProvingAssembly<E> {
         self.n += 1;
         let index = self.n;
 
-        self.aux_gates.push(Gate::<E>::empty());
+        self.aux_gates.push(Gate::<E::Fr>::empty());
 
         index
     }
 
-    fn set_gate(&mut self, gate: Gate<E>, index: usize) {
+    fn set_gate(&mut self, gate: Gate<E::Fr>, index: usize) {
         self.aux_gates[index-1] = gate;
     }
 
@@ -184,20 +188,7 @@ impl<E: Engine> ProvingAssembly<E> {
         let zero = tmp.alloc(|| Ok(E::Fr::zero())).expect("should have no issues");
         tmp.enforce_constant(zero, E::Fr::zero()).expect("should have no issues");
 
-        let one = tmp.alloc(|| Ok(E::Fr::one())).expect("should have no issues");
-        tmp.enforce_constant(one, E::Fr::one()).expect("should have no issues");
-
-        match (zero, <Self as ConstraintSystem<E>>::ZERO) {
-            (Variable(Index::Aux(1)), Variable(Index::Aux(1))) => {},
-            _ => panic!("zero variable is incorrect")
-        }
-
-        match (one, <Self as ConstraintSystem<E>>::ONE) {
-            (Variable(Index::Aux(2)), Variable(Index::Aux(2))) => {},
-            _ => panic!("one variable is incorrect")
-        }
-
-        match (tmp.dummy_variable(), <Self as ConstraintSystem<E>>::ZERO) {
+        match (tmp.dummy_variable(), zero) {
             (Variable(Index::Aux(1)), Variable(Index::Aux(1))) => {},
             _ => panic!("zero variable is incorrect")
         }
@@ -207,8 +198,7 @@ impl<E: Engine> ProvingAssembly<E> {
 
     // return variable that is not in a constraint formally, but has some value
     fn dummy_variable(&self) -> Variable {
-        <Self as ConstraintSystem<E>>::ZERO
-        // Variable(Index::Aux(0))
+        Variable(Index::Aux(1))
     }
 
     pub(crate) fn make_wire_assingments(&self) -> (Vec<E::Fr>, Vec<E::Fr>, Vec<E::Fr>) {
@@ -267,16 +257,16 @@ impl<E: Engine> ProvingAssembly<E> {
         let mut q_m = vec![E::Fr::zero(); total_num_gates];
         let mut q_c = vec![E::Fr::zero(); total_num_gates];
 
-        fn coeff_into_field_element<E: Engine>(coeff: & Coeff<E>) -> E::Fr {
+        fn coeff_into_field_element<F: PrimeField>(coeff: & Coeff<F>) -> F {
             match coeff {
                 Coeff::Zero => {
-                    E::Fr::zero()
+                    F::zero()
                 },
                 Coeff::One => {
-                    E::Fr::one()
+                    F::one()
                 },
                 Coeff::NegativeOne => {
-                    let mut tmp = E::Fr::one();
+                    let mut tmp = F::one();
                     tmp.negate();
 
                     tmp
@@ -504,7 +494,7 @@ impl<E: Engine> ProvingAssembly<E> {
             return;
         }
 
-        let empty_gate = Gate::<E>::new_empty_gate(self.dummy_variable());
+        let empty_gate = Gate::<E::Fr>::new_empty_gate(self.dummy_variable());
 
         let new_aux_len = (n+1).next_power_of_two() - 1 - self.input_gates.len();
 
@@ -655,6 +645,59 @@ pub struct PlonkChunkedNonhomomorphicProof<E: Engine, S: CommitmentScheme<E::Fr>
     pub t_mid_commitment: S::Commitment,
     pub t_high_commitment: S::Commitment,
     pub openings_proof: S::OpeningProof,
+}
+
+use crate::plonk::commitments::transparent::StatelessTransparentCommitter;
+use crate::plonk::commitments::transparent::iop::blake2s_trivial_iop::TrivialBlake2sIOP;
+use crate::plonk::commitments::transparent::fri::naive_fri::naive_fri::NaiveFriIop;
+
+type Iop<E: Engine> = TrivialBlake2sIOP<E::Fr>;
+type Fri<E: Engine> = NaiveFriIop<E::Fr, Iop<E>>;
+
+impl<E: Engine> PlonkChunkedNonhomomorphicProof<E, StatelessTransparentCommitter<E::Fr, Fri<E>, Blake2sTranscript<E::Fr>>> {
+    pub fn estimate_proof_size(&self) -> usize {
+        let mut proofs_size = 0;
+        let num_poly_oracles = 3 + 5 + 4 + 4 + 3;
+        proofs_size += num_poly_oracles * std::mem::size_of::<E::Fr>(); // openings at z or z*omega
+
+        let num_prover_provided_poly_committments = 8;
+        proofs_size += num_poly_oracles * std::mem::size_of_val(&self.t_low_commitment); // extra oracles
+
+        let num_queries = self.openings_proof.1[0].len();
+        let (q_value, query) = &self.openings_proof.1[0][0];
+        let query_depth_per_poly_oracle = query.path.len();
+        let query_proof_element_size = std::mem::size_of_val(&query.path[0]);
+        let query_element_size = std::mem::size_of_val(&query.value[0]);
+
+        let per_poly_oracle_query_size = query_element_size + (query_proof_element_size * query_depth_per_poly_oracle);
+        proofs_size += num_queries * num_poly_oracles + per_poly_oracle_query_size;
+
+        // now only FRI part remains
+
+        let fri_proof = &self.openings_proof.0;
+        // intermediate oracles
+        proofs_size += fri_proof.roots.len() * std::mem::size_of_val(&fri_proof.roots[0]);
+        // final coefficients
+        proofs_size += fri_proof.final_coefficients.len() * std::mem::size_of_val(&fri_proof.final_coefficients[0]);
+
+        // queries 
+        assert_eq!(num_queries, fri_proof.queries.len());
+        let mut total_queries_size_per_round = 0;
+        for q in fri_proof.queries[0].iter() {
+            let query_depth = query.path.len();
+            let query_proof_element_size = std::mem::size_of_val(&query.path[0]);
+            let query_element_size = std::mem::size_of_val(&query.value[0]);
+            let num_elements = query.value.len();
+            let total = num_elements * query_element_size + query_proof_element_size * query_depth;
+
+            total_queries_size_per_round += total;
+        }
+
+        proofs_size += total_queries_size_per_round * num_queries;
+
+
+        proofs_size
+    }
 }
 
 pub fn prove_nonhomomorphic<E: Engine, S: CommitmentScheme<E::Fr, Prng = T>, T: Transcript<E::Fr, Input = S::Commitment>, C: Circuit<E>>(
@@ -1710,7 +1753,12 @@ pub fn prove_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng =
 
     let mut t_poly_parts = t_poly.break_into_multiples(required_domain_size)?;
 
-    t_poly_parts.pop().expect("last part is irrelevant");
+    let last = t_poly_parts.pop().expect("last part is irrelevant");
+    for el in last.as_ref().iter() {
+        if !el.is_zero() {
+            panic!("T poly degree is too large");
+        }
+    }
     let t_poly_high = t_poly_parts.pop().expect("high exists");
     let t_poly_mid = t_poly_parts.pop().expect("mid exists");
     let t_poly_low = t_poly_parts.pop().expect("low exists");
@@ -1971,19 +2019,24 @@ pub fn prove_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng =
         a_at_z,
         b_at_z,
         c_at_z,
+
         q_l_at_z,
         q_r_at_z,
         q_o_at_z,
         q_m_at_z,
         q_c_at_z,
+
         s_id_at_z,
         sigma_1_at_z,
         sigma_2_at_z,
         sigma_3_at_z,
+
         z_1_at_z,
         z_2_at_z,
+
         z_1_shifted_at_z,
         z_2_shifted_at_z,
+
         t_low_at_z,
         t_mid_at_z,
         t_high_at_z,
