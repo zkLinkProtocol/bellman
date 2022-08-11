@@ -17,7 +17,7 @@ rand = "0.4"
 bit-vec = "0.6"
 cfg-if = "1.*"
 
-pairing = {package = "pairing_ce", version = "0.28.*" }
+pairing = {package = "pairing_ce", version = "0.26.*" }
 # pairing = {package = "pairing_ce", path = "../pairing"}
 byteorder = "1"
 
