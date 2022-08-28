@@ -117,7 +117,7 @@ impl<F: PrimeField> Blake2sIopTree<F> {
     }
 }
 
-use std::time::Instant;
+use crate::Instant;
 
 impl<'a, F: PrimeField> IopTree<F> for Blake2sIopTree<F> {
     type Combiner = TrivialCombiner<F>;

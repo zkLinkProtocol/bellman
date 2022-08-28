@@ -125,7 +125,7 @@ pub fn polynomial_commitment_opening<
     {
         // let poly = parallel_kate_divison::<E, _>(polynomial_coefficients, point);
 
-        // use std::time::Instant;
+        // use crate::Instant;
         // let start = Instant::now();
 
         let poly = kate_divison(
@@ -294,7 +294,7 @@ pub fn mut_distribute_consequitive_powers<'a, F: Field> (
 //     use crate::worker::Worker;
 //     use crate::multiexp::dense_multiexp;
 
-//     use std::time::Instant;
+//     use crate::Instant;
 //     let start = Instant::now();
 
 //     let s: Vec<<G::Scalar as PrimeField>::Repr> = s.into_iter().map(|e| e.into_repr()).collect::<Vec<_>>();
@@ -347,7 +347,7 @@ where
 
     let pool = Worker::new();
 
-    // use std::time::Instant;
+    // use crate::Instant;
     // let start = Instant::now();
 
     let result = multiexp(

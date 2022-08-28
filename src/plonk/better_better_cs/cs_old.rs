@@ -1661,7 +1661,7 @@ pub fn prove_with_rescue_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, MG:
 
     let num_gates = assembly.n();
 
-    let start = std::time::Instant::now();
+    let start = crate::Instant::now();
 
     let (prover, first_state, first_message) = RedshiftProver::first_step(
         assembly, 
@@ -1831,7 +1831,7 @@ pub fn prove_with_poseidon_bn256<P: PlonkConstraintSystemParams<bn256::Bn256>, M
 
     let num_gates = assembly.n();
 
-    let start = std::time::Instant::now();
+    let start = crate::Instant::now();
 
     let (prover, first_state, first_message) = RedshiftProver::first_step(
         assembly, 
@@ -2001,7 +2001,7 @@ pub fn prove_with_hash_counting_bn256<P: PlonkConstraintSystemParams<bn256::Bn25
 
     let num_gates = assembly.n();
 
-    let start = std::time::Instant::now();
+    let start = crate::Instant::now();
 
     let (prover, first_state, first_message) = RedshiftProver::first_step(
         assembly, 

@@ -77,3 +77,9 @@ cfg_if!{
         }
     }
 }
+
+#[cfg(not(feature = "wasm"))]
+pub use std::time::Instant;
+#[cfg(feature= "wasm")]
+pub use instant::Instant;
+

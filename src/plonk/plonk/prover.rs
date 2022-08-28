@@ -1789,7 +1789,7 @@ mod test {
         type Transcr = Blake2sTranscript<Fr>;
         type Eng = Bls12;
 
-        use std::time::Instant;
+        use crate::Instant;
 
         use crate::plonk::fft::cooley_tukey_ntt::*;
         use crate::plonk::commitments::transparent::fri::coset_combining_fri::precomputation::*;
@@ -1925,7 +1925,7 @@ mod test {
         type Transcr = Blake2sTranscript<Fr>;
         type Eng = Bn256;
 
-        use std::time::Instant;
+        use crate::Instant;
 
         use crate::plonk::fft::cooley_tukey_ntt::*;
         use crate::plonk::commitments::transparent::fri::coset_combining_fri::precomputation::*;

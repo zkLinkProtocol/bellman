@@ -428,7 +428,7 @@ pub fn generate_srs<E: Engine>(
         // Compute powers of tau
         if verbose {eprintln!("computing powers of x...")};
 
-        let start = std::time::Instant::now();
+        let start = crate::Instant::now();
 
         {
             worker.scope(d, |scope, chunk| {
@@ -540,7 +540,7 @@ pub fn generate_srs<E: Engine>(
         });
     }
 
-    let start = std::time::Instant::now();
+    let start = crate::Instant::now();
 
     // Evaluate for positive powers.
     eval(

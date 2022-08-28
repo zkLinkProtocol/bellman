@@ -21,7 +21,7 @@ pub struct BinaryTreeParams {
     pub values_per_leaf: usize
 }
 
-use std::time::Instant;
+use crate::Instant;
 
 impl<E: Engine, H: BinaryTreeHasher<E::Fr>> BinaryTree<E, H> {
     fn hash_into_leaf(tree_hasher: &H, values: &[E::Fr]) -> H::Output {

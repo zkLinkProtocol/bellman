@@ -132,7 +132,7 @@ pub fn create_aggregate_on_srs_using_information<E: Engine, C: Circuit<E>, S: Sy
         value
     }
 
-    use std::time::Instant;
+    use crate::Instant;
     let start = Instant::now();
 
     let mut c_openings = vec![];
