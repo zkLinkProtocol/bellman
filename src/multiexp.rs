@@ -942,7 +942,7 @@ mod test {
 
         use self::futures::executor::block_on;
 
-        let start = std::time::Instant::now();
+        let start = crate::Instant::now();
 
         let _fast = block_on(
             multiexp(

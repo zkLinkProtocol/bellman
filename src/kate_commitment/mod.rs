@@ -327,7 +327,7 @@ pub fn commit_using_monomials<E: Engine>(
 ) -> Result<E::G1Affine, SynthesisError> {
     println!("Committing coefficients");
 
-    use std::time::Instant;
+    use crate::Instant;
 
     let now = Instant::now();
 
@@ -363,7 +363,7 @@ pub fn commit_using_values<E: Engine>(
     println!("Committing values over domain");
     assert_eq!(poly.size(), crs.g1_bases.len());
 
-    use std::time::Instant;
+    use crate::Instant;
 
     let now = Instant::now();
 
@@ -1248,7 +1248,7 @@ pub(crate) mod test {
     #[ignore]
     fn test_multiexp_performance_on_large_data() {
         use crate::pairing::bn256::{Bn256, Fr};
-        use std::time::Instant;
+        use crate::Instant;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
@@ -1300,7 +1300,7 @@ pub(crate) mod test {
     #[ignore]
     fn test_future_based_multiexp_performance_on_large_data() {
         use crate::pairing::bn256::{Bn256, Fr};
-        use std::time::Instant;
+        use crate::Instant;
         use std::sync::Arc;
 
         let max_size = 1 << 26;
@@ -1356,7 +1356,7 @@ pub(crate) mod test {
     #[ignore]
     fn test_long_naive_division() {
         use crate::pairing::bn256::{Bn256, Fr};
-        use std::time::Instant;
+        use crate::Instant;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
@@ -1467,7 +1467,7 @@ pub(crate) mod test {
     }
 
     fn test_multiexps_inner<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
-        use std::time::Instant;
+        use crate::Instant;
         use std::sync::Arc;
 
         let worker = Worker::new();
@@ -1597,7 +1597,7 @@ pub(crate) mod test {
     // }
 
     // fn test_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-    //     use std::time::Instant;
+    //     use crate::Instant;
     //     use std::sync::Arc;
 
     //     let worker = Worker::new();
@@ -1656,7 +1656,7 @@ pub(crate) mod test {
     // }
 
     // fn test_buffered_multiexp<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
-    //     use std::time::Instant;
+    //     use crate::Instant;
     //     use std::sync::Arc;
 
     //     let worker = Worker::new();
@@ -1737,7 +1737,7 @@ pub(crate) mod test {
     //     use futures::executor::block_on;
     //     use futures::future::join_all;
 
-    //     use std::time::Instant;
+    //     use crate::Instant;
     //     use std::sync::Arc;
     //     use crate::source::FullDensity;
 
@@ -1833,7 +1833,7 @@ pub(crate) mod test {
     // }
 
     // fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
-    //     use std::time::Instant;
+    //     use crate::Instant;
         
     //     let mut bases = vec![];
     //     let mut scalars = vec![];
@@ -1882,7 +1882,7 @@ pub(crate) mod test {
     // }
 
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use std::time::Instant;
+        use crate::Instant;
         use std::sync::Arc;
         use crate::source::FullDensity;
 

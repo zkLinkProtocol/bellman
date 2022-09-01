@@ -38,7 +38,7 @@ use std::io::prelude::*;
 use std::process;
 use std::ptr;
 use std::str;
-use std::time::Instant;
+use crate::Instant;
 
 const WORKERS: usize = 100;
 

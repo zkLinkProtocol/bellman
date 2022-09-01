@@ -79,7 +79,7 @@ pub fn create_aggregate_on_srs_using_information<E: Engine, C: Circuit<E>, S: Sy
     q: usize,
 ) -> SuccinctAggregate<E>
 {
-    use std::time::Instant;
+    use crate::Instant;
     let start = Instant::now();
     // take few proofs that are to be evaluated at some y_i and make an aggregate from them
     let mut transcript = Transcript::new(&[]);
@@ -134,8 +134,8 @@ pub fn create_aggregate_on_srs_using_information<E: Engine, C: Circuit<E>, S: Sy
 
     println!("Commit and opening of for s(z, w) taken {:?}", start.elapsed());
 
-    // now we need signature of correct computation. For this purpose 
-    // verifier already knows specialized SRS, so we can just commit to 
+    // now we need signature of correct computation. For this purpose
+    // verifier already knows specialized SRS, so we can just commit to
     // s1 and s2 parts of such signature to get `w` and later open at this point!
 
     // Commit!
@@ -158,10 +158,10 @@ pub fn create_aggregate_on_srs_using_information<E: Engine, C: Circuit<E>, S: Sy
     let start = Instant::now();
 
     let signature = PermutationArgument::make_signature(
-        non_permuted_coeffs, 
-        permutations, 
-        w, 
-        z, 
+        non_permuted_coeffs,
+        permutations,
+        w,
+        z,
         &srs,
     );
 

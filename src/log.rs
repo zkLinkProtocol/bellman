@@ -78,12 +78,12 @@ cfg_if! {
         }
 
         pub struct Stopwatch {
-            start: std::time::Instant
+            start: crate::Instant
         }
 
         impl Stopwatch {
             pub fn new() -> Stopwatch {
-                Stopwatch { start: std::time::Instant::now() }
+                Stopwatch { start: crate::Instant::now() }
             }
 
             pub fn elapsed(&self) -> f64 {

@@ -141,7 +141,7 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
     use crate::plonk::better_cs::utils::{commit_point_as_xy};
     use crate::plonk::better_cs::prover::prove_steps::{FirstVerifierMessage, SecondVerifierMessage, ThirdVerifierMessage, FourthVerifierMessage};
 
-    use std::time::Instant;
+    use crate::Instant;
 
     let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
 
@@ -374,7 +374,7 @@ pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(size.next_power_of_two());
     let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(size.next_power_of_two());
 
-    use std::time::Instant;
+    use crate::Instant;
     let now = Instant::now();
     let proof = assembly.prove::<T, _, _>(
         &worker,
@@ -425,7 +425,7 @@ pub fn prove_from_recomputations<
 
     let worker = Worker::new();
 
-    use std::time::Instant;
+    use crate::Instant;
     let now = Instant::now();
     let proof = assembly.prove::<T, _, _>(
         &worker,

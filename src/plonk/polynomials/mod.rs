@@ -706,7 +706,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         factor: usize,
         precomputed_omegas: &P
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
-        use std::time::Instant;
+        use crate::Instant;
         debug_assert!(self.coeffs.len().is_power_of_two());
         debug_assert_eq!(self.size(), precomputed_omegas.domain_size());
         
@@ -2548,7 +2548,7 @@ mod test {
             for cpus in vec![4, 8, 16, 32] {
             // for cpus in vec![16, 24, 32] {
 
-                use std::time::Instant;
+                use crate::Instant;
 
                 let subworker = Worker::new_with_cpus(cpus);
 
@@ -2593,7 +2593,7 @@ mod test {
             for cpus in vec![4, 8, 16, 32] {
             // for cpus in vec![16, 24, 32] {
 
-                use std::time::Instant;
+                use crate::Instant;
 
                 let subworker = Worker::new_with_cpus(cpus);
 

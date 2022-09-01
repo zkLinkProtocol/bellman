@@ -26,6 +26,7 @@ crossbeam = {version = "0.7", optional = true}
 prefetch = {version = "0.2", optional = true}
 
 web-sys = {version = "0.3", optional = true, features = ["console", "Performance", "Window"]}
+instant = {version = "0.1", features = [ "wasm-bindgen" ], optional = true}
 
 tiny-keccak = {version = "1.5", optional = true}
 blake2-rfc = {version = "0.2.18", optional = true}
@@ -50,5 +51,5 @@ nolog = []
 plonk = ["lazy_static", "tiny-keccak", "blake2s_const"]
 # redshift = ["plonk", "rescue_hash", "poseidon_hash"]
 marlin = ["tiny-keccak", "blake2s_const"]
-wasm = ["web-sys"]
+wasm = ["web-sys", "instant"]
 asm = ["pairing/asm"]

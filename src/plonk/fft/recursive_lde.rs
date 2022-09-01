@@ -163,7 +163,7 @@ fn test_small_recursive_lde() {
     use crate::experiments::vdf::Fr;
     use crate::domains::Domain;
     use crate::fft::multicore::Worker;
-    use std::time::Instant;
+    use crate::Instant;
 
     let worker = Worker::new();
 
@@ -200,7 +200,7 @@ fn test_large_recursive_lde() {
     use crate::domains::Domain;
     use crate::fft::multicore::Worker;
     use crate::polynomials::Polynomial;
-    use std::time::Instant;
+    use crate::Instant;
 
     let worker = Worker::new();
 
