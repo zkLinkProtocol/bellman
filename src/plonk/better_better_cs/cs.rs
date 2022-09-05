@@ -1517,7 +1517,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         true
     }
 
-    pub(crate) fn make_permutations(&self, worker: &Worker) -> Result<Vec<Polynomial::<E::Fr, Values>>, SynthesisError> {
+    pub fn make_permutations(&self, worker: &Worker) -> Result<Vec<Polynomial::<E::Fr, Values>>, SynthesisError> {
         assert!(self.is_finalized);
 
         if !S::PRODUCE_SETUP {
@@ -1644,7 +1644,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(sigmas)
     }
 
-    fn make_setup_polynomials(
+    pub fn make_setup_polynomials(
         &self,
         with_finalization: bool
     ) -> Result<std::collections::HashMap<PolyIdentifier, Polynomial<E::Fr, Values>>, SynthesisError> {
@@ -1895,7 +1895,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         Ok(column_contributions)
     }
 
-    fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
+    pub fn ensure_sorted_table(table: &LookupTableApplication<E>) -> Vec<Vec<E::Fr>> {
         let entries = table.get_table_values_for_polys();
         assert_eq!(entries.len(), 3);
 

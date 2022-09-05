@@ -20,31 +20,29 @@ use std::io::{Read, Write};
 
 use crate::plonk::better_cs::keys::*;
 
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Setup<E: Engine, C: Circuit<E>> {
+use std::alloc::{Allocator, Global};
+#[derive(Clone, PartialEq, Eq)]
+pub struct Setup<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
     pub n: usize,
     pub num_inputs: usize,
     pub state_width: usize,
     pub num_witness_polys: usize,
 
-    pub gate_setup_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
-    pub gate_selectors_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
-    pub permutation_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
+    pub gate_setup_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
+    pub gate_selectors_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
+    pub permutation_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
 
     pub total_lookup_entries_length: usize,
-    pub lookup_selector_monomial: Option<Polynomial<E::Fr, Coefficients>>,
-    pub lookup_tables_monomials: Vec<Polynomial<E::Fr, Coefficients>>,
-    pub lookup_table_type_monomial: Option<Polynomial<E::Fr, Coefficients>>,
+    pub lookup_selector_monomial: Option<Polynomial<E::Fr, Coefficients, A>>,
+    pub lookup_tables_monomials: Vec<Polynomial<E::Fr, Coefficients, A>>,
+    pub lookup_table_type_monomial: Option<Polynomial<E::Fr, Coefficients, A>>,
 
     pub non_residues: Vec<E::Fr>,
 
-    #[serde(skip_serializing, default)]
-    #[serde(bound(serialize = ""))]
-    #[serde(bound(deserialize = ""))]
     _marker: std::marker::PhantomData<C>
 }
 
-impl<E: Engine, C: Circuit<E>> std::fmt::Debug for Setup<E, C> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + std::fmt::Debug> std::fmt::Debug for Setup<E, C, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Setup")
             .field("n", &self.n)
@@ -60,7 +58,7 @@ impl<E: Engine, C: Circuit<E>> std::fmt::Debug for Setup<E, C> {
     }
 }
 
-impl<E: Engine, C: Circuit<E>> Setup<E, C> {
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default + Send + Sync> Setup<E, C, A> {
     pub fn empty() -> Self {
         Self {
             n: 0,
@@ -79,6 +77,41 @@ impl<E: Engine, C: Circuit<E>> Setup<E, C> {
         
             _marker: std::marker::PhantomData
         }
+    }
+
+    pub fn reallocate<B: Allocator + Clone + Default + Send + Sync>(&self) -> Setup<E, C, B> {
+        let mut new = Setup::<E, C, B>::empty();
+
+        new.n = self.n;
+        new.num_inputs = self.num_inputs;
+        new.num_witness_polys = self.num_witness_polys;
+        new.total_lookup_entries_length = self.total_lookup_entries_length;
+
+        for poly in self.gate_setup_monomials.iter() {
+            new.gate_setup_monomials.push(poly.reallocate());
+        }
+        for poly in self.gate_selectors_monomials.iter() {
+            new.gate_selectors_monomials.push(poly.reallocate());
+        }
+        for poly in self.permutation_monomials.iter() {
+            new.permutation_monomials.push(poly.reallocate());
+        }
+
+        if let Some(poly) = &self.lookup_selector_monomial {
+            new.lookup_selector_monomial = Some(poly.reallocate());
+        }
+
+        for poly in self.lookup_tables_monomials.iter() {
+            new.lookup_tables_monomials.push(poly.reallocate());
+        }
+
+        if let Some(poly) = &self.lookup_table_type_monomial {
+            new.lookup_table_type_monomial = Some(poly.reallocate());
+        }
+        
+        new.non_residues = self.non_residues.clone();
+
+        new
     }
 
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
@@ -142,7 +175,7 @@ impl<E: Engine, C: Circuit<E>> Setup<E, C> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VerificationKey<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub num_inputs: usize,
@@ -161,9 +194,6 @@ pub struct VerificationKey<E: Engine, C: Circuit<E>> {
     pub non_residues: Vec<E::Fr>,
     pub g2_elements: [E::G2Affine; 2],
 
-    #[serde(skip_serializing, default)]
-    #[serde(bound(serialize = ""))]
-    #[serde(bound(deserialize = ""))]
     _marker: std::marker::PhantomData<C>
 }
 
@@ -348,4 +378,289 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
 
         Ok(())
     }   
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SetupPrecomputations<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
+
+    pub gate_setup_ldes: Vec<Polynomial<E::Fr, Values, A>>,
+    pub gate_selectors_ldes: Vec<Polynomial<E::Fr, Values, A>>,
+    pub permutation_ldes: Vec<Polynomial<E::Fr, Values, A>>,
+
+    pub lookup_selector_lde: Option<Polynomial<E::Fr, Values, A>>,
+    pub lookup_table_type_lde: Option<Polynomial<E::Fr, Values, A>>,
+
+    pub permutation_values: Vec<Polynomial<E::Fr, Values, A>>,
+
+    pub lookup_selector_values: Option<Polynomial<E::Fr, Values, A>>,
+    pub lookup_tables_values: Vec<Polynomial<E::Fr, Values, A>>,
+    pub lookup_table_type_values: Option<Polynomial<E::Fr, Values, A>>,
+
+    _marker: std::marker::PhantomData<C>
+}
+
+use crate::plonk::fft::cooley_tukey_ntt::{BitReversedOmegas, CTPrecomputations};
+
+impl<E: Engine, C: Circuit<E>, A: Allocator + Clone + Default + Send + Sync> SetupPrecomputations<E, C, A> {
+    pub fn empty() -> Self {
+        Self {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: vec![],
+            lookup_table_type_values: None,
+        
+            _marker: std::marker::PhantomData
+        }
+    }
+
+    pub fn from_setup_and_precomputations<CP: CTPrecomputations<E::Fr>>(
+        setup: &Setup<E, C, Global>,
+        worker: &Worker,
+        omegas_bitreversed: &CP,
+    ) -> Result<SetupPrecomputations<E, C, Global>, SynthesisError> {
+        let mut new = SetupPrecomputations::<E, C, Global> {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: vec![],
+            lookup_table_type_values: None,
+
+            _marker: std::marker::PhantomData,
+        };
+
+        let coset_generator = E::Fr::multiplicative_generator();
+
+        for p in setup.gate_setup_monomials.iter() {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.gate_setup_ldes.push(ext);
+        }
+
+        for p in setup.gate_selectors_monomials.iter() {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.gate_selectors_ldes.push(ext);
+        }
+
+        for p in setup.permutation_monomials.iter() {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.permutation_ldes.push(ext);
+        }
+
+        if let Some(p) = &setup.lookup_selector_monomial {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.lookup_selector_lde = Some(ext);
+        }
+
+        if let Some(p) = &setup.lookup_table_type_monomial {
+            let ext = p.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker,
+                4,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+            
+            new.lookup_table_type_lde = Some(ext);
+        }
+
+        for p in setup.permutation_monomials.iter() {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.permutation_values.push(ext);
+        }
+
+        if let Some(p) = &setup.lookup_selector_monomial {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.lookup_selector_values = Some(ext);
+        }
+
+        if let Some(p) = &setup.lookup_table_type_monomial {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+            
+            new.lookup_table_type_values = Some(ext);
+        }
+
+        for p in setup.lookup_tables_monomials.iter() {
+            let ext = p.clone().fft_using_bitreversed_ntt_output_bitreversed(
+                &worker,
+                omegas_bitreversed,
+                &coset_generator,
+            )?;
+
+            new.lookup_tables_values.push(ext);
+        }
+
+        Ok(new)
+    }
+
+    pub fn from_setup(
+        setup: &Setup<E, C, Global>,
+        worker: &Worker,
+    ) -> Result<SetupPrecomputations<E, C, Global>, SynthesisError> {
+        let precomps =
+            BitReversedOmegas::new_for_domain_size(setup.permutation_monomials[0].size());
+
+        Self::from_setup_and_precomputations(setup, worker, &precomps)
+    }
+
+    pub fn reallocate<B: Allocator + Clone + Default>(&self) -> SetupPrecomputations<E, C, B> {
+        let mut new = SetupPrecomputations::<E, C, B> {
+            gate_setup_ldes: vec![],
+            gate_selectors_ldes: vec![],
+            permutation_ldes: vec![],
+
+            lookup_selector_lde: None,
+            lookup_table_type_lde: None,
+
+            permutation_values: vec![],
+
+            lookup_selector_values: None,
+            lookup_tables_values: vec![],
+            lookup_table_type_values: None,
+
+            _marker: std::marker::PhantomData,
+        };
+
+        for lde in self.gate_setup_ldes.iter() {
+            new.gate_setup_ldes.push(lde.reallocate());
+        }
+
+        for lde in self.gate_selectors_ldes.iter() {
+            new.gate_selectors_ldes.push(lde.reallocate());
+        }
+        
+        for lde in self.permutation_ldes.iter() {
+            new.permutation_ldes.push(lde.reallocate());
+        }
+
+        if let Some(lde) = &self.lookup_selector_lde {
+            new.lookup_selector_lde = Some(lde.reallocate());
+        }
+        
+        if let Some(lde) = &self.lookup_table_type_lde {
+            new.lookup_table_type_lde = Some(lde.reallocate());
+        }
+
+        for values in self.permutation_values.iter() {
+            new.permutation_values.push(values.reallocate());
+        }
+
+        if let Some(values) = &self.lookup_selector_values {
+            new.lookup_selector_values = Some(values.reallocate());
+        }
+
+        for values in self.lookup_tables_values.iter() {
+            new.lookup_tables_values.push(values.reallocate());
+        }
+
+        if let Some(values) = &self.lookup_table_type_values {
+            new.lookup_table_type_values = Some(values.reallocate());
+        }
+
+        new
+    }
+
+    pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+        write_polynomials_vec(&self.gate_setup_ldes, &mut writer)?;
+        write_polynomials_vec(&self.gate_selectors_ldes, &mut writer)?;
+        write_polynomials_vec(&self.permutation_ldes, &mut writer)?;
+
+        write_optional_polynomial(&self.lookup_selector_lde, &mut writer)?;
+        write_optional_polynomial(&self.lookup_table_type_lde, &mut writer)?;
+
+        write_polynomials_vec(&self.permutation_values, &mut writer)?;
+
+        write_optional_polynomial(&self.lookup_selector_values, &mut writer)?;
+        write_polynomials_vec(&self.lookup_tables_values, &mut writer)?;
+        write_optional_polynomial(&self.lookup_table_type_values, &mut writer)?;
+
+        Ok(())
+    }
+
+    pub fn read<R: Read>(mut reader: R) -> std::io::Result<Self> {
+        use crate::pairing::CurveAffine;
+        use crate::pairing::EncodedPoint;
+
+        let gate_setup_ldes = read_polynomials_values_unpadded_vec(&mut reader)?;
+        let gate_selectors_ldes = read_polynomials_values_unpadded_vec(&mut reader)?;
+        let permutation_ldes = read_polynomials_values_unpadded_vec(&mut reader)?;
+
+        let lookup_selector_lde = read_optional_polynomial_values_unpadded(&mut reader)?;
+        let lookup_table_type_lde = read_optional_polynomial_values_unpadded(&mut reader)?;
+
+        let permutation_values = read_polynomials_values_unpadded_vec(&mut reader)?;
+
+        let lookup_selector_values = read_optional_polynomial_values_unpadded(&mut reader)?;
+        let lookup_tables_values = read_polynomials_values_unpadded_vec(&mut reader)?;
+        let lookup_table_type_values = read_optional_polynomial_values_unpadded(&mut reader)?;
+
+        let new = Self {
+            gate_setup_ldes,
+            gate_selectors_ldes,
+            permutation_ldes,
+
+            lookup_selector_lde,
+            lookup_table_type_lde,
+
+            permutation_values,
+
+            lookup_selector_values,
+            lookup_tables_values,
+            lookup_table_type_values,
+
+            _marker: std::marker::PhantomData,
+        };
+
+        Ok(new)
+    }
 }
