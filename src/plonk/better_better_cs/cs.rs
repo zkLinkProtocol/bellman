@@ -1415,8 +1415,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let new_size_candidates = [(self.n() + 1).next_power_of_two() - 1, (total_number_of_table_entries + 1).next_power_of_two() - 1];
 
         let new_size = *new_size_candidates.iter().max().unwrap();
-        assert!(new_size <= 1usize << E::Fr::S);
-        assert!(new_size <= (1usize << E::Fr::S) / <Self as ConstraintSystem<E>>::Params::STATE_WIDTH);
+        assert!(new_size <= 1usize << E::Fr::S, "Circuit size is {}, that is larget than number of roots of unity 2^{}", new_size, E::Fr::S);
+        assert!(new_size <= (1usize << E::Fr::S) / <Self as ConstraintSystem<E>>::Params::STATE_WIDTH, "Circuit size is {}, that is larget than number of roots of unity 2^{} for copy-permutation over {} polys", new_size, E::Fr::S, <Self as ConstraintSystem<E>>::Params::STATE_WIDTH);
 
         let dummy = Self::get_dummy_variable();
 
