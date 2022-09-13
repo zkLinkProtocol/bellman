@@ -1,14 +1,11 @@
-use cfg_if::*;
-
 cfg_if!{
     if #[cfg(feature = "allocator")]{
         pub mod unstable;
-        use self::unstable as setup;        
+        use self::unstable as keys;        
     }else{        
         pub mod stable;        
-        use self::stable as setup;
+        use self::stable as keys;
     }
 }
 
-use super::*;
-pub use self::setup::*;
+pub use keys::*;

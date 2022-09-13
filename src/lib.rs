@@ -1,5 +1,6 @@
 #![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments, unreachable_patterns ) ]
-#![feature(allocator_api)]
+#![cfg_attr(feature = "allocator", feature(allocator_api))]
+
 #[macro_use]
 
 extern crate cfg_if;
