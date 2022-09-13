@@ -31,7 +31,7 @@ impl Worker {
     // all `Worker` instances have the same number of
     // CPUs configured.
     
-    pub(crate) fn new_with_cpus(cpus: usize) -> Worker {
+    pub fn new_with_cpus(cpus: usize) -> Worker {
         Worker {
             cpus: cpus,
             pool: ThreadPool::builder().pool_size(cpus).create().expect("should create a thread pool for futures execution"),
