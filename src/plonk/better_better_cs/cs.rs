@@ -2273,17 +2273,13 @@ impl<
             return Err(SynthesisError::AssignmentMissing);
         }
 
-        let mut full_assignments = if with_finalization {
-            vec![Vec::with_capacity_in((self.n()+1).next_power_of_two(), B::default()); P::STATE_WIDTH]
-        } else {
-            vec![Vec::with_capacity_in(self.n()+1, B::default()); P::STATE_WIDTH]
-        };
-
         let pad_to = if with_finalization {
             (self.n()+1).next_power_of_two()
         } else {
             self.n()+1
         };
+
+        let mut full_assignments: Vec<_> = (0..P::STATE_WIDTH).map(|_| Vec::with_capacity_in(pad_to, B::default())).collect();
 
         let num_input_gates = self.num_input_gates;
         let num_aux_gates = self.num_aux_gates;
@@ -2296,37 +2292,31 @@ impl<
 
         let dummy = Self::get_dummy_variable();
 
-        worker.scope(full_assignments.len(), |scope, chunk| {
-            for (i, lh) in full_assignments.chunks_mut(chunk)
-                            .enumerate() {
-                scope.spawn(move |_| {
-                    // we take `values_per_leaf` values from each of the polynomial
-                    // and push them into the conbinations
-                    let base_idx = i*chunk;
-                    for (j, lh) in lh.iter_mut().enumerate() {
-                        let idx = base_idx + j;
-                        let id = PolyIdentifier::VariablesPolynomial(idx);
-                        let poly_ref = self.aux_storage.state_map.get(&id).unwrap();
-                        for i in 0..num_aux_gates {
-                            let var = poly_ref.get(i).unwrap_or(&dummy);
+        for (idx, lh) in full_assignments.iter_mut().enumerate() {
+            unsafe{ lh.set_len(num_input_gates + num_aux_gates) };
+            worker.scope(num_aux_gates, |scope, chunk_size| {
+                let aux_range = num_input_gates..num_input_gates+num_aux_gates;
+                for (j, chunk) in lh[aux_range].chunks_mut(chunk_size).enumerate() {
+                    let id = PolyIdentifier::VariablesPolynomial(idx);
+                    let poly_ref = self.aux_storage.state_map.get(&id).unwrap();
+
+                    scope.spawn(move |_| {
+                        let offset = j * chunk_size;
+                        let length = chunk.len();
+
+                        for i in 0..length {
+                            let var = poly_ref.get(i + offset).unwrap_or(&dummy);
                             let value = self.get_value(*var).unwrap();
-                            lh.push(value);
+                            chunk[i] = value;
                         }
-                    }
-                });
-            }
-        });
-
-        for a in full_assignments.iter() {
-            assert_eq!(a.len(), self.num_input_gates + self.num_aux_gates);
+                    });
+                }
+            });
         }
 
-        for p in full_assignments.iter_mut() {
-            p.resize(pad_to - 1, E::Fr::zero());
-        }
-
-        for a in full_assignments.iter() {
-            assert_eq!(a.len(), pad_to - 1);
+        for a in full_assignments.iter_mut() {
+            assert_eq!(a.len(), num_input_gates + num_aux_gates);
+            a.resize(pad_to - 1, E::Fr::zero());
         }
 
         Ok((full_assignments, vec![]))

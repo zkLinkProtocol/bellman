@@ -21,7 +21,7 @@ use self::futures::executor::{ThreadPool};
 
 #[derive(Clone)]
 pub struct Worker {
-    pub(crate) cpus: usize,
+    pub cpus: usize,
     pool: ThreadPool
 }
 
@@ -30,6 +30,26 @@ impl Worker {
     // We don't expose this outside the library so that
     // all `Worker` instances have the same number of
     // CPUs configured.
+    pub fn split(&self) -> (Self, Self) {
+        let at = self.cpus / 2;
+        self.split_at(at)
+    }
+
+    pub fn split_at(&self, at: usize) -> (Self, Self) {
+        assert!(0 < at && at < self.cpus);
+
+        let first = Self {
+            cpus: at,
+            pool: self.pool.clone()
+        };
+
+        let second = Self {
+            cpus: self.cpus - at,
+            pool: self.pool.clone()
+        };
+
+        (first, second)
+    }
     
     pub fn new_with_cpus(cpus: usize) -> Worker {
         Worker {
