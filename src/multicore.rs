@@ -42,6 +42,28 @@ impl Worker {
         Self::new_with_cpus(num_cpus::get_physical())
     }
 
+    pub fn split(&self) -> (Self, Self) {
+        let at = self.cpus / 2;
+        self.split_at(at)
+    }
+
+    pub fn split_at(&self, at: usize) -> (Self, Self) {
+        assert!(0 < at && at < self.cpus);
+
+        let first = Self {
+            cpus: at,
+            pool: self.pool.clone()
+        };
+
+        let second = Self {
+            cpus: self.cpus - at,
+            pool: self.pool.clone()
+        };
+
+        (first, second)
+    }
+
+
     pub fn log_num_cpus(&self) -> u32 {
         log2_floor(self.cpus)
     }
