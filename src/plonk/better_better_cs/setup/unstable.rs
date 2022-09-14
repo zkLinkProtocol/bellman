@@ -214,6 +214,28 @@ impl<E: Engine, C: Circuit<E>> std::fmt::Debug for VerificationKey<E, C> {
 }
 
 impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
+    pub fn empty() -> Self {
+        Self {
+            n: 0,
+            num_inputs: 0,
+            state_width: 0,
+            num_witness_polys: 0,
+            gate_setup_commitments: vec![],
+            gate_selectors_commitments: vec![],
+            permutation_commitments: vec![],
+
+            total_lookup_entries_length: 0,
+            lookup_selector_commitment: None,
+            lookup_tables_commitments: vec![],
+            lookup_table_type_commitment: None,
+
+            non_residues: vec![],
+            g2_elements: [<E::G2Affine as pairing::CurveAffine>::zero(); 2],
+
+            _marker: std::marker::PhantomData,
+        }
+    }
+
     pub fn from_setup(
         setup: &Setup<E, C>,
         worker: &Worker,
