@@ -27,7 +27,8 @@ impl PolynomialForm for Values{}
 
 
 use std::alloc::{Allocator, Global};
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(bound(deserialize = "F: serde::de::DeserializeOwned"))]
 pub struct Polynomial<F: PrimeField, P: PolynomialForm, A: Allocator + Clone = Global> {
     coeffs: Vec<F, A>,
     pub exp: u32,

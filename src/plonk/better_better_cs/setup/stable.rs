@@ -20,7 +20,7 @@ use std::io::{Read, Write};
 
 use crate::plonk::better_cs::keys::*;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Setup<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub num_inputs: usize,
@@ -139,7 +139,7 @@ impl<E: Engine, C: Circuit<E>> Setup<E, C> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VerificationKey<E: Engine, C: Circuit<E>> {
     pub n: usize,
     pub num_inputs: usize,
