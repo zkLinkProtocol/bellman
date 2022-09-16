@@ -21,7 +21,7 @@ use std::io::{Read, Write};
 use crate::plonk::better_cs::keys::*;
 
 use std::alloc::{Allocator, Global};
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Setup<E: Engine, C: Circuit<E>, A: Allocator + Clone = Global> {
     pub n: usize,
     pub num_inputs: usize,
