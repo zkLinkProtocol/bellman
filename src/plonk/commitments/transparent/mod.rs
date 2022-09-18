@@ -589,6 +589,7 @@ impl<
 
         // println!("Will open poly at indexes {:?} for simulated values {:?}", domain_indexes, simulated_q_poly_values);
 
+        let now = std::time::Instant::now();
         let valid = FRI::verify_proof_with_challenges(
             q_poly_fri_proof, 
             domain_indexes, 
@@ -596,6 +597,8 @@ impl<
             &fri_challenges,
             &self.fri_params
         ).expect("fri verification should work");
+
+        println!("FRI part taken {:?}", now.elapsed());
 
         valid
     }
