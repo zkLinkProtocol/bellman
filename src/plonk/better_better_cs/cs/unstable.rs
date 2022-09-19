@@ -751,6 +751,14 @@ impl<E: Engine, A: Allocator + Clone> PolynomialStorage<E, A> {
             setup_map: std::collections::HashMap::new(),
         }
     }
+    pub fn new_for_size(size: usize) -> Self {
+        assert!(size <= 1 << <E::Fr as PrimeField>::S);
+        Self {
+            state_map: std::collections::HashMap::with_capacity(size),
+            witness_map: std::collections::HashMap::with_capacity(size),
+            setup_map: std::collections::HashMap::with_capacity(size),
+        }
+    }
 
     pub fn get_value(&self, poly: &PolynomialInConstraint, n: usize) -> Result<E::Fr, SynthesisError> {
         match poly {
@@ -1393,6 +1401,65 @@ impl<
 
             individual_table_entries: std::collections::HashMap::new(),
             individual_multitable_entries: std::collections::HashMap::new(),
+
+            known_table_ids: vec![],
+
+            num_table_lookups: 0,
+            num_multitable_lookups: 0,
+
+            _marker_p: std::marker::PhantomData,
+            _marker_s: std::marker::PhantomData,
+        };
+
+        tmp.add_gate_into_list(&MG::default());
+
+        tmp
+    }
+
+
+    pub fn new_for_size(size: usize) -> Self {
+        assert!(size <= 1 << <E::Fr as PrimeField>::S);
+        let mut tmp = Self {
+            inputs_storage: PolynomialStorage::new_for_size(size),
+            aux_storage: PolynomialStorage::new_for_size(size),
+
+            max_constraint_degree: 0,
+
+            num_input_gates: 0,
+            num_aux_gates: 0,
+
+            num_inputs: 0,
+            num_aux: 0,
+
+            input_assingments: Vec::with_capacity_in(size, A::default()),
+            aux_assingments: Vec::with_capacity_in(size, A::default()),
+
+            main_gate: MG::default(),
+
+            trace_step_for_batch: None,
+
+            gates: std::collections::HashSet::new(),
+            all_queried_polys_in_constraints: std::collections::HashSet::new(),
+
+            aux_gate_density: GateDensityStorage::new(),
+
+            // sorted_setup_polynomial_ids: vec![],
+            sorted_gates: vec![],
+
+            is_finalized: false,
+
+            explicit_zero_variable: None,
+            explicit_one_variable: None,
+
+            tables: vec![],
+            multitables: vec![],
+            table_selectors: std::collections::HashMap::with_capacity(size),
+            multitable_selectors: std::collections::HashMap::with_capacity(size),
+            table_ids_poly: vec![],
+            total_length_of_all_tables: 0,
+
+            individual_table_entries: std::collections::HashMap::with_capacity(size),
+            individual_multitable_entries: std::collections::HashMap::with_capacity(size),
 
             known_table_ids: vec![],
 
