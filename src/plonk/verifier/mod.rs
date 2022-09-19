@@ -406,9 +406,15 @@ pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng 
 
     let num_gates = setup.n;
 
+    let t = std::time::Instant::now();
     let committer = S::new_for_size(num_gates.next_power_of_two(), meta);
+    println!("Committer creation taken {:?}", t.elapsed());
+
+    let t0 = std::time::Instant::now();
 
     let mut transcript = T::new();
+
+    let t = std::time::Instant::now();
 
     // we need n+1 to be a power of two and can not have n to be power of two
     let required_domain_size = setup.n + 1;
@@ -720,6 +726,10 @@ pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng 
         return Ok(false);
     }
 
+    println!("Initial verification taken {:?}", t.elapsed());
+
+    let t = std::time::Instant::now();
+
     let valid = committer.verify_multiple_openings(
         commitments, 
         opening_points, 
@@ -729,10 +739,14 @@ pub fn verify_nonhomomorphic_chunked<E: Engine, S: CommitmentScheme<E::Fr, Prng 
         &mut transcript
     );
 
+    println!("Verification of multiple openings taken {:?}", t.elapsed());
+
     if !valid {
         println!("Multiopening is invalid");
         return Ok(false);
     }
+
+    println!("Verification without overhead taken {:?}", t0.elapsed());
 
     Ok(valid)
 }

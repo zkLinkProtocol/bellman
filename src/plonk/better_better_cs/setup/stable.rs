@@ -158,6 +158,9 @@ pub struct VerificationKey<E: Engine, C: Circuit<E>> {
     pub non_residues: Vec<E::Fr>,
     pub g2_elements: [E::G2Affine; 2],
 
+    #[serde(skip_serializing, default)]
+    #[serde(bound(serialize = ""))]
+    #[serde(bound(deserialize = ""))]
     _marker: std::marker::PhantomData<C>
 }
 

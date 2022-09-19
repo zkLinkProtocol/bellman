@@ -670,7 +670,10 @@ impl<E: Engine> PlonkChunkedNonhomomorphicProof<E, StatelessTransparentCommitter
         let query_element_size = std::mem::size_of_val(&query.value[0]);
 
         let per_poly_oracle_query_size = query_element_size + (query_proof_element_size * query_depth_per_poly_oracle);
-        proofs_size += num_queries * num_poly_oracles + per_poly_oracle_query_size;
+
+        let per_query_size = num_poly_oracles * per_poly_oracle_query_size;
+        println!("Non-FRI paths per repeated query take {} bytes", per_query_size);
+        proofs_size += num_queries * per_query_size;
 
         // now only FRI part remains
 
@@ -692,6 +695,8 @@ impl<E: Engine> PlonkChunkedNonhomomorphicProof<E, StatelessTransparentCommitter
 
             total_queries_size_per_round += total;
         }
+
+        println!("FRI path per repeated query take {} bytes", total_queries_size_per_round);
 
         proofs_size += total_queries_size_per_round * num_queries;
 
