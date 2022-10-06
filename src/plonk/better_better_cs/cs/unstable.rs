@@ -859,7 +859,7 @@ pub struct Assembly<
     pub multitables: Vec<Arc<MultiTableApplication<E>>>,
     pub table_selectors: std::collections::HashMap<String, BitVec>,
     pub multitable_selectors: std::collections::HashMap<String, BitVec>,
-    pub table_ids_poly: Vec<E::Fr>,
+    pub table_ids_poly: Vec<E::Fr, A>,
     pub total_length_of_all_tables: usize,
 
     pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
@@ -1396,7 +1396,7 @@ impl<
             multitables: vec![],
             table_selectors: std::collections::HashMap::new(),
             multitable_selectors: std::collections::HashMap::new(),
-            table_ids_poly: vec![],
+            table_ids_poly: Vec::with_capacity_in(0, A::default()),
             total_length_of_all_tables: 0,
 
             individual_table_entries: std::collections::HashMap::new(),
@@ -1455,7 +1455,7 @@ impl<
             multitables: vec![],
             table_selectors: std::collections::HashMap::with_capacity(size),
             multitable_selectors: std::collections::HashMap::with_capacity(size),
-            table_ids_poly: vec![],
+            table_ids_poly: Vec::with_capacity_in(0, A::default()),
             total_length_of_all_tables: 0,
 
             individual_table_entries: std::collections::HashMap::with_capacity(size),
