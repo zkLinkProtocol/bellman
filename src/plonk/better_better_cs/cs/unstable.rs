@@ -2605,15 +2605,7 @@ impl<
 
         Ok(monomial_storage)
     }
-}
 
-impl<
-    E: Engine, 
-    P: PlonkConstraintSystemParams<E>, 
-    MG: MainGate<E>, 
-    S: SynthesisMode,
-> Assembly<E, P, MG, S> {
-    
     pub fn is_satisfied(&self) -> bool {
         if !S::PRODUCE_SETUP || !S::PRODUCE_WITNESS {
             // only testing mode can run this check for now
@@ -2664,7 +2656,14 @@ impl<
 
         true
     }
+}
 
+impl<
+    E: Engine, 
+    P: PlonkConstraintSystemParams<E>, 
+    MG: MainGate<E>, 
+    S: SynthesisMode,
+> Assembly<E, P, MG, S> {
     pub fn prover_stub(self, worker: &Worker) -> Result<(), SynthesisError> {
         use crate::pairing::CurveAffine;
 
