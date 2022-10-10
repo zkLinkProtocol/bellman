@@ -1581,7 +1581,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let pad_to = (1 << size_log_2) - 1;
 
         let new_size = if new_size <= pad_to {
-            pad_to
+            pad_to -1
         } else {
             panic!("Requested padding to size 2^{}, but circuit already contains {} gates", size_log_2, new_size)
         };
@@ -1601,6 +1601,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             self.end_gates_batch_for_step().unwrap();
         }
+        assert_eq!(new_size, self.n());
 
         let new_size_for_aux = new_size - self.num_input_gates;
 
@@ -1610,13 +1611,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 tracker.grow(new_size_for_aux, false);
             }
 
-            // pad lookup selectors
-            for (_, selector) in self.table_selectors.iter_mut() {
-                selector.grow(new_size_for_aux, false);
-            }
+            if self.num_table_lookups > 0{
+                // pad lookup selectors
+                for (_, selector) in self.table_selectors.iter_mut() {
+                    selector.grow(new_size_for_aux, false);
+                }
 
-            // pad special purpose table selector poly
-            self.table_ids_poly.resize(new_size_for_aux, E::Fr::zero());
+                // pad special purpose table selector poly
+                self.table_ids_poly.resize(new_size_for_aux, E::Fr::zero());
+            }            
         }
 
         assert!((self.n()+1).is_power_of_two());
@@ -4667,6 +4670,7 @@ mod test {
         println!("Finalized assembly contains {} gates", assembly.n());
 
         let worker = Worker::new();
+
 
         let _ = assembly.prover_stub(&worker).unwrap();
     }

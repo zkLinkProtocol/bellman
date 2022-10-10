@@ -859,7 +859,7 @@ pub struct Assembly<
     pub multitables: Vec<Arc<MultiTableApplication<E>>>,
     pub table_selectors: std::collections::HashMap<String, BitVec>,
     pub multitable_selectors: std::collections::HashMap<String, BitVec>,
-    pub table_ids_poly: Vec<E::Fr>,
+    pub table_ids_poly: Vec<E::Fr, A>,
     pub total_length_of_all_tables: usize,
 
     pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
@@ -1396,7 +1396,7 @@ impl<
             multitables: vec![],
             table_selectors: std::collections::HashMap::new(),
             multitable_selectors: std::collections::HashMap::new(),
-            table_ids_poly: vec![],
+            table_ids_poly: Vec::with_capacity_in(0, A::default()),
             total_length_of_all_tables: 0,
 
             individual_table_entries: std::collections::HashMap::new(),
@@ -1455,7 +1455,7 @@ impl<
             multitables: vec![],
             table_selectors: std::collections::HashMap::with_capacity(size),
             multitable_selectors: std::collections::HashMap::with_capacity(size),
-            table_ids_poly: vec![],
+            table_ids_poly: Vec::with_capacity_in(0, A::default()),
             total_length_of_all_tables: 0,
 
             individual_table_entries: std::collections::HashMap::with_capacity(size),
@@ -1603,7 +1603,7 @@ impl<
         let pad_to = (1 << size_log_2) - 1;
 
         let new_size = if new_size <= pad_to {
-            pad_to
+            pad_to -1
         } else {
             panic!("Requested padding to size 2^{}, but circuit already contains {} gates", size_log_2, new_size)
         };
@@ -1623,6 +1623,7 @@ impl<
 
             self.end_gates_batch_for_step().unwrap();
         }
+        assert_eq!(new_size, self.n());
 
         let new_size_for_aux = new_size - self.num_input_gates;
 
@@ -1632,13 +1633,15 @@ impl<
                 tracker.grow(new_size_for_aux, false);
             }
 
-            // pad lookup selectors
-            for (_, selector) in self.table_selectors.iter_mut() {
-                selector.grow(new_size_for_aux, false);
-            }
+            if self.num_table_lookups > 0{
+                // pad lookup selectors
+                for (_, selector) in self.table_selectors.iter_mut() {
+                    selector.grow(new_size_for_aux, false);
+                }
 
-            // pad special purpose table selector poly
-            self.table_ids_poly.resize(new_size_for_aux, E::Fr::zero());
+                // pad special purpose table selector poly
+                self.table_ids_poly.resize(new_size_for_aux, E::Fr::zero());
+            }    
         }
 
         assert!((self.n()+1).is_power_of_two());
@@ -2602,15 +2605,7 @@ impl<
 
         Ok(monomial_storage)
     }
-}
 
-impl<
-    E: Engine, 
-    P: PlonkConstraintSystemParams<E>, 
-    MG: MainGate<E>, 
-    S: SynthesisMode,
-> Assembly<E, P, MG, S> {
-    
     pub fn is_satisfied(&self) -> bool {
         if !S::PRODUCE_SETUP || !S::PRODUCE_WITNESS {
             // only testing mode can run this check for now
@@ -2661,7 +2656,14 @@ impl<
 
         true
     }
+}
 
+impl<
+    E: Engine, 
+    P: PlonkConstraintSystemParams<E>, 
+    MG: MainGate<E>, 
+    S: SynthesisMode,
+> Assembly<E, P, MG, S> {
     pub fn prover_stub(self, worker: &Worker) -> Result<(), SynthesisError> {
         use crate::pairing::CurveAffine;
 
