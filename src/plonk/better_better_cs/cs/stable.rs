@@ -1578,7 +1578,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             total_number_of_table_entries,
         );
 
-        let pad_to = 1 << size_log_2;
+        let pad_to = (1 << size_log_2) - 1;
 
         let new_size = if new_size <= pad_to {
             pad_to
