@@ -1600,7 +1600,7 @@ impl<
             total_number_of_table_entries,
         );
 
-        let pad_to = (1 << size_log_2) - 1;
+        let pad_to = 1 << size_log_2;
 
         let new_size = if new_size <= pad_to {
             pad_to -1
