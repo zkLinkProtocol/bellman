@@ -32,7 +32,7 @@ pub trait LookupTableInternal<E: Engine>: Send
         fn table_id(&self) -> E::Fr;
         fn sort(&self, values: &[E::Fr], column: usize) -> Result<Vec<E::Fr>, SynthesisError>;
         fn box_clone(&self) -> Box<dyn LookupTableInternal<E>>;
-        fn column_is_trivial(&self, column_num: usize) -> bool;
+        fn column_is_trivial(&self, column_num: usize) -> bool;       
     }
 
 impl<E: Engine> std::hash::Hash for dyn LookupTableInternal<E> {
@@ -172,6 +172,35 @@ impl<E: Engine> LookupTableApplication<E> {
         self.table_to_apply.is_valid_entry(keys, values)
     }
 
+    #[track_caller]
+    pub fn is_valid_entry_with_row_idx(&self, values: &[E::Fr]) -> (bool, usize) {
+        let num_keys = self.table_to_apply.num_keys();
+        let num_values = self.table_to_apply.num_values();
+
+        assert_eq!(num_keys + num_values, values.len());
+
+        let original_values = self.get_table_values_for_polys();
+        assert_eq!(original_values.len(), values.len());
+
+
+        // we will process table values row by row
+        let num_rows = self.table_to_apply.table_size();
+
+        let mut is_valid = false;
+        let mut matched_row_idx = 0;
+        for row_idx in 0..num_rows{
+            // we need to go through each cell and check equality with input
+            if values[0] == original_values[0][row_idx] && values[1] == original_values[1][row_idx] && values[2] == original_values[2][row_idx]{
+                is_valid  = true;
+                matched_row_idx  = row_idx;
+                break;
+            }            
+        }
+
+        (is_valid, matched_row_idx)
+
+    }
+
     pub fn table_id(&self) -> E::Fr {
         self.table_to_apply.table_id()
     }
@@ -190,7 +219,7 @@ impl<E: Engine> LookupTableApplication<E> {
 
     pub fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         self.table_to_apply.query(keys)
-    }
+    }    
 }
 
 /// Apply multiple tables at the same time to corresponding columns

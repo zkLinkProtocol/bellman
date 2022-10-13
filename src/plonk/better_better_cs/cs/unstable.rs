@@ -863,6 +863,7 @@ pub struct Assembly<
     pub total_length_of_all_tables: usize,
 
     pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
+    pub table_row_tracker: std::collections::HashMap<String, Vec<u32>>,
     pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
     pub known_table_ids: Vec<E::Fr>,
     pub num_table_lookups: usize,
@@ -1121,6 +1122,7 @@ impl<
 
         self.tables.push(shared);
         self.individual_table_entries.insert(table_name.clone(), vec![]);
+        self.table_row_tracker.insert(table_name.clone(), vec![]);
         self.table_selectors.insert(table_name, BitVec::new());
         self.known_table_ids.push(table_id);
 
@@ -1209,15 +1211,13 @@ impl<
 
             let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
             assert_eq!(variables.len(), table.applies_over().len());
+            let row_tracker = self.table_row_tracker.get_mut(&table_name).unwrap();
 
-            let valid_entries = table.is_valid_entry(&table_entries[..keys_and_values_len]);
+            let (valid_entries, row_idx) = table.is_valid_entry_with_row_idx(&table_entries[..keys_and_values_len]);
             assert!(valid_entries);
 
-            if !valid_entries {
-                return Err(SynthesisError::Unsatisfiable);
-            }
-
             entries.push(table_entries);
+            row_tracker.push(row_idx as u32);            
         }
 
         self.num_table_lookups += 1;
@@ -1401,6 +1401,7 @@ impl<
 
             individual_table_entries: std::collections::HashMap::new(),
             individual_multitable_entries: std::collections::HashMap::new(),
+            table_row_tracker: std::collections::HashMap::new(),
 
             known_table_ids: vec![],
 
@@ -1460,6 +1461,7 @@ impl<
 
             individual_table_entries: std::collections::HashMap::with_capacity(size),
             individual_multitable_entries: std::collections::HashMap::with_capacity(size),
+            table_row_tracker: std::collections::HashMap::with_capacity(size),
 
             known_table_ids: vec![],
 
@@ -2173,7 +2175,7 @@ impl<
             // copy table elements themselves
 
             // let entries = single_application.get_table_values_for_polys();
-            let entries = Self::ensure_sorted_table(single_application);
+            let entries = Self::ensure_sorted_table(single_application);        
             // those are full values of polynomials, so we have to virtually transpose
 
             let size = entries[0].len();
