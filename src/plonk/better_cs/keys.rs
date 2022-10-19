@@ -1,4 +1,4 @@
-use super::super::cs::*;
+use super::cs::*;
 
 use crate::pairing::ff::{Field, PrimeField};
 use crate::pairing::{Engine, CurveAffine, EncodedPoint};
@@ -12,8 +12,8 @@ use crate::kate_commitment::*;
 
 use std::marker::PhantomData;
 
-use super::super::utils::*;
-use super::super::LDE_FACTOR;
+use super::utils::*;
+use super::LDE_FACTOR;
 
 pub struct SetupPolynomials<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub n: usize,
@@ -29,7 +29,6 @@ use crate::byteorder::BigEndian;
 use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
 use std::io::{Read, Write};
-use std::alloc::Allocator;
 
 
 // pub trait EngineDataSerializationRead: Sized {
@@ -230,9 +229,7 @@ pub fn write_optional_flag<W: Write>(is_some: bool, mut writer: W) -> std::io::R
     Ok(())
 }
 
-pub fn read_optional_polynomial_coeffs<F: PrimeField, R: Read, #[cfg(feature = "allocator")]A: Allocator + Clone + Default + Send + Sync>(
-    mut reader: R
-) -> std::io::Result<Option<Polynomial<F, Coefficients, A>>> {
+pub fn read_optional_polynomial_coeffs<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Option<Polynomial<F, Coefficients>>> {
     let is_some = read_optional_flag(&mut reader)?;
     if is_some {
         let p = read_polynomial_coeffs(&mut reader)?;
@@ -243,9 +240,7 @@ pub fn read_optional_polynomial_coeffs<F: PrimeField, R: Read, #[cfg(feature = "
     }
 }
 
-pub fn read_optional_polynomial_values_unpadded<F: PrimeField, R: Read, #[cfg(feature = "allocator")]A: Allocator + Clone + Default + Send + Sync>(
-    mut reader: R
-) -> std::io::Result<Option<Polynomial<F, Values, A>>> {
+pub fn read_optional_polynomial_values_unpadded<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Option<Polynomial<F, Values>>> {
     let is_some = read_optional_flag(&mut reader)?;
     if is_some {
         let p = read_polynomial_values_unpadded(&mut reader)?;
@@ -256,10 +251,7 @@ pub fn read_optional_polynomial_values_unpadded<F: PrimeField, R: Read, #[cfg(fe
     }
 }
 
-pub fn write_optional_polynomial<F: PrimeField, P: PolynomialForm, W: Write, #[cfg(feature = "allocator")]A: Allocator + Clone> (
-    p: &Option<Polynomial<F, P, A>>, 
-    mut writer: W
-) -> std::io::Result<()> {
+pub fn write_optional_polynomial<F: PrimeField, P: PolynomialForm, W: Write>(p: &Option<Polynomial<F, P>>, mut writer: W) -> std::io::Result<()> {
     write_optional_flag(p.is_some(), &mut writer)?;
     if let Some(p) = p.as_ref() {
         write_polynomial(p, &mut writer)?;
@@ -267,9 +259,7 @@ pub fn write_optional_polynomial<F: PrimeField, P: PolynomialForm, W: Write, #[c
     Ok(())
 }
 
-pub fn read_polynomials_coeffs_vec<F: PrimeField, R: Read, #[cfg(feature = "allocator")]A: Allocator + Clone + Default + Send + Sync>(
-    mut reader: R
-) -> std::io::Result<Vec<Polynomial<F, Coefficients, A>>> {
+pub fn read_polynomials_coeffs_vec<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Vec<Polynomial<F, Coefficients>>> {
     let num_polys = reader.read_u64::<BigEndian>()?;
     let mut polys = vec![];
     for _ in 0..num_polys {
@@ -280,9 +270,7 @@ pub fn read_polynomials_coeffs_vec<F: PrimeField, R: Read, #[cfg(feature = "allo
     Ok(polys)
 }
 
-pub fn read_polynomials_values_unpadded_vec<F: PrimeField, R: Read, #[cfg(feature = "allocator")]A: Allocator + Clone + Default + Send + Sync>(
-    mut reader: R
-) -> std::io::Result<Vec<Polynomial<F, Values, A>>> {
+pub fn read_polynomials_values_unpadded_vec<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Vec<Polynomial<F, Values>>> {
     let num_polys = reader.read_u64::<BigEndian>()?;
     let mut polys = vec![];
     for _ in 0..num_polys {
@@ -293,10 +281,7 @@ pub fn read_polynomials_values_unpadded_vec<F: PrimeField, R: Read, #[cfg(featur
     Ok(polys)
 }
 
-pub fn write_polynomials_vec<F: PrimeField, P: PolynomialForm, W: Write, #[cfg(feature = "allocator")]A: Allocator + Clone>(
-    p: &[Polynomial<F, P, A>], 
-    mut writer: W
-) -> std::io::Result<()> {
+pub fn write_polynomials_vec<F: PrimeField, P: PolynomialForm, W: Write>(p: &[Polynomial<F, P>], mut writer: W) -> std::io::Result<()> {
     writer.write_u64::<BigEndian>(p.len() as u64)?;
     for p in p.iter() {
         write_polynomial(p, &mut writer)?;
@@ -304,10 +289,7 @@ pub fn write_polynomials_vec<F: PrimeField, P: PolynomialForm, W: Write, #[cfg(f
     Ok(())
 }
 
-pub fn write_polynomial<F: PrimeField, P: PolynomialForm, W: Write, #[cfg(feature = "allocator")]A: Allocator + Clone>(
-    p: &Polynomial<F, P, A>, 
-    mut writer: W
-) -> std::io::Result<()> {
+pub fn write_polynomial<F: PrimeField, P: PolynomialForm, W: Write>(p: &Polynomial<F, P>, mut writer: W) -> std::io::Result<()> {
     writer.write_u64::<BigEndian>(p.as_ref().len() as u64)?;
     for el in p.as_ref().iter() {
         write_fr(el, &mut writer)?;
@@ -315,11 +297,9 @@ pub fn write_polynomial<F: PrimeField, P: PolynomialForm, W: Write, #[cfg(featur
     Ok(())
 }
 
-pub fn read_polynomial_coeffs<F: PrimeField, R: Read, #[cfg(feature = "allocator")]A: Allocator + Clone + Default + Send + Sync>(
-    mut reader: R
-) -> std::io::Result<Polynomial<F, Coefficients, A>> {
+pub fn read_polynomial_coeffs<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Polynomial<F, Coefficients>> {
     let num_values = reader.read_u64::<BigEndian>()?;
-    let mut poly_coeffs = Vec::<F, _>::with_capacity_in(num_values as usize, A::default());
+    let mut poly_coeffs = Vec::with_capacity(num_values as usize);
     for _ in 0..num_values {
         let el = read_fr(&mut reader)?;
         poly_coeffs.push(el);
@@ -328,11 +308,9 @@ pub fn read_polynomial_coeffs<F: PrimeField, R: Read, #[cfg(feature = "allocator
     Ok(Polynomial::from_coeffs(poly_coeffs).expect("must fit into some domain"))
 }
 
-pub fn read_polynomial_values_unpadded<F: PrimeField, R: Read, #[cfg(feature = "allocator")]A: Allocator + Clone + Default + Send + Sync>(
-    mut reader: R
-) -> std::io::Result<Polynomial<F, Values, A>> {
+pub fn read_polynomial_values_unpadded<F: PrimeField, R: Read>(mut reader: R) -> std::io::Result<Polynomial<F, Values>> {
     let num_values = reader.read_u64::<BigEndian>()?;
-    let mut poly_values = Vec::with_capacity_in(num_values as usize, A::default());
+    let mut poly_values = Vec::with_capacity(num_values as usize);
     for _ in 0..num_values {
         let el = read_fr(&mut reader)?;
         poly_values.push(el);
@@ -846,7 +824,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
         }
 
         new.non_residues
-            .extend(super::super::utils::make_non_residues::<E::Fr>(P::STATE_WIDTH - 1));
+            .extend(super::utils::make_non_residues::<E::Fr>(P::STATE_WIDTH - 1));
 
         Ok(new)
     }

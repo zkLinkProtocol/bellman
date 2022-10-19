@@ -508,10 +508,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             let (t_poly_values, t_poly_values_shifted, t_poly_monomial) = if S::PRODUCE_SETUP {
                 // these are unsorted rows of lookup tables
-                #[cfg(not(feature = "allocator"))]
                 let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables()?;
-                #[cfg(feature = "allocator")]
-                let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables::<std::alloc::Global>()?;
                 assert_eq!(t_poly_ends.len(), 4);
 
                 let mut t_poly_values_aggregated = t_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
@@ -595,10 +592,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             };
 
             let (s_poly_monomial, s_poly_unpadded_values, s_shifted_unpadded_values) = {
-                #[cfg(not(feature = "allocator"))]
                 let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
-                #[cfg(feature = "allocator")]
-                let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness::<std::alloc::Global>()?;
 
                 assert_eq!(s_poly_ends.len(), 4);
 
