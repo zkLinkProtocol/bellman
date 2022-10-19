@@ -1008,7 +1008,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         assert_eq!(challenges_slice.len(), 0);
 
-        println!("Power of alpha for a start of normal permutation argument = {}", total_powers_of_alpha_for_gates);
+        // println!("Power of alpha for a start of normal permutation argument = {}", total_powers_of_alpha_for_gates);
 
         // perform copy-permutation argument
 

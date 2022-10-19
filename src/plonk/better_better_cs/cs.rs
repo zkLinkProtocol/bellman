@@ -753,7 +753,7 @@ macro_rules! new_vec_with_allocator {
 use crate::plonk::polynomials::*;
 
 #[derive(Clone)]
-pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default> {
+pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default = Global> {
     #[cfg(feature = "allocator")]
     pub state_map: std::collections::HashMap<PolyIdentifier, Vec<Variable, A>>,
     #[cfg(not(feature = "allocator"))]
