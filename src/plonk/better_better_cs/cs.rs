@@ -161,10 +161,6 @@ pub trait MainGate<E: Engine>: Gate<E> {
     const NUM_VARIABLES: usize;
     const NUM_VARIABLES_ON_NEXT_STEP: usize;
 
-    // fn num_linear_terms(&self) -> usize;
-    // fn num_variables(&self) -> usize;
-    // fn num_variables_of_next_step(&self) -> usize;
-
     fn range_of_multiplicative_term() -> std::ops::Range<usize>;
     fn range_of_linear_terms() -> std::ops::Range<usize>;
     fn index_for_constant_term() -> usize;
@@ -899,7 +895,9 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     pub table_ids_poly: Vec<E::Fr>,
     pub total_length_of_all_tables: usize,
 
-    pub individual_table_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
+    pub individual_table_canonical_sorted_entries: std::collections::HashMap<String, Vec<[E::Fr; 3]>>,
+    pub individual_table_entries_lookups: std::collections::HashMap<String, std::collections::HashMap<[E::Fr; 3], usize>>,
+    pub individual_table_entries: std::collections::HashMap<String, Vec<usize>>,
     pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
     pub known_table_ids: Vec<E::Fr>,
     pub num_table_lookups: usize,
@@ -1166,11 +1164,26 @@ impl_assembly!{
             let table_name = table.functional_name();
             let table_id = table.table_id();
             let number_of_entries = table.size();
+
+            // ensure sorted format when we add table
+            let mut entries = Self::ensure_sorted_table(&table);
+            assert_eq!(entries.len(), 3);
+            let mut entries_as_arrays = Vec::with_capacity(entries[0].len());
+            let mut entries_into_table_row = std::collections::HashMap::with_capacity(entries[0].len());
+            let column_2 = entries.pop().unwrap();
+            let column_1 = entries.pop().unwrap();
+            let column_0 = entries.pop().unwrap();
+            for (idx, ((a, b), c)) in column_0.into_iter().zip(column_1.into_iter()).zip(column_2.into_iter()).enumerate() {
+                entries_as_arrays.push([a, b, c]);
+                entries_into_table_row.insert([a, b, c], idx);
+            }
     
             let shared = Arc::from(table);
             let res = shared.clone();
     
             self.tables.push(shared);
+            self.individual_table_canonical_sorted_entries.insert(table_name.clone(), entries_as_arrays);
+            self.individual_table_entries_lookups.insert(table_name.clone(), entries_into_table_row);
             self.individual_table_entries.insert(table_name.clone(), vec![]);
             self.table_selectors.insert(table_name, BitVec::new());
             self.known_table_ids.push(table_id);
@@ -1251,24 +1264,29 @@ impl_assembly!{
     
                 // add values for lookup table sorting later
                 let keys_and_values_len = table.applies_over().len();
-                let mut table_entries = Vec::with_capacity(keys_and_values_len + 1);
+                let mut table_entries = Vec::with_capacity(keys_and_values_len);
                 for v in variables.iter() {
                     let value = self.get_value(*v).unwrap();
                     table_entries.push(value);
                 }
-                table_entries.push(table.table_id());        
+                use std::convert::TryInto;
+                let table_entries_as_array: [_; 3] = table_entries.try_into().unwrap();
     
                 let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
                 assert_eq!(variables.len(), table.applies_over().len());
-    
-                let valid_entries = table.is_valid_entry(&table_entries[..keys_and_values_len]);
+
+                // TODO: we can substitute a check for valid entry entirely later on
+                let valid_entries = table.is_valid_entry(&table_entries_as_array[..keys_and_values_len]);
                 assert!(valid_entries);
     
                 if !valid_entries {
                     return Err(SynthesisError::Unsatisfiable);
                 }
+
+                let row_idx = self.individual_table_entries_lookups.get(&table_name).unwrap().get(&table_entries_as_array);
+                assert!(row_idx.is_some(), "table most likely doesn't contain a row for {:?}", table_entries_as_array);
     
-                entries.push(table_entries);
+                entries.push(*row_idx.unwrap());
             }
     
             self.num_table_lookups += 1;
@@ -1278,41 +1296,42 @@ impl_assembly!{
         
         #[track_caller]
         fn apply_multi_lookup_gate(&mut self, variables: &[Variable], table: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError> {
-            let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
+            unimplemented!("not implementing multitable for now");
+            // let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
     
-            if S::PRODUCE_SETUP {
-                let table_name = table.functional_name();
-                let tracker = self.multitable_selectors.get_mut(&table_name).unwrap();
-                if tracker.len() != n {
-                    let padding = n - tracker.len();
-                    tracker.grow(padding, false);
-                }
-                tracker.push(true);
-                debug_assert_eq!(n+1, tracker.len());
+            // if S::PRODUCE_SETUP {
+            //     let table_name = table.functional_name();
+            //     let tracker = self.multitable_selectors.get_mut(&table_name).unwrap();
+            //     if tracker.len() != n {
+            //         let padding = n - tracker.len();
+            //         tracker.grow(padding, false);
+            //     }
+            //     tracker.push(true);
+            //     debug_assert_eq!(n+1, tracker.len());
     
-                self.table_ids_poly.resize(n, E::Fr::zero());
-                self.table_ids_poly.push(table.table_id());
-            }
+            //     self.table_ids_poly.resize(n, E::Fr::zero());
+            //     self.table_ids_poly.push(table.table_id());
+            // }
     
-            if S::PRODUCE_WITNESS {
-                let table_name = table.functional_name();
-                let mut table_entries = Vec::with_capacity(table.applies_over().len());
-                for v in variables.iter() {
-                    let value = self.get_value(*v).unwrap();
-                    table_entries.push(value);
-                }
+            // if S::PRODUCE_WITNESS {
+            //     let table_name = table.functional_name();
+            //     let mut table_entries = Vec::with_capacity(table.applies_over().len());
+            //     for v in variables.iter() {
+            //         let value = self.get_value(*v).unwrap();
+            //         table_entries.push(value);
+            //     }
         
-                let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
-                assert_eq!(variables.len(), table.applies_over().len());
+            //     let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
+            //     assert_eq!(variables.len(), table.applies_over().len());
         
-                assert!(table.is_valid_entry(&table_entries));
+            //     assert!(table.is_valid_entry(&table_entries));
     
-                entries.push(table_entries);
-            }
+            //     entries.push(table_entries);
+            // }
     
-            self.num_multitable_lookups += 1;
+            // self.num_multitable_lookups += 1;
     
-            Ok(())
+            // Ok(())
         }
     
         fn get_current_step_number(&self) -> usize {
@@ -1448,6 +1467,8 @@ impl_assembly!{
                 table_ids_poly: vec![],
                 total_length_of_all_tables: 0,
 
+                individual_table_canonical_sorted_entries: std::collections::HashMap::new(),
+                individual_table_entries_lookups: std::collections::HashMap::new(),
                 individual_table_entries: std::collections::HashMap::new(),
                 individual_multitable_entries: std::collections::HashMap::new(),
 
@@ -1508,8 +1529,10 @@ impl_assembly!{
                 table_ids_poly: vec![],
                 total_length_of_all_tables: 0,
 
-                individual_table_entries: std::collections::HashMap::with_capacity(size),
-                individual_multitable_entries: std::collections::HashMap::with_capacity(size),
+                individual_table_canonical_sorted_entries: std::collections::HashMap::new(),
+                individual_table_entries_lookups: std::collections::HashMap::new(),
+                individual_table_entries: std::collections::HashMap::new(),
+                individual_multitable_entries: std::collections::HashMap::new(),
 
                 known_table_ids: vec![],
 
@@ -2132,12 +2155,14 @@ impl_assembly!{
             let mut column_contributions = vec![vec![]; width + 1];
 
             for table in self.tables.iter() {
-                // let entries = table.get_table_values_for_polys();
-                let entries = Self::ensure_sorted_table(table);
-                assert!(entries[0].len() == table.size(), "invalid number of elements in table {}", table.functional_name());
+                let entries = self.individual_table_canonical_sorted_entries.get(&table.functional_name()).unwrap();
+                assert!(entries.len() == table.size(), "invalid number of elements in table {}", table.functional_name());
                 // these are individual column vectors, so just copy
-                for (idx, e) in entries.into_iter().enumerate() {
-                    column_contributions[idx].extend(e);
+                for e in entries.iter() {
+                    for idx in 0..3 {
+                        column_contributions[idx].push(e[idx]);
+                    }
+
                 }
 
                 let table_id = table.table_id();
@@ -2179,126 +2204,183 @@ impl_assembly!{
             result
         }
 
-        pub fn calculate_interleaved_t_polys(&self) -> 
-            Result<Vec<Vec<E::Fr>>, SynthesisError> {
-            assert!(self.is_finalized);
+        // pub fn calculate_interleaved_t_polys(&self) -> 
+        //     Result<Vec<Vec<E::Fr>>, SynthesisError> {
+        //     assert!(self.is_finalized);
             
-            if self.tables.len() == 0 {
-                return Ok(vec![])
-            }
+        //     if self.tables.len() == 0 {
+        //         return Ok(vec![])
+        //     }
             
-            // we should pass over every table and append it
+        //     // we should pass over every table and append it
 
-            let mut width = 0;
-            for table in self.tables.iter() {
-                if width == 0 {
-                    width = table.width();
-                } else {
-                    assert_eq!(width, table.width());
-                }
-            }
+        //     let mut width = 0;
+        //     for table in self.tables.iter() {
+        //         if width == 0 {
+        //             width = table.width();
+        //         } else {
+        //             assert_eq!(width, table.width());
+        //         }
+        //     }
 
-            assert_eq!(width, 3, "only support tables that span over 3 polynomials for now");
+        //     assert_eq!(width, 3, "only support tables that span over 3 polynomials for now");
 
-            assert!(self.is_finalized);
-            if self.tables.len() == 0 {
-                return Ok(vec![]);
-            }
+        //     assert!(self.is_finalized);
+        //     if self.tables.len() == 0 {
+        //         return Ok(vec![]);
+        //     }
 
-            // total number of gates, Input + Aux
-            let size = self.n();
+        //     // total number of gates, Input + Aux
+        //     let size = self.n();
 
-            let aux_gates_start = self.num_input_gates;
+        //     let aux_gates_start = self.num_input_gates;
 
-            let mut contributions = vec![vec![E::Fr::zero(); size]; 4];
+        //     let mut contributions = vec![vec![E::Fr::zero(); size]; 4];
 
-            // make it shifted for ease of rotations later one
-            let mut place_into_idx = aux_gates_start + 1;
+        //     // make it shifted for ease of rotations later one
+        //     let mut place_into_idx = aux_gates_start + 1;
 
-            let lookup_selector = self.calculate_lookup_selector_values()?;
+        //     let lookup_selector = self.calculate_lookup_selector_values()?;
 
-            for single_application in self.tables.iter() {
-                // let entries = single_application.get_table_values_for_polys();
-                println!("Sorting table {}", single_application.functional_name());
-                let entries = Self::ensure_sorted_table(single_application);
-                assert_eq!(entries.len(), 3);
-                let table_id = single_application.table_id();
-                let num_entries = single_application.size();
+        //     for single_application in self.tables.iter() {
+        //         // let entries = single_application.get_table_values_for_polys();
+        //         println!("Sorting table {}", single_application.functional_name());
+        //         let entries = Self::ensure_sorted_table(single_application);
+        //         assert_eq!(entries.len(), 3);
+        //         let table_id = single_application.table_id();
+        //         let num_entries = single_application.size();
 
-                assert_eq!(entries[0].len(), num_entries);
+        //         assert_eq!(entries[0].len(), num_entries);
 
-                for entry_idx in 0..num_entries {
-                    'inner: loop {
-                        if lookup_selector[place_into_idx].is_zero() {
-                            // we can place a table row into the poly
-                            for column in 0..3 {
-                                contributions[column][place_into_idx] = entries[column][entry_idx];
-                            }
-                            contributions[3][place_into_idx] = table_id;
-                            place_into_idx += 1;
+        //         for entry_idx in 0..num_entries {
+        //             'inner: loop {
+        //                 if lookup_selector[place_into_idx].is_zero() {
+        //                     // we can place a table row into the poly
+        //                     for column in 0..3 {
+        //                         contributions[column][place_into_idx] = entries[column][entry_idx];
+        //                     }
+        //                     contributions[3][place_into_idx] = table_id;
+        //                     place_into_idx += 1;
 
-                            break 'inner;
-                        } else {
-                            // go for a next one 
-                            place_into_idx += 1;
-                        }
-                    }
-                }
-            }
+        //                     break 'inner;
+        //                 } else {
+        //                     // go for a next one 
+        //                     place_into_idx += 1;
+        //                 }
+        //             }
+        //         }
+        //     }
 
-            Ok(contributions)
-        }
+        //     Ok(contributions)
+        // }
 
-        pub fn calculate_s_poly_contributions_from_witness(&self) ->
-            Result<Vec<Vec<E::Fr>>, SynthesisError> 
+        // pub fn calculate_s_poly_contributions_from_witness(&self) ->
+        //     Result<Vec<Vec<E::Fr>>, SynthesisError> 
+        // {
+        //     if self.tables.len() == 0 {
+        //         return Ok(vec![]);
+        //     }
+        //     // we first form a set of all occured witness values,
+        //     // then include table entries to the set
+        //     // and then sort this set
+
+        //     let mut kv_set_entries = vec![];
+        //     let mut contributions_per_column = vec![vec![]; 4];
+        //     for (_table_idx, single_application) in self.tables.iter().enumerate() {
+        //         // copy all queries from witness
+        //         let table_name = single_application.functional_name();
+        //         for kv_values in self.individual_table_entries.get(&table_name).unwrap().iter() {
+        //             let entry = KeyValueSet::<E>::from_slice(&kv_values[..3]);
+        //             kv_set_entries.push(entry);
+        //         }
+
+        //         // copy table elements themselves
+        //         let entries = Self::ensure_sorted_table(single_application);
+        //         // those are full values of polynomials, so we have to virtually transpose
+
+        //         let size = entries[0].len();
+        //         for i in 0..size {
+        //             let entry = KeyValueSet::new([entries[0][i], entries[1][i], entries[2][i]]);
+        //             kv_set_entries.push(entry)
+        //         }
+
+        //         kv_set_entries.sort();
+
+        //         // now copy backward with addition of the table id
+
+        //         for kv in kv_set_entries.iter() {
+        //             for i in 0..3 {
+        //                 contributions_per_column[i].push(kv.inner[i]);
+        //             }
+        //         }
+
+        //         let table_id = single_application.table_id();
+        //         let pad_to_len = contributions_per_column[0].len();
+        //         contributions_per_column.last_mut().unwrap().resize(pad_to_len, table_id);
+
+        //         kv_set_entries.truncate(0);
+        //     }
+
+        //     Ok(contributions_per_column)
+        // }
+
+        pub fn calculate_s_poly_contributions_from_witness(&self, delinearization_challenge: E::Fr) ->
+            Result<Vec<E::Fr>, SynthesisError> 
         {
             if self.tables.len() == 0 {
                 return Ok(vec![]);
             }
-            // we first form a set of all occured witness values,
-            // then include table entries to the set
-            // and then sort this set
+
+            // we can sort based on indexes only
 
             let mut kv_set_entries = vec![];
-            let mut contributions_per_column = vec![vec![]; 4];
+            let mut accumulated_contributions = vec![];
             for (_table_idx, single_application) in self.tables.iter().enumerate() {
                 // copy all queries from witness
                 let table_name = single_application.functional_name();
-                for kv_values in self.individual_table_entries.get(&table_name).unwrap().iter() {
-                    let entry = KeyValueSet::<E>::from_slice(&kv_values[..3]);
-                    kv_set_entries.push(entry);
+                for kv_index in self.individual_table_entries.get(&table_name).unwrap().iter() {
+                    kv_set_entries.push(*kv_index);
                 }
 
+                let table_size = self.individual_table_canonical_sorted_entries.get(&table_name).unwrap().len();
+
                 // copy table elements themselves
-
-                // let entries = single_application.get_table_values_for_polys();
-                let entries = Self::ensure_sorted_table(single_application);
-                // those are full values of polynomials, so we have to virtually transpose
-
-                let size = entries[0].len();
-                for i in 0..size {
-                    let entry = KeyValueSet::new([entries[0][i], entries[1][i], entries[2][i]]);
-                    kv_set_entries.push(entry)
+                for i in 0..table_size {
+                    kv_set_entries.push(i);
                 }
 
                 kv_set_entries.sort();
 
                 // now copy backward with addition of the table id
 
-                for kv in kv_set_entries.iter() {
-                    for i in 0..3 {
-                        contributions_per_column[i].push(kv.inner[i]);
-                    }
+                let canonical_rows = self.individual_table_canonical_sorted_entries.get(&table_name).unwrap();
+                let table_id = single_application.table_id();
+                let mut table_id_contribution = table_id;
+                table_id_contribution.mul_assign(&delinearization_challenge);
+
+                let mut collapsed_rows = Vec::with_capacity(table_size);
+                for row in canonical_rows.iter() {
+                    let mut value = table_id_contribution;
+                    // horner rule for row[0] + alpha * row[1] + alpha^2 * row[2] + alpha^3 * table_id
+                    let mut tmp = table_id_contribution;
+                    tmp.add_assign(&row[2]);
+                    tmp.mul_assign(&delinearization_challenge);
+                    tmp.add_assign(&row[1]);
+                    tmp.mul_assign(&delinearization_challenge);
+                    tmp.add_assign(&row[0]);
+
+                    collapsed_rows.push(tmp);
                 }
 
-                let table_id = single_application.table_id();
-                let pad_to_len = contributions_per_column[0].len();
-                contributions_per_column.last_mut().unwrap().resize(pad_to_len, table_id);
+                for el in kv_set_entries.iter() {
+                    let value = collapsed_rows[*el as usize];
+                    accumulated_contributions.push(value);
+                }
 
                 kv_set_entries.truncate(0);
             }
 
-            Ok(contributions_per_column)
+            Ok(accumulated_contributions)
         }
 
         pub fn calculate_table_type_values(
@@ -2703,1515 +2785,6 @@ impl_assembly!{
             }
 
             Ok(monomial_storage)
-        }
-
-        pub fn prover_stub(self, worker: &Worker) -> Result<(), SynthesisError> {
-            use crate::pairing::CurveAffine;
-
-            assert!(self.is_finalized);
-
-            let num_state_polys = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
-            let num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
-
-            let mut values_storage = self.make_assembled_poly_storage(worker, true)?;
-            let permutation_polys = self.make_permutations(&worker)?;
-            assert_eq!(permutation_polys.len(), num_state_polys);
-
-            for (idx, poly) in permutation_polys.into_iter().enumerate() {
-                let key = PolyIdentifier::PermutationPolynomial(idx);
-                let poly = PolynomialProxy::from_owned(poly);
-                values_storage.setup_map.insert(key, poly);
-            }
-
-            let required_domain_size = self.n() + 1;
-            assert!(required_domain_size.is_power_of_two());
-
-            let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(required_domain_size);
-            let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(required_domain_size);
-
-            let mut ldes_storage = AssembledPolynomialStorage::<E>::new(
-                true, 
-                self.max_constraint_degree.next_power_of_two()
-            );
-            let monomials_storage = Self::create_monomial_storage(
-                &worker, 
-                &omegas_inv_bitreversed, 
-                &values_storage, 
-                true
-            )?;
-
-            // step 1 - commit state and witness, enumerated. Also commit sorted polynomials for table arguments
-            let mut commitments = vec![];
-
-            for i in 0..num_state_polys {
-                // TODO
-                let id = PolyIdentifier::VariablesPolynomial(i);
-                let commitment = E::G1Affine::zero();
-                commitments.push(commitment);
-            }
-
-            for i in 0..num_witness_polys {
-                // TODO
-                let id = PolyIdentifier::WitnessPolynomial(i);
-                let commitment = E::G1Affine::zero();
-                commitments.push(commitment);
-            }
-
-            // step 1.5 - if there are lookup tables then draw random "eta" to linearlize over tables
-            let mut lookup_data: Option<super::lookup_tables::LookupDataHolder<E>> = if self.tables.len() > 0 {
-                // TODO: Some of those values are actually part of the setup, but deal with it later
-
-                let eta = E::Fr::from_str("987").unwrap();
-
-                // these are selected rows from witness (where lookup applies)
-                // TODO: split and output selector without calculating witness
-
-                let selector_for_lookup_values = self.calculate_lookup_selector_values()?;
-                let table_type_values = self.calculate_table_type_values()?;
-
-                let mut table_contributions_values = self.calculate_masked_lookup_entries(&values_storage)?;
-
-                assert_eq!(table_contributions_values.len(), 3);
-
-                let witness_len = table_contributions_values[0].len();
-                assert_eq!(witness_len, required_domain_size - 1);
-
-                let mut f_poly_values_aggregated = table_contributions_values.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-
-                let mut current = eta;
-                for t in table_contributions_values.into_iter() {
-                    let op = BinopAddAssignScaled::new(current);
-                    binop_over_slices(&worker, &op, &mut f_poly_values_aggregated, &t);
-                    
-                    current.mul_assign(&eta);
-                }
-
-                // add table type marker
-                let op = BinopAddAssignScaled::new(current);
-                binop_over_slices(&worker, &op, &mut f_poly_values_aggregated, &table_type_values);
-
-                let table_type_poly_monomial = {
-                    let mon = Polynomial::from_values(table_type_values)?;
-                    let mon = mon.ifft_using_bitreversed_ntt(
-                        &worker,
-                        &omegas_inv_bitreversed,
-                        &E::Fr::one()
-                    )?;
-
-                    mon
-                };
-
-                // these are unsorted rows of lookup tables
-                let mut t_poly_ends = self.calculate_t_polynomial_values_for_single_application_tables()?;
-
-                assert_eq!(t_poly_ends.len(), 4);
-
-                let mut t_poly_values_aggregated = t_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-                let mut current = eta;
-                for t in t_poly_ends.into_iter() {
-                    let op = BinopAddAssignScaled::new(current);
-                    binop_over_slices(&worker, &op, &mut t_poly_values_aggregated, &t);
-                    
-                    current.mul_assign(&eta);
-                }
-
-                let copy_start = witness_len - t_poly_values_aggregated.len();
-                let mut full_t_poly_values = vec![E::Fr::zero(); witness_len];
-                let mut full_t_poly_values_shifted = full_t_poly_values.clone();
-
-                full_t_poly_values[copy_start..].copy_from_slice(&t_poly_values_aggregated);
-                full_t_poly_values_shifted[(copy_start - 1)..(witness_len-1)].copy_from_slice(&t_poly_values_aggregated);
-
-                assert!(full_t_poly_values[0].is_zero());
-
-                dbg!(&full_t_poly_values);
-
-                // // these are unsorted rows of lookup tables
-                // let mut interleaved_t_polys = self.calculate_interleaved_t_polys()?;
-
-                // assert_eq!(interleaved_t_polys.len(), 4);
-                // assert_eq!(interleaved_t_polys[0].len(), witness_len);
-
-                // let mut t_poly_values_aggregated = interleaved_t_polys.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-                // let mut current = eta;
-                // for t in interleaved_t_polys.into_iter() {
-                //     let op = BinopAddAssignScaled::new(current);
-                //     binop_over_slices(&worker, &op, &mut t_poly_values_aggregated, &t);
-                    
-                //     current.mul_assign(&eta);
-                // }
-
-                // let mut full_t_poly_values = vec![E::Fr::zero(); witness_len];
-                // let mut full_t_poly_values_shifted = full_t_poly_values.clone();
-
-                // full_t_poly_values[..].copy_from_slice(&t_poly_values_aggregated);
-                // full_t_poly_values_shifted[..(witness_len-1)].copy_from_slice(&t_poly_values_aggregated[1..]);
-
-                // assert!(full_t_poly_values[0].is_zero());
-
-                let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
-                assert_eq!(s_poly_ends.len(), 4);
-
-                let mut s_poly_values_aggregated = s_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-                let mut current = eta;
-                for t in s_poly_ends.into_iter() {
-                    let op = BinopAddAssignScaled::new(current);
-                    binop_over_slices(&worker, &op, &mut s_poly_values_aggregated, &t);
-                    
-                    current.mul_assign(&eta);
-                }
-
-                let sorted_copy_start = witness_len - s_poly_values_aggregated.len();
-
-                let mut full_s_poly_values = vec![E::Fr::zero(); witness_len];
-                let mut full_s_poly_values_shifted = full_s_poly_values.clone();
-
-                full_s_poly_values[sorted_copy_start..].copy_from_slice(&s_poly_values_aggregated);
-                full_s_poly_values_shifted[(sorted_copy_start - 1)..(witness_len-1)].copy_from_slice(&s_poly_values_aggregated);
-
-                assert!(full_s_poly_values[0].is_zero());
-
-                let selector_poly = Polynomial::<E::Fr, Values>::from_values(selector_for_lookup_values)?.ifft_using_bitreversed_ntt(
-                    &worker,
-                    &omegas_inv_bitreversed,
-                    &E::Fr::one()
-                )?;
-
-                let data = super::lookup_tables::LookupDataHolder::<E> {
-                    eta,
-                    f_poly_unpadded_values: Some(Polynomial::from_values_unpadded(f_poly_values_aggregated)?),
-                    t_poly_unpadded_values: Some(Polynomial::from_values_unpadded(full_t_poly_values)?),
-                    t_shifted_unpadded_values: Some(Polynomial::from_values_unpadded(full_t_poly_values_shifted)?),
-                    s_poly_unpadded_values: Some(Polynomial::from_values_unpadded(full_s_poly_values)?),
-                    s_shifted_unpadded_values: Some(Polynomial::from_values_unpadded(full_s_poly_values_shifted)?),
-                    // f_poly_monomial: None,
-                    t_poly_monomial: None,
-                    s_poly_monomial: None,
-                    selector_poly_monomial: Some(selector_poly),
-                    table_type_poly_monomial: Some(table_type_poly_monomial),
-                };
-
-                Some(data)
-            } else {
-                None
-            };
-
-            if self.multitables.len() > 0 {
-                unimplemented!("do not support multitables yet")
-            }
-
-            // step 2 - grand product arguments
-
-            let beta_for_copy_permutation = E::Fr::from_str("123").unwrap();
-            let gamma_for_copy_permutation = E::Fr::from_str("456").unwrap();
-
-            // copy permutation grand product argument
-
-            let mut grand_products_protos_with_gamma = vec![];
-
-            for i in 0..num_state_polys {
-                let id = PolyIdentifier::VariablesPolynomial(i);
-
-                let mut p = values_storage.state_map.get(&id).unwrap().as_ref().clone();
-                p.add_constant(&worker, &gamma_for_copy_permutation);
-
-                grand_products_protos_with_gamma.push(p);
-            }
-            
-            let required_domain_size = required_domain_size;
-
-            let domain = Domain::new_for_size(required_domain_size as u64)?;
-
-            let mut domain_elements = materialize_domain_elements_with_natural_enumeration(
-                &domain, 
-                &worker
-            );
-
-            domain_elements.pop().expect("must pop last element for omega^i");
-
-            let non_residues = make_non_residues::<E::Fr>(num_state_polys - 1);
-
-            let mut domain_elements_poly_by_beta = Polynomial::from_values_unpadded(domain_elements)?;
-            domain_elements_poly_by_beta.scale(&worker, beta_for_copy_permutation);
-
-            // we take A, B, C, ... values and form (A + beta * X * non_residue + gamma), etc and calculate their grand product
-
-            let mut z_num = {
-                let mut grand_products_proto_it = grand_products_protos_with_gamma.iter().cloned();
-
-                let mut z_1 = grand_products_proto_it.next().unwrap();
-                z_1.add_assign(&worker, &domain_elements_poly_by_beta);
-
-                for (mut p, non_res) in grand_products_proto_it.zip(non_residues.iter()) {
-                    p.add_assign_scaled(&worker, &domain_elements_poly_by_beta, non_res);
-                    z_1.mul_assign(&worker, &p);
-                }
-
-                z_1
-            };
-
-            // we take A, B, C, ... values and form (A + beta * perm_a + gamma), etc and calculate their grand product
-
-            let mut permutation_polynomials_values_of_size_n_minus_one = vec![];
-            
-            for idx in 0..num_state_polys {
-                let key = PolyIdentifier::PermutationPolynomial(idx);
-
-                let mut coeffs = values_storage.get_poly(key).clone().into_coeffs();
-                coeffs.pop().unwrap();
-
-                let p = Polynomial::from_values_unpadded(coeffs)?;
-                permutation_polynomials_values_of_size_n_minus_one.push(p);
-            }
-
-            let z_den = {
-                assert_eq!(
-                    permutation_polynomials_values_of_size_n_minus_one.len(), 
-                    grand_products_protos_with_gamma.len()
-                );
-                let mut grand_products_proto_it = grand_products_protos_with_gamma.into_iter();
-                let mut permutation_polys_it = permutation_polynomials_values_of_size_n_minus_one.iter();
-
-                let mut z_2 = grand_products_proto_it.next().unwrap();
-                z_2.add_assign_scaled(&worker, permutation_polys_it.next().unwrap(), &beta_for_copy_permutation);
-
-                for (mut p, perm) in grand_products_proto_it
-                                                .zip(permutation_polys_it) {
-                    // permutation polynomials 
-                    p.add_assign_scaled(&worker, &perm, &beta_for_copy_permutation);
-                    z_2.mul_assign(&worker, &p);
-                }
-
-                z_2.batch_inversion(&worker)?;
-
-                z_2
-            };
-
-            z_num.mul_assign(&worker, &z_den);
-            drop(z_den);
-
-            let z = z_num.calculate_shifted_grand_product(&worker)?;
-            drop(z_num);
-
-            assert!(z.size().is_power_of_two());
-
-            assert!(z.as_ref()[0] == E::Fr::one());
-
-            let copy_permutation_z_in_monomial_form = z.ifft_using_bitreversed_ntt(
-                &worker, 
-                &omegas_inv_bitreversed, 
-                &E::Fr::one()
-            )?;
-
-            // // TODO: move to setup
-            // let mut permutation_polys_in_monomial_form = vec![];
-            // for idx in 0.. {
-            //     let key = PolyIdentifier::PermutationPolynomial(idx);
-            //     let p = p.ifft_using_bitreversed_ntt(
-            //         &worker, 
-            //         &omegas_inv_bitreversed, 
-            //         &E::Fr::one()
-            //     )?;
-
-            //     permutation_polys_in_monomial_form.push(p);
-            // }
-
-            let mut beta_for_lookup = None; 
-            let mut gamma_for_lookup = None;
-
-            let lookup_z_poly_in_monomial_form = if let Some(data) = lookup_data.as_mut() {
-                let beta_for_lookup_permutation = E::Fr::from_str("789").unwrap();
-                let gamma_for_lookup_permutation = E::Fr::from_str("1230").unwrap();
-
-                beta_for_lookup = Some(beta_for_lookup_permutation);
-                gamma_for_lookup = Some(gamma_for_lookup_permutation);
-        
-                let mut beta_plus_one = beta_for_lookup_permutation;
-                beta_plus_one.add_assign(&E::Fr::one());
-                let mut gamma_beta = gamma_for_lookup_permutation;
-                gamma_beta.mul_assign(&beta_plus_one);
-        
-                let expected = gamma_beta.pow([(required_domain_size-1) as u64]);
-                
-                let f_poly_unpadded_values = data.f_poly_unpadded_values.take().unwrap();
-                let t_poly_unpadded_values = data.t_poly_unpadded_values.take().unwrap();
-                let t_shifted_unpadded_values = data.t_shifted_unpadded_values.take().unwrap();
-                let s_poly_unpadded_values = data.s_poly_unpadded_values.take().unwrap();
-                let s_shifted_unpadded_values = data.s_shifted_unpadded_values.take().unwrap();
-
-                // Z(x*omega) = Z(x) * 
-                // (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) / 
-                // (\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) 
-
-                let mut z_num = {
-                    // (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega))
-
-                    let mut t = t_poly_unpadded_values.clone();
-                    t.add_assign_scaled(&worker, &t_shifted_unpadded_values, &beta_for_lookup_permutation);
-                    t.add_constant(&worker, &gamma_beta);
-
-                    let mut tmp = f_poly_unpadded_values.clone();
-                    tmp.add_constant(&worker, &gamma_for_lookup_permutation);
-                    tmp.scale(&worker, beta_plus_one);
-
-                    t.mul_assign(&worker, &tmp);
-                    drop(tmp);
-
-                    t
-                };
-
-                let z_den = {
-                    // (\gamma*(1 + \beta) + s(x) + \beta * s(x*omega)))
-
-                    let mut t = s_poly_unpadded_values.clone();
-                    t.add_assign_scaled(&worker, &s_shifted_unpadded_values, &beta_for_lookup_permutation);
-                    t.add_constant(&worker, &gamma_beta);
-
-                    t.batch_inversion(&worker)?;
-
-                    t
-                };
-
-                z_num.mul_assign(&worker, &z_den);
-                drop(z_den);
-
-                let z = z_num.calculate_shifted_grand_product(&worker)?;
-                drop(z_num);
-
-                assert!(z.size().is_power_of_two());
-
-                assert_eq!(z.as_ref()[0], E::Fr::one());
-                assert_eq!(*z.as_ref().last().unwrap(), expected);
-
-                let t_poly_monomial = t_poly_unpadded_values.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
-                    &worker,
-                    &omegas_inv_bitreversed,
-                    &E::Fr::one()
-                )?;
-
-                let s_poly_monomial = s_poly_unpadded_values.clone_padded_to_domain()?.ifft_using_bitreversed_ntt(
-                    &worker,
-                    &omegas_inv_bitreversed,
-                    &E::Fr::one()
-                )?;
-
-                // data.f_poly_monomial = Some(f_poly_monomial);
-                data.t_poly_monomial = Some(t_poly_monomial);
-                data.s_poly_monomial = Some(s_poly_monomial);
-
-                let z = z.ifft_using_bitreversed_ntt(
-                    &worker, 
-                    &omegas_inv_bitreversed, 
-                    &E::Fr::one()
-                )?;
-
-                Some(z)
-            } else {
-                None
-            };
-
-            // TODO: commit to z polynomials
-
-            // now draw alpha and add all the contributions to the quotient polynomial
-
-            let alpha = E::Fr::from_str("1234567890").unwrap();
-            
-            let mut total_powers_of_alpha_for_gates = 0;
-            for g in self.sorted_gates.iter() {
-                total_powers_of_alpha_for_gates += g.num_quotient_terms();
-            }
-
-            println!("Have {} terms from {} gates", total_powers_of_alpha_for_gates, self.sorted_gates.len());
-
-            let mut current_alpha = E::Fr::one();
-            let mut powers_of_alpha_for_gates = Vec::with_capacity(total_powers_of_alpha_for_gates);
-            powers_of_alpha_for_gates.push(current_alpha);
-            for _ in 1..total_powers_of_alpha_for_gates {
-                current_alpha.mul_assign(&alpha);
-                powers_of_alpha_for_gates.push(current_alpha);
-            }
-
-            assert_eq!(powers_of_alpha_for_gates.len(), total_powers_of_alpha_for_gates);
-
-            let mut all_gates = self.sorted_gates.clone();
-            let num_different_gates = self.sorted_gates.len();
-
-            let mut challenges_slice = &powers_of_alpha_for_gates[..];
-
-            let mut lde_factor = num_state_polys;
-            for g in self.sorted_gates.iter() {
-                let degree = g.degree();
-                if degree > lde_factor {
-                    lde_factor = degree;
-                }
-            }
-
-            assert!(lde_factor <= 4);
-
-            let coset_factor = E::Fr::multiplicative_generator();
-
-            let mut t_poly = {
-                let gate = all_gates.drain(0..1).into_iter().next().unwrap();
-                assert!(<Self as ConstraintSystem<E>>::MainGate::default().into_internal() == gate);
-                let gate = <Self as ConstraintSystem<E>>::MainGate::default();
-                let num_challenges = gate.num_quotient_terms();
-                let (for_gate, rest) = challenges_slice.split_at(num_challenges);
-                challenges_slice = rest;
-
-                let input_values = self.input_assingments.clone();
-
-                let mut t = gate.contribute_into_quotient_for_public_inputs(
-                    required_domain_size,
-                    &input_values,
-                    &mut ldes_storage,
-                    &monomials_storage,
-                    for_gate,
-                    &omegas_bitreversed,
-                    &omegas_inv_bitreversed,
-                    &worker
-                )?;
-
-                if num_different_gates > 1 {
-                    // we have to multiply by the masking poly (selector)
-                    let key = PolyIdentifier::GateSelector(gate.name());
-                    let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
-                    let lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
-                        &worker, 
-                        lde_factor, 
-                        &omegas_bitreversed, 
-                        &coset_factor
-                    )?;
-
-                    t.mul_assign(&worker, &lde);
-                    drop(lde);
-                }
-
-                t
-            };
-
-            let non_main_gates = all_gates;
-
-            for gate in non_main_gates.into_iter() {
-                let num_challenges = gate.num_quotient_terms();
-                let (for_gate, rest) = challenges_slice.split_at(num_challenges);
-                challenges_slice = rest;
-
-                let mut contribution = gate.contribute_into_quotient(
-                    required_domain_size,
-                    &mut ldes_storage,
-                    &monomials_storage,
-                    for_gate,
-                    &omegas_bitreversed,
-                    &omegas_inv_bitreversed,
-                    &worker
-                )?;
-
-                {
-                    // we have to multiply by the masking poly (selector)
-                    let key = PolyIdentifier::GateSelector(gate.name());
-                    let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
-                    let lde = monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_bitreversed_ntt(
-                        &worker, 
-                        lde_factor, 
-                        &omegas_bitreversed, 
-                        &coset_factor
-                    )?;
-
-                    contribution.mul_assign(&worker, &lde);
-                    drop(lde);
-                }
-
-                t_poly.add_assign(&worker, &contribution);
-            }
-
-            assert_eq!(challenges_slice.len(), 0);
-
-            println!("Power of alpha for a start of normal permutation argument = {}", total_powers_of_alpha_for_gates);
-
-            // perform copy-permutation argument
-
-            // we precompute L_{0} here cause it's necessary for both copy-permutation and lookup permutation
-
-            // z(omega^0) - 1 == 0
-            let l_0 = calculate_lagrange_poly::<E::Fr>(&worker, required_domain_size.next_power_of_two(), 0)?;
-
-            let l_0_coset_lde_bitreversed = l_0.bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                lde_factor, 
-                &omegas_bitreversed, 
-                &coset_factor
-            )?;
-
-            let mut copy_grand_product_alphas = None;
-            let x_poly_lde_bitreversed = {
-                // now compute the permutation argument
-
-                let z_coset_lde_bitreversed = copy_permutation_z_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
-                    &worker, 
-                    lde_factor, 
-                    &omegas_bitreversed, 
-                    &coset_factor
-                )?;
-
-                assert!(z_coset_lde_bitreversed.size() == required_domain_size*lde_factor);
-
-                let z_shifted_coset_lde_bitreversed = z_coset_lde_bitreversed.clone_shifted_assuming_bitreversed(
-                    lde_factor,
-                    &worker,
-                )?;
-
-                assert!(z_shifted_coset_lde_bitreversed.size() == required_domain_size*lde_factor);
-
-                // For both Z_1 and Z_2 we first check for grand products
-                // z*(X)(A + beta*X + gamma)(B + beta*k_1*X + gamma)(C + beta*K_2*X + gamma) - 
-                // - (A + beta*perm_a(X) + gamma)(B + beta*perm_b(X) + gamma)(C + beta*perm_c(X) + gamma)*Z(X*Omega)== 0
-
-                // we use evaluations of the polynomial X and K_i * X on a large domain's coset
-                let mut contrib_z = z_coset_lde_bitreversed.clone();
-
-                // precompute x poly
-                let mut x_poly = Polynomial::from_values(vec![
-                    coset_factor;
-                    required_domain_size*lde_factor
-                ])?;
-                x_poly.distribute_powers(&worker, z_shifted_coset_lde_bitreversed.omega);
-                x_poly.bitreverse_enumeration(&worker);
-        
-                assert_eq!(x_poly.size(), required_domain_size * lde_factor);
-
-                // A + beta*X + gamma
-
-                let mut tmp = ldes_storage.state_map.get(&PolyIdentifier::VariablesPolynomial(0)).unwrap().as_ref().clone();
-                tmp.add_constant(&worker, &gamma_for_copy_permutation);
-                tmp.add_assign_scaled(&worker, &x_poly, &beta_for_copy_permutation);
-                contrib_z.mul_assign(&worker, &tmp);
-
-                assert_eq!(non_residues.len() + 1, num_state_polys);
-
-                for (poly_idx, non_res) in (1..num_state_polys).zip(non_residues.iter()) {
-                    let mut factor = beta_for_copy_permutation;
-                    factor.mul_assign(&non_res);
-
-                    let key = PolyIdentifier::VariablesPolynomial(poly_idx);
-                    tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap().as_ref());
-                    tmp.add_constant(&worker, &gamma_for_copy_permutation);
-                    tmp.add_assign_scaled(&worker, &x_poly, &factor);
-                    contrib_z.mul_assign(&worker, &tmp);
-                }
-
-                t_poly.add_assign_scaled(&worker, &contrib_z, &current_alpha);
-
-                let alpha_0 = current_alpha;
-
-                drop(contrib_z);
-
-                let mut contrib_z = z_shifted_coset_lde_bitreversed;
-
-                // A + beta*perm_a + gamma
-
-                for idx in 0..num_state_polys {
-                    let key = PolyIdentifier::VariablesPolynomial(idx);
-
-                    tmp.reuse_allocation(&ldes_storage.state_map.get(&key).unwrap().as_ref());
-                    tmp.add_constant(&worker, &gamma_for_copy_permutation);
-
-                    let key = PolyIdentifier::PermutationPolynomial(idx);
-                    let perm = monomials_storage.get_poly(key).clone().bitreversed_lde_using_bitreversed_ntt(
-                        &worker, 
-                        lde_factor, 
-                        &omegas_bitreversed, 
-                        &coset_factor
-                    )?;
-                    tmp.add_assign_scaled(&worker, &perm, &beta_for_copy_permutation);
-                    contrib_z.mul_assign(&worker, &tmp);
-                    drop(perm);
-                }
-
-                t_poly.sub_assign_scaled(&worker, &contrib_z, &current_alpha);
-
-                drop(contrib_z);
-
-                drop(tmp);
-
-                // Z(x) * L_{0}(x) - 1 == 0
-                current_alpha.mul_assign(&alpha);
-
-                let alpha_1 = current_alpha;
-
-                {
-                    let mut z_minus_one_by_l_0 = z_coset_lde_bitreversed;
-                    z_minus_one_by_l_0.sub_constant(&worker, &E::Fr::one());
-
-                    z_minus_one_by_l_0.mul_assign(&worker, &l_0_coset_lde_bitreversed);
-
-                    t_poly.add_assign_scaled(&worker, &z_minus_one_by_l_0, &current_alpha);
-                }
-
-                copy_grand_product_alphas = Some([alpha_0, alpha_1]);
-
-                x_poly
-            };
-
-            // let inverse_divisor_on_coset_lde_natural_ordering = {
-            //     let mut vanishing_poly_inverse_bitreversed =
-            //         evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
-            //             required_domain_size as u64,
-            //             &E::Fr::multiplicative_generator(),
-            //             (required_domain_size * lde_factor) as u64,
-            //             &worker,
-            //         )?;
-            //     vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
-            //     // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
-
-            //     vanishing_poly_inverse_bitreversed
-            // };
-
-            // t_poly.bitreverse_enumeration(&worker);
-
-            // t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
-
-            // drop(inverse_divisor_on_coset_lde_natural_ordering);
-
-            // add contribution from grand product for loopup polys if there is one
-
-            let mut lookup_grand_product_alphas = None;
-            if let Some(z_poly_in_monomial_form) = lookup_z_poly_in_monomial_form.as_ref() {
-                let beta_for_lookup_permutation = beta_for_lookup.unwrap();
-                let gamma_for_lookup_permutation = gamma_for_lookup.unwrap();
-
-                let mut beta_plus_one = beta_for_lookup_permutation;
-                beta_plus_one.add_assign(&E::Fr::one());
-                let mut gamma_beta = gamma_for_lookup_permutation;
-                gamma_beta.mul_assign(&beta_plus_one);
-        
-                let expected = gamma_beta.pow([(required_domain_size-1) as u64]);
-
-                current_alpha.mul_assign(&alpha);
-
-                let alpha_0 = current_alpha;
-
-                // same grand product argument for lookup permutation except divisor is now with one point cut
-
-                let z_lde = z_poly_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
-                    &worker, 
-                    lde_factor, 
-                    &omegas_bitreversed, 
-                    &coset_factor
-                )?;
-
-                let z_lde_shifted = z_lde.clone_shifted_assuming_bitreversed(
-                    lde_factor,
-                    &worker
-                )?;
-
-                // We make an small ad-hoc modification here and instead of dividing some contributions by
-                // (X^n - 1)/(X - omega^{n-1}) we move (X - omega^{n-1}) to the numerator and join the divisions
-
-                // Numerator degree is at max 4n, so it's < 4n after division
-
-                // ( Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
-                // - Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) )*(X - omega^{n-1})
-
-                let data = lookup_data.as_ref().unwrap();
-
-                let s_lde = data.s_poly_monomial.as_ref().unwrap().clone().bitreversed_lde_using_bitreversed_ntt(
-                    &worker, 
-                    lde_factor, 
-                    &omegas_bitreversed, 
-                    &coset_factor
-                )?;
-
-                let s_lde_shifted = s_lde.clone_shifted_assuming_bitreversed(
-                    lde_factor,
-                    &worker
-                )?;
-
-                // Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega)))
-
-                let mut contribution = s_lde;
-                contribution.add_assign_scaled(&worker, &s_lde_shifted, &beta_for_lookup_permutation);
-                contribution.add_constant(&worker, &gamma_beta);
-                contribution.mul_assign(&worker, &z_lde_shifted);
-
-                drop(s_lde_shifted);
-                drop(z_lde_shifted);
-
-                let t_lde = data.t_poly_monomial.as_ref().unwrap().clone().bitreversed_lde_using_bitreversed_ntt(
-                    &worker, 
-                    lde_factor, 
-                    &omegas_bitreversed, 
-                    &coset_factor
-                )?;
-
-                let t_lde_shifted = t_lde.clone_shifted_assuming_bitreversed(
-                    lde_factor,
-                    &worker
-                )?;
-
-                let f_lde = {
-                    // add up ldes of a,b,c and table_type poly and multiply by selector
-                    
-                    let a_ref = get_from_map_unchecked(
-                        PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
-                        &ldes_storage
-                    );
-                    let mut tmp = a_ref.clone();
-                    drop(a_ref);
-
-                    let eta = lookup_data.as_ref().unwrap().eta;
-
-                    let mut current = eta;
-
-                    let b_ref = get_from_map_unchecked(
-                        PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
-                        &ldes_storage
-                    );
-
-                    tmp.add_assign_scaled(&worker, b_ref, &current);
-
-                    drop(b_ref);
-                    current.mul_assign(&eta);
-
-                    let c_ref = get_from_map_unchecked(
-                        PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
-                        &ldes_storage
-                    );
-
-                    tmp.add_assign_scaled(&worker, c_ref, &current);
-
-                    drop(c_ref);
-                    current.mul_assign(&eta);
-
-                    let table_type_lde = lookup_data.as_ref().unwrap().table_type_poly_monomial.as_ref().unwrap().clone()
-                        .bitreversed_lde_using_bitreversed_ntt(
-                            &worker, 
-                            lde_factor, 
-                            &omegas_bitreversed, 
-                            &coset_factor
-                    )?;
-
-                    tmp.add_assign_scaled(&worker, &table_type_lde, &current);
-
-                    drop(table_type_lde);
-
-                    let lookup_selector_lde = lookup_data.as_ref().unwrap().selector_poly_monomial.as_ref().unwrap().clone()
-                        .bitreversed_lde_using_bitreversed_ntt(
-                            &worker, 
-                            lde_factor, 
-                            &omegas_bitreversed, 
-                            &coset_factor
-                    )?;
-
-                    tmp.mul_assign(&worker, &lookup_selector_lde);
-
-                    drop(lookup_selector_lde);
-
-                    tmp
-
-                };
-
-                //  - Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega))
-
-                let mut tmp = f_lde;
-                tmp.add_constant(&worker, &gamma_for_lookup_permutation);
-                tmp.mul_assign(&worker, &z_lde);
-                tmp.scale(&worker, beta_plus_one);
-
-                let mut t = t_lde;
-                t.add_assign_scaled(&worker, &t_lde_shifted, &beta_for_lookup_permutation);
-                t.add_constant(&worker, &gamma_beta);
-
-                tmp.mul_assign(&worker, &t);
-                
-                drop(t);
-                drop(t_lde_shifted);
-
-                contribution.sub_assign(&worker, &tmp);
-
-                contribution.scale(&worker, current_alpha);
-
-                // multiply by (X - omega^{n-1})
-
-                let last_omega = domain.generator.pow(&[(required_domain_size - 1) as u64]);
-                let mut x_minus_last_omega = x_poly_lde_bitreversed;
-                x_minus_last_omega.sub_constant(&worker, &last_omega);
-
-                contribution.mul_assign(&worker, &x_minus_last_omega);
-                drop(x_minus_last_omega);
-
-                // we do not need to do addition multiplications for terms below cause multiplication by lagrange poly
-                // does everything for us
-
-                // check that (Z(x) - 1) * L_{0} == 0
-                current_alpha.mul_assign(&alpha);
-
-                let alpha_1 = current_alpha;
-                
-                tmp.reuse_allocation(&z_lde);
-                tmp.sub_constant(&worker, &E::Fr::one());
-                tmp.mul_assign(&worker, &l_0_coset_lde_bitreversed);
-
-                drop(l_0_coset_lde_bitreversed);
-
-                contribution.add_assign_scaled(&worker, &tmp, &current_alpha);
-
-                // check that (Z(x) - expected) * L_{n-1}  == 0
-
-                current_alpha.mul_assign(&alpha);
-
-                let alpha_2 = current_alpha;
-
-                let l_last = calculate_lagrange_poly::<E::Fr>(&worker, required_domain_size.next_power_of_two(), required_domain_size - 1)?;
-
-                let l_last_coset_lde_bitreversed = l_last.bitreversed_lde_using_bitreversed_ntt(
-                    &worker, 
-                    lde_factor, 
-                    &omegas_bitreversed, 
-                    &coset_factor
-                )?;
-
-                tmp.reuse_allocation(&z_lde);
-                tmp.sub_constant(&worker, &expected);
-                tmp.mul_assign(&worker, &l_last_coset_lde_bitreversed);
-
-                drop(l_last_coset_lde_bitreversed);
-
-                contribution.add_assign_scaled(&worker, &tmp, &current_alpha);
-
-                drop(tmp);
-                drop(z_lde);
-
-                // contribution.bitreverse_enumeration(&worker);
-
-
-                // let vanishing_for_lookup = {
-                //     let normally_enumerated = calculate_inverse_vanishing_polynomial_with_last_point_cut(
-                //         &worker,
-                //         required_domain_size * lde_factor,
-                //         required_domain_size,
-                //         coset_factor,
-                //     )?;
-
-                //     normally_enumerated
-                // };
-
-                // contribution.mul_assign(&worker, &vanishing_for_lookup);
-
-                t_poly.add_assign(&worker, &contribution);
-
-                drop(contribution);
-
-                lookup_grand_product_alphas = Some([alpha_0, alpha_1, alpha_2]);
-            } else {
-                drop(x_poly_lde_bitreversed);
-                drop(l_0_coset_lde_bitreversed);
-            }
-
-            // perform the division
-
-            let inverse_divisor_on_coset_lde_natural_ordering = {
-                let mut vanishing_poly_inverse_bitreversed =
-                    evaluate_vanishing_polynomial_of_degree_on_domain_size::<E::Fr>(
-                        required_domain_size as u64,
-                        &E::Fr::multiplicative_generator(),
-                        (required_domain_size * lde_factor) as u64,
-                        &worker,
-                    )?;
-                vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
-                // vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker)?;
-
-                vanishing_poly_inverse_bitreversed
-            };
-
-            // don't forget to bitreverse
-
-            t_poly.bitreverse_enumeration(&worker);
-
-            t_poly.mul_assign(&worker, &inverse_divisor_on_coset_lde_natural_ordering);
-
-            drop(inverse_divisor_on_coset_lde_natural_ordering);
-            
-            let t_poly = t_poly.icoset_fft_for_generator(&worker, &coset_factor);
-
-            println!("Lde factor = {}", lde_factor);
-
-            // println!("Quotient poly = {:?}", t_poly.as_ref());
-
-            {
-                // degree is 4n-4
-                let l = t_poly.as_ref().len();
-                assert_eq!(&t_poly.as_ref()[(l-4)..], &[E::Fr::zero(); 4][..]);
-            }
-
-            println!("Quotient poly degree = {}", get_degree::<E::Fr>(&t_poly));
-
-            let t_poly_parts = t_poly.break_into_multiples(required_domain_size)?;
-            // TODO: commit every of them
-
-            // draw opening point
-            let z = E::Fr::from_str("333444555").unwrap();
-            let omega = domain.generator;
-
-            // Now perform the linearization.
-            // First collect and evalute all the polynomials that are necessary for linearization
-
-            let mut opening_requests_before_linearization = std::collections::HashSet::new();
-            let mut all_queries = std::collections::HashSet::new();
-            let mut sorted_opening_requests = vec![];
-            let mut sorted_selector_for_opening = vec![];
-            let mut polys_in_linearization = std::collections::HashSet::new();
-
-            let num_gate_types = self.sorted_gates.len();
-
-            for gate in self.sorted_gates.iter() {
-                for q in gate.all_queried_polynomials().into_iter() {
-                    all_queries.insert(q);
-                }
-                if gate.benefits_from_linearization() {
-                    // it's better to linearize the gate
-                    if num_gate_types > 1 {
-                        // there are various gates, so we need to query the selector
-                        sorted_selector_for_opening.push(gate.box_clone());
-                    }
-
-                    for q in gate.needs_opened_for_linearization().into_iter() {
-                        if !opening_requests_before_linearization.contains(&q) {
-                            opening_requests_before_linearization.insert(q.clone());
-                            sorted_opening_requests.push(q);
-                        }
-                    }
-
-                    for q in gate.linearizes_over().into_iter() {
-                        polys_in_linearization.insert(q);
-                    }
-                } else {
-                    // we will linearize over the selector, so we do not need to query it
-                }
-            }
-
-            // println!("Will need to open for linearization: {:?}", sorted_opening_requests);
-            // println!("Will open selectors: {:?}", sorted_selector_for_opening);
-
-            // println!("All queries = {:?}", all_queries);
-
-            // Sanity check: we open everything either in linearization or in plain text! 
-            {
-                let must_open_without_linearization: Vec<_> = all_queries.difference(&polys_in_linearization).collect();
-
-                for p in must_open_without_linearization.into_iter() {
-                    assert!(opening_requests_before_linearization.contains(&p));
-                }
-            }
-
-            let mut query_values = vec![];
-            let mut query_values_map_over_dilation = std::collections::HashMap::new();
-            let mut query_values_map = std::collections::HashMap::new();
-
-            for p in sorted_opening_requests.into_iter() {
-                let (id, dilation_value) = p.into_id_and_raw_dilation();
-                let poly_ref = match id {
-                    p @ PolyIdentifier::VariablesPolynomial(..) => {
-                        monomials_storage.state_map.get(&p).unwrap().as_ref()
-                    },
-                    p @ PolyIdentifier::WitnessPolynomial(..) => {
-                        monomials_storage.witness_map.get(&p).unwrap().as_ref()
-                    },
-                    p @ PolyIdentifier::GateSetupPolynomial(..) => {
-                        monomials_storage.setup_map.get(&p).unwrap().as_ref()
-                    },
-                    _ => {
-                        unreachable!();
-                    }
-                };
-
-                let mut opening_point = z;
-                for _ in 0..dilation_value {
-                    opening_point.mul_assign(&omega);
-                }
-
-                let value = poly_ref.evaluate_at(&worker, opening_point);
-
-                let entry = query_values_map_over_dilation.entry(dilation_value).or_insert(vec![]);
-                entry.push(value);
-
-                query_values_map.insert(p, value);
-                query_values.push(value);
-            }
-
-            // TODO: commit queried values
-
-            // println!("Queried values = {:?}", query_values_map_over_dilation);
-
-            // also open selectors
-
-            let mut selector_values = vec![];
-            for s in sorted_selector_for_opening.into_iter() {
-                let key = PolyIdentifier::GateSelector(s.name());
-                let poly_ref = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
-                let value = poly_ref.evaluate_at(&worker, z);
-
-                selector_values.push(value);
-            }
-
-            // TODO: commit queried selector values
-
-            // copy-permutation polynomials queries
-
-            let mut copy_permutation_queries = vec![];
-
-            for idx in 0..(num_state_polys-1) {
-                let key = PolyIdentifier::PermutationPolynomial(idx);
-                let value = monomials_storage.get_poly(key).evaluate_at(&worker, z);
-
-                copy_permutation_queries.push(value);
-            }
-
-            // TODO: commit queried permutation poly values
-
-            // copy-permutation grand product query
-
-            let mut z_omega = z;
-            z_omega.mul_assign(&domain.generator);
-            let copy_permutation_z_at_z_omega = copy_permutation_z_in_monomial_form.evaluate_at(&worker, z_omega);
-
-            // TODO: commit copy-permutation grand product query
-
-            // we've computed everything, so perform linearization
-
-            let mut challenges_slice = &powers_of_alpha_for_gates[..];
-
-            let mut all_gates = self.sorted_gates.clone();
-
-            let mut r_poly = {
-                let gate = all_gates.drain(0..1).into_iter().next().unwrap();
-                assert!(gate.benefits_from_linearization(), "main gate is expected to benefit from linearization!");
-                assert!(<Self as ConstraintSystem<E>>::MainGate::default().into_internal() == gate);
-                let gate = <Self as ConstraintSystem<E>>::MainGate::default();
-                let num_challenges = gate.num_quotient_terms();
-                let (for_gate, rest) = challenges_slice.split_at(num_challenges);
-                challenges_slice = rest;
-
-                let input_values = self.input_assingments.clone();
-
-                let mut r = gate.contribute_into_linearization_for_public_inputs(
-                    required_domain_size,
-                    &input_values,
-                    z,
-                    &query_values_map,
-                    &monomials_storage,
-                    for_gate,
-                    &worker
-                )?;
-
-                let mut selectors_it = selector_values.clone().into_iter();
-
-                if num_different_gates > 1 {
-                    // first multiply r by the selector value at z
-                    r.scale(&worker, selectors_it.next().unwrap());
-                }
-
-                // now proceed per gate
-                for gate in all_gates.into_iter() {
-                    let num_challenges = gate.num_quotient_terms();
-                    let (for_gate, rest) = challenges_slice.split_at(num_challenges);
-                    challenges_slice = rest;
-
-                    if gate.benefits_from_linearization() {
-                        // gate benefits from linearization, so make temporary value
-                        let tmp = gate.contribute_into_linearization(
-                            required_domain_size,
-                            z,
-                            &query_values_map,
-                            &monomials_storage,
-                            for_gate,
-                            &worker
-                        )?;
-
-                        let selector_value = selectors_it.next().unwrap();
-
-                        r.add_assign_scaled(&worker, &tmp, &selector_value);
-                    } else {
-                        // we linearize over the selector, so take a selector and scale it
-                        let gate_value_at_z = gate.contribute_into_verification_equation(
-                            required_domain_size,
-                            z,
-                            &query_values_map,
-                            for_gate
-                        )?;
-
-                        let key = PolyIdentifier::GateSelector(gate.name());
-                        let gate_selector_ref = monomials_storage.gate_selectors.get(&key).expect("must get monomial form of gate selector").as_ref();
-
-                        r.add_assign_scaled(&worker, gate_selector_ref, &gate_value_at_z);
-                    }
-                }
-
-                assert!(selectors_it.next().is_none());
-                assert_eq!(challenges_slice.len(), 0);
-
-                r
-            };
-
-            // add contributions from copy-permutation and lookup-permutation
-
-            // copy-permutation linearization comtribution
-            {
-                // + (a(z) + beta*z + gamma)*()*()*()*Z(x)
-
-                let [alpha_0, alpha_1] = copy_grand_product_alphas.expect("there must be powers of alpha for copy permutation");
-
-                let some_one = Some(E::Fr::one());
-                let mut non_residues_iterator = some_one.iter().chain(&non_residues);
-
-                let mut factor = alpha_0;
-
-                for idx in 0..num_state_polys {
-                    let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
-                    let wire_value = query_values_map.get(&key)
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    let mut t = z;
-                    let non_res = non_residues_iterator.next().unwrap();
-                    t.mul_assign(&non_res);
-                    t.mul_assign(&beta_for_copy_permutation);
-                    t.add_assign(&wire_value);
-                    t.add_assign(&gamma_for_copy_permutation);
-
-                    factor.mul_assign(&t);
-                }
-
-                assert!(non_residues_iterator.next().is_none());
-
-                r_poly.add_assign_scaled(&worker, &copy_permutation_z_in_monomial_form, &factor);
-
-                // - (a(z) + beta*perm_a + gamma)*()*()*z(z*omega) * beta * perm_d(X)
-
-                let mut factor = alpha_0;
-                factor.mul_assign(&beta_for_copy_permutation);
-                factor.mul_assign(&copy_permutation_z_at_z_omega);
-
-                for idx in 0..(num_state_polys-1) {
-                    let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
-                    let wire_value = query_values_map.get(&key)
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    let permutation_at_z = copy_permutation_queries[idx];
-                    let mut t = permutation_at_z;
-                    
-                    t.mul_assign(&beta_for_copy_permutation);
-                    t.add_assign(&wire_value);
-                    t.add_assign(&gamma_for_copy_permutation);
-
-                    factor.mul_assign(&t);
-                }
-
-                let key = PolyIdentifier::PermutationPolynomial(num_state_polys - 1);
-                let last_permutation_poly_ref = monomials_storage.get_poly(key);
-
-                r_poly.sub_assign_scaled(&worker, last_permutation_poly_ref, &factor);
-
-                // + L_0(z) * Z(x)
-
-                let mut factor = evaluate_l0_at_point(required_domain_size as u64, z)?;
-                factor.mul_assign(&alpha_1);
-
-                r_poly.add_assign_scaled(&worker, &copy_permutation_z_in_monomial_form, &factor);
-            }
-
-            // lookup grand product linearization
-
-            // due to separate divisor it's not obvious if this is beneficial without some tricks
-            // like multiplication by (1 - L_{n-1}) or by (x - omega^{n-1})
-
-            // Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
-            // Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) == 0
-            // check that (Z(x) - 1) * L_{0} == 0
-            // check that (Z(x) - expected) * L_{n-1} == 0, or (Z(x*omega) - expected)* L_{n-2} == 0
-
-            // f(x) does not need to be opened as it's made of table selector and witnesses
-            // if we pursue the strategy from the linearization of a copy-permutation argument
-            // then we leave something like s(x) from the Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) term,
-            // and Z(x) from Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) term,
-            // with terms with lagrange polys as multipliers left intact
-
-            let lookup_queries = if let Some(lookup_z_poly) = lookup_z_poly_in_monomial_form.as_ref() {
-                let [alpha_0, alpha_1, alpha_2] = lookup_grand_product_alphas.expect("there must be powers of alpha for lookup permutation");
-
-                let s_at_z_omega = lookup_data.as_ref().unwrap().s_poly_monomial.as_ref().unwrap().evaluate_at(&worker, z_omega);
-                let grand_product_at_z_omega = lookup_z_poly.evaluate_at(&worker, z_omega);
-                let t_at_z = lookup_data.as_ref().unwrap().t_poly_monomial.as_ref().unwrap().evaluate_at(&worker, z);
-                let t_at_z_omega = lookup_data.as_ref().unwrap().t_poly_monomial.as_ref().unwrap().evaluate_at(&worker, z_omega);
-                let selector_at_z = lookup_data.as_ref().unwrap().selector_poly_monomial.as_ref().unwrap().evaluate_at(&worker, z);
-                let table_type_at_z = lookup_data.as_ref().unwrap().table_type_poly_monomial.as_ref().unwrap().evaluate_at(&worker, z);
-
-                let l_0_at_z = evaluate_lagrange_poly_at_point(0, &domain, z)?;
-                let l_n_minus_one_at_z = evaluate_lagrange_poly_at_point(required_domain_size - 1, &domain, z)?;
-
-                let beta_for_lookup_permutation = beta_for_lookup.unwrap();
-                let gamma_for_lookup_permutation = gamma_for_lookup.unwrap();
-
-                let mut beta_plus_one = beta_for_lookup_permutation;
-                beta_plus_one.add_assign(&E::Fr::one());
-                let mut gamma_beta = gamma_for_lookup_permutation;
-                gamma_beta.mul_assign(&beta_plus_one);
-
-                // (Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega))) -  
-                // Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)))*(X - omega^{n-1})
-
-                let last_omega = domain.generator.pow(&[(required_domain_size - 1) as u64]);
-                let mut z_minus_last_omega = z;
-                z_minus_last_omega.sub_assign(&last_omega);
-
-                // s(x) from the Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega)))
-                let mut factor = grand_product_at_z_omega; // we do not need to account for additive terms
-                factor.mul_assign(&alpha_0);
-                factor.mul_assign(&z_minus_last_omega);
-
-                r_poly.add_assign_scaled(&worker, lookup_data.as_ref().unwrap().s_poly_monomial.as_ref().unwrap(), &factor);
-
-                // Z(x) from - alpha_0 * Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) 
-                // + alpha_1 * Z(x) * L_{0}(z) + alpha_2 * Z(x) * L_{n-1}(z)
-
-                // accumulate coefficient
-                let mut factor = t_at_z_omega;
-                factor.mul_assign(&beta_for_lookup_permutation);
-                factor.add_assign(&t_at_z);
-                factor.add_assign(&gamma_beta);
-
-                // (\gamma + f(x))
-
-                let mut f_reconstructed = E::Fr::zero();
-                let mut current = E::Fr::one();
-                let eta = lookup_data.as_ref().unwrap().eta;
-                // a,b,c
-                for idx in 0..(num_state_polys-1) {
-                    let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
-                    let mut value = *query_values_map.get(&key)
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-
-                    value.mul_assign(&current);
-                    f_reconstructed.add_assign(&value);
-
-                    current.mul_assign(&eta);
-                }
-
-                // and table type
-                let mut t = table_type_at_z;
-                t.mul_assign(&current);
-                f_reconstructed.add_assign(&t);
-
-                f_reconstructed.mul_assign(&selector_at_z);
-                f_reconstructed.add_assign(&gamma_for_lookup_permutation);
-
-                // end of (\gamma + f(x)) part
-
-                factor.mul_assign(&f_reconstructed);
-                factor.mul_assign(&beta_plus_one);
-                factor.negate(); // don't forget minus sign
-                factor.mul_assign(&alpha_0);
-
-                // Multiply by (z - omega^{n-1})
-
-                factor.mul_assign(&z_minus_last_omega);
-
-                // L_{0}(z) in front of Z(x)
-
-                let mut tmp = l_0_at_z;
-                tmp.mul_assign(&alpha_1);
-                factor.add_assign(&tmp);
-
-                // L_{n-1}(z) in front of Z(x)
-
-                let mut tmp = l_n_minus_one_at_z;
-                tmp.mul_assign(&alpha_2);
-                factor.add_assign(&tmp);
-
-                r_poly.add_assign_scaled(&worker, lookup_z_poly, &factor);
-
-                let query = LookupQuery::<E> {
-                    s_at_z_omega,
-                    grand_product_at_z_omega,
-                    t_at_z,
-                    t_at_z_omega,
-                    selector_at_z,
-                    table_type_at_z,
-                };
-
-                Some(query)
-            } else {
-                None
-            };
-
-            let linearization_at_z = r_poly.evaluate_at(&worker, z);
-
-            // don't forget to evaluate quotient too
-
-            let t_at_z = {
-                let mut result = E::Fr::zero();
-                let mut current = E::Fr::one();
-                let z_in_domain_size = z.pow(&[required_domain_size as u64]);
-                for p in t_poly_parts.iter() {
-                    let mut subvalue_at_z = p.evaluate_at(&worker, z);
-                    subvalue_at_z.mul_assign(&current);
-                    result.add_assign(&subvalue_at_z);
-                    current.mul_assign(&z_in_domain_size);
-                }
-
-                result
-            };
-
-            // linearization is done, now perform sanity check
-            // this is effectively a verification procedure
-
-            {
-                let vanishing_at_z = evaluate_vanishing_for_size(&z, required_domain_size as u64);
-
-                // first let's aggregate gates
-
-                let mut t_num_on_full_domain = E::Fr::zero();
-
-                let challenges_slice = &powers_of_alpha_for_gates[..];
-
-                let mut all_gates = self.sorted_gates.clone();
-
-                // we've suffered and linearization polynomial captures all the gates except the public input!
-
-                {
-                    let mut tmp = linearization_at_z;
-                    // add input values
-
-                    let gate = all_gates.drain(0..1).into_iter().next().unwrap();
-                    assert!(gate.benefits_from_linearization(), "main gate is expected to benefit from linearization!");
-                    assert!(<Self as ConstraintSystem<E>>::MainGate::default().into_internal() == gate);
-                    let gate = <Self as ConstraintSystem<E>>::MainGate::default();
-                    let num_challenges = gate.num_quotient_terms();
-                    let (for_gate, _) = challenges_slice.split_at(num_challenges);
-
-                    let input_values = self.input_assingments.clone();
-
-                    let mut inputs_term = gate.add_inputs_into_quotient(
-                        required_domain_size,
-                        &input_values,
-                        z,
-                        for_gate,
-                    )?;
-
-                    if num_different_gates > 1 {
-                        let selector_value = selector_values[0];
-                        inputs_term.mul_assign(&selector_value);
-                    }
-
-                    tmp.add_assign(&inputs_term);
-
-                    t_num_on_full_domain.add_assign(&tmp);
-                } 
-
-                // now aggregate leftovers from grand product for copy permutation
-                {
-                    // - alpha_0 * (a + perm(z) * beta + gamma)*()*(d + gamma) * z(z*omega)
-                    let [alpha_0, alpha_1] = copy_grand_product_alphas.expect("there must be powers of alpha for copy permutation");
-
-                    let mut factor = alpha_0;
-                    factor.mul_assign(&copy_permutation_z_at_z_omega);
-
-                    for idx in 0..(num_state_polys-1) {
-                        let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(idx));
-                        let wire_value = query_values_map.get(&key)
-                            .ok_or(SynthesisError::AssignmentMissing)?;
-                        let permutation_at_z = copy_permutation_queries[idx];
-                        let mut t = permutation_at_z;
-                        
-                        t.mul_assign(&beta_for_copy_permutation);
-                        t.add_assign(&wire_value);
-                        t.add_assign(&gamma_for_copy_permutation);
-
-                        factor.mul_assign(&t);
-                    }
-
-                    let key = PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(num_state_polys-1));
-                    let mut tmp = *query_values_map.get(&key)
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    tmp.add_assign(&gamma_for_copy_permutation);
-
-                    factor.mul_assign(&tmp);
-
-                    t_num_on_full_domain.sub_assign(&factor);
-
-                    // - L_0(z) * alpha_1
-
-                    let mut l_0_at_z = evaluate_l0_at_point(required_domain_size as u64, z)?;
-                    l_0_at_z.mul_assign(&alpha_1);
-        
-                    t_num_on_full_domain.sub_assign(&l_0_at_z);
-                }
-
-                // and if exists - grand product for lookup permutation
-
-                {
-                    if lookup_queries.is_some() {
-
-                        let [alpha_0, alpha_1, alpha_2] = lookup_grand_product_alphas.expect("there must be powers of alpha for lookup permutation");
-
-                        let lookup_queries = lookup_queries.clone().expect("lookup queries must be made");
-
-                        let beta_for_lookup_permutation = beta_for_lookup.unwrap();
-                        let gamma_for_lookup_permutation = gamma_for_lookup.unwrap();
-                        let mut beta_plus_one = beta_for_lookup_permutation;
-                        beta_plus_one.add_assign(&E::Fr::one());
-                        let mut gamma_beta = gamma_for_lookup_permutation;
-                        gamma_beta.mul_assign(&beta_plus_one);
-                
-                        let expected = gamma_beta.pow([(required_domain_size-1) as u64]);
-
-                        // in a linearization we've taken terms:
-                        // - s(x) from the alpha_0 * Z(x*omega)*(\gamma*(1 + \beta) + s(x) + \beta * s(x*omega)))
-                        // - and Z(x) from - alpha_0 * Z(x) * (\beta + 1) * (\gamma + f(x)) * (\gamma(1 + \beta) + t(x) + \beta * t(x*omega)) (term in full) + 
-                        // + alpha_1 * (Z(x) - 1) * L_{0}(z) + alpha_2 * (Z(x) - expected) * L_{n-1}(z)
-
-                        // first make alpha_0 * Z(x*omega)*(\gamma*(1 + \beta) + \beta * s(x*omega)))
-
-                        let mut tmp = lookup_queries.s_at_z_omega;
-                        tmp.mul_assign(&beta_for_lookup_permutation);
-                        tmp.add_assign(&gamma_beta);
-                        tmp.mul_assign(&lookup_queries.grand_product_at_z_omega);
-                        tmp.mul_assign(&alpha_0);
-
-                        // (z - omega^{n-1}) for this part
-                        let last_omega = domain.generator.pow(&[(required_domain_size - 1) as u64]);
-                        let mut z_minus_last_omega = z;
-                        z_minus_last_omega.sub_assign(&last_omega);
-
-                        tmp.mul_assign(&z_minus_last_omega);
-
-                        t_num_on_full_domain.add_assign(&tmp);
-
-                        // // - alpha_1 * L_{0}(z)
-
-                        let mut l_0_at_z = evaluate_l0_at_point(required_domain_size as u64, z)?;
-                        l_0_at_z.mul_assign(&alpha_1);
-            
-                        t_num_on_full_domain.sub_assign(&l_0_at_z);
-
-                        // // - alpha_2 * expected L_{n-1}(z)
-
-                        let mut l_n_minus_one_at_z = evaluate_lagrange_poly_at_point(required_domain_size - 1, &domain, z)?;
-                        l_n_minus_one_at_z.mul_assign(&expected);
-                        l_n_minus_one_at_z.mul_assign(&alpha_2);
-
-                        t_num_on_full_domain.sub_assign(&l_n_minus_one_at_z);
-                    }
-                }
-
-                let mut lhs = t_at_z;
-                lhs.mul_assign(&vanishing_at_z);
-
-                let rhs = t_num_on_full_domain;
-
-                if lhs != rhs {
-                    dbg!("Circuit is not satisfied");
-                    return Err(SynthesisError::Unsatisfiable);
-                }
-            }
-
-            Ok(())
         }
     }
 }
@@ -4733,62 +3306,6 @@ mod test {
     }
 
     #[test]
-    fn test_circuit_with_combined_lookups() {
-        use crate::pairing::bn256::{Bn256, Fr};
-        use crate::worker::Worker;
-
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
-
-        let circuit = TestCircuit4WithLookups::<Bn256> {
-            _marker: PhantomData
-        };
-
-        circuit.synthesize(&mut assembly).expect("must work");
-
-        println!("Assembly contains {} gates", assembly.n());
-        assert!(assembly.is_satisfied());
-
-        assert!(assembly.gates.len() == 2);
-
-        assembly.finalize();
-
-        println!("Finalized assembly contains {} gates", assembly.n());
-
-        let worker = Worker::new();
-
-
-        let _ = assembly.prover_stub(&worker).unwrap();
-    }
-
-    #[test]
-    fn test_circuit_with_small_tables() {
-        use crate::pairing::bn256::{Bn256, Fr};
-        use crate::worker::Worker;
-
-        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
-
-        let circuit = TestCircuit4WithLookupsManyGatesSmallTable::<Bn256> {
-            _marker: PhantomData
-        };
-
-        circuit.synthesize(&mut assembly).expect("must work");
-
-        println!("Assembly contains {} gates", assembly.n());
-        assert!(assembly.is_satisfied());
-
-        assert_eq!(assembly.gates.len(), 1);
-        assert_eq!(assembly.total_length_of_all_tables, 4*4 + 4*4 + 4);
-
-        assembly.finalize();
-
-        println!("Finalized assembly contains {} gates", assembly.n());
-
-        let worker = Worker::new();
-
-        let _ = assembly.prover_stub(&worker).unwrap();
-    }
-
-    #[test]
     fn test_setup_and_prove_custom_gate_and_tables() {
         use crate::pairing::bn256::{Bn256, Fr};
         use crate::worker::Worker;
@@ -4841,6 +3358,7 @@ mod test {
         ).unwrap();
 
         assert!(valid);
+        println!("Done!");
     }
 
     #[test]

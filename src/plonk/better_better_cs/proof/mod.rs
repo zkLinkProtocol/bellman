@@ -592,18 +592,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             };
 
             let (s_poly_monomial, s_poly_unpadded_values, s_shifted_unpadded_values) = {
-                let mut s_poly_ends = self.calculate_s_poly_contributions_from_witness()?;
-
-                assert_eq!(s_poly_ends.len(), 4);
-
-                let mut s_poly_values_aggregated = s_poly_ends.drain(0..1).collect::<Vec<_>>().pop().unwrap();
-                let mut current = eta;
-                for t in s_poly_ends.into_iter() {
-                    let op = BinopAddAssignScaled::new(current);
-                    binop_over_slices(&worker, &op, &mut s_poly_values_aggregated, &t);
-                    
-                    current.mul_assign(&eta);
-                }
+                let s_poly_values_aggregated = self.calculate_s_poly_contributions_from_witness(eta)?;
 
                 let sorted_copy_start = witness_len - s_poly_values_aggregated.len();
 
