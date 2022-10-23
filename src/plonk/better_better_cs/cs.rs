@@ -897,7 +897,7 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
 
     pub individual_table_canonical_sorted_entries: std::collections::HashMap<String, Vec<[E::Fr; 3]>>,
     pub individual_table_entries_lookups: std::collections::HashMap<String, std::collections::HashMap<[E::Fr; 3], usize>>,
-    pub individual_table_entries: std::collections::HashMap<String, Vec<usize>>,
+    pub individual_table_entries: std::collections::HashMap<String, Vec<u32>>,
     pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
     pub known_table_ids: Vec<E::Fr>,
     pub num_table_lookups: usize,
@@ -1286,7 +1286,7 @@ impl_assembly!{
                 let row_idx = self.individual_table_entries_lookups.get(&table_name).unwrap().get(&table_entries_as_array);
                 assert!(row_idx.is_some(), "table most likely doesn't contain a row for {:?}", table_entries_as_array);
     
-                entries.push(*row_idx.unwrap());
+                entries.push(*row_idx.unwrap() as u32);
             }
     
             self.num_table_lookups += 1;
@@ -2346,7 +2346,7 @@ impl_assembly!{
 
                 // copy table elements themselves
                 for i in 0..table_size {
-                    kv_set_entries.push(i);
+                    kv_set_entries.push(i as u32);
                 }
 
                 kv_set_entries.sort();
