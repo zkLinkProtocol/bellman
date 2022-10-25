@@ -52,3 +52,9 @@ marlin = ["tiny-keccak", "blake2s_const"]
 wasm = ["web-sys"]
 asm = ["pairing/asm"]
 allocator = []
+
+[profile.release]
+debug = true
+
+[profile.bench]
+debug = true
