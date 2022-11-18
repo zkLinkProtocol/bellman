@@ -339,7 +339,7 @@ impl<'a, E: Engine> AssembledPolynomialStorageForMonomialForms<'a, E> {
 
         let mut setup_gates_iter = setup.gate_setup_monomials.iter();
         for gate in all_gates.iter() {
-            for poly_id in gate.setup_polynomials().into_iter() {
+            for &poly_id in gate.setup_polynomials().into_iter() {
                 let poly_ref = setup_gates_iter.next().expect(&format!("must have gate setup poly {:?} for gate {:?} in setup", poly_id, gate));
                 let proxy = PolynomialProxy::from_borrowed(poly_ref);
                 self.setup_map.insert(poly_id, proxy);

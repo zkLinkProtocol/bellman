@@ -2230,7 +2230,7 @@ pub fn sort_queries_for_linearization<E: Engine>(gates: & Vec<Box<dyn GateIntern
         };
 
         for q in queries_to_add.into_iter() {
-            if !opening_requests_before_linearization.contains(&q) {
+            if !opening_requests_before_linearization.contains(q) {
                 opening_requests_before_linearization.insert(q.clone());
 
                 // push into the corresponding bucket

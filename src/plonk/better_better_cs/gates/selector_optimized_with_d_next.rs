@@ -10,9 +10,11 @@ impl SelectorOptimizedWidth4MainGateWithDNext {
     pub const D_NEXT_TERM_COEFF_INDEX: usize = 7;
 }
 
+const GATE_NAME: &'static str = "main gate of width 4 with D_next and selector optimization";
+
 impl<E: Engine> GateInternal<E> for SelectorOptimizedWidth4MainGateWithDNext {
     fn name(&self) -> &'static str {
-        "main gate of width 4 with D_next and selector optimization"
+        GATE_NAME
     }
 
     fn degree(&self) -> usize {
@@ -23,18 +25,17 @@ impl<E: Engine> GateInternal<E> for SelectorOptimizedWidth4MainGateWithDNext {
         true
     }
 
-    fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
-        let name = <Self as GateInternal<E>>::name(&self);
-
-        vec![
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 1)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 2)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 3)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 7)),
+    #[inline]
+    fn all_queried_polynomials(&self) -> &'static [PolynomialInConstraint] {
+        const ALL_QUERIED: [PolynomialInConstraint; 13] = [
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 2)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 3)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 4)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 5)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 6)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 7)),
 
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
@@ -42,63 +43,75 @@ impl<E: Engine> GateInternal<E> for SelectorOptimizedWidth4MainGateWithDNext {
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
 
             PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
-        ]
+        ];
+
+        &ALL_QUERIED
     }
 
-    fn setup_polynomials(&self) -> Vec<PolyIdentifier> {
-        let name = <Self as GateInternal<E>>::name(&self);
+    #[inline]
+    fn setup_polynomials(&self) -> &'static [PolyIdentifier] {
+        const SETUP_POLYS: [PolyIdentifier; 8] =[
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 0),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 1),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 2),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 3),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 4),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 5),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 6),
+            PolyIdentifier::GateSetupPolynomial(GATE_NAME, 7),
+        ];
 
-        vec![
-            PolyIdentifier::GateSetupPolynomial(name, 0),
-            PolyIdentifier::GateSetupPolynomial(name, 1),
-            PolyIdentifier::GateSetupPolynomial(name, 2),
-            PolyIdentifier::GateSetupPolynomial(name, 3),
-            PolyIdentifier::GateSetupPolynomial(name, 4),
-            PolyIdentifier::GateSetupPolynomial(name, 5),
-            PolyIdentifier::GateSetupPolynomial(name, 6),
-            PolyIdentifier::GateSetupPolynomial(name, 7),
-        ]
+        &SETUP_POLYS
     }
 
-    fn variable_polynomials(&self) -> Vec<PolyIdentifier> {
-        vec![
+    #[inline]
+    fn variable_polynomials(&self) -> &'static [PolyIdentifier] {
+        const VARIABLE_POLYS: [PolyIdentifier; 4] = [
             PolyIdentifier::VariablesPolynomial(0),
             PolyIdentifier::VariablesPolynomial(1),
             PolyIdentifier::VariablesPolynomial(2),
             PolyIdentifier::VariablesPolynomial(3),
-        ]
+        ];
+
+        &VARIABLE_POLYS
     }
 
+    #[inline]
     fn benefits_from_linearization(&self) -> bool {
         true
     }
 
-    fn linearizes_over(&self) -> Vec<PolynomialInConstraint> {
-        let name = <Self as GateInternal<E>>::name(&self);
+    #[inline]
+    fn linearizes_over(&self) -> &'static [PolynomialInConstraint] {
+        const LINEARIZED_OVER_POLYS: [PolynomialInConstraint; 8] = [
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 0)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 1)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 2)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 3)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 4)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 5)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 6)),
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(GATE_NAME, 7)),
+        ];
 
-        vec![
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 1)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 2)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 3)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 4)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 5)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 6)),
-            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 7)),
-        ]
+        &LINEARIZED_OVER_POLYS
     }
 
-    fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint> {
-        vec![
+    #[inline]
+    fn needs_opened_for_linearization(&self) -> &'static [PolynomialInConstraint] {
+        const ALL_OPENED_FOR_LINEARIZATION: [PolynomialInConstraint; 5]  = [
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
             PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
 
             PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
-        ]
+        ];
+
+        &ALL_OPENED_FOR_LINEARIZATION
     }
 
+    #[inline]
     fn num_quotient_terms(&self) -> usize {
         1
     }
@@ -448,7 +461,7 @@ impl<E: Engine> MainGate<E> for SelectorOptimizedWidth4MainGateWithDNext {
             &coset_factor
         )?;
 
-        for p in <Self as GateInternal<E>>::all_queried_polynomials(&self).into_iter() {
+        for &p in <Self as GateInternal<E>>::all_queried_polynomials(&self).into_iter() {
             // skip public constants poly (was used in public inputs)
             if p == PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, Self::CONSTANT_TERM_COEFF_INDEX)) {
                 continue;

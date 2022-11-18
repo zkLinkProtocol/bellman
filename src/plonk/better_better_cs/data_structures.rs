@@ -3,7 +3,7 @@ use crate::pairing::*;
 use crate::plonk::polynomials::*;
 use super::cs::GateInternal;
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug)]
 pub enum PolyIdentifier {
     VariablesPolynomial(usize),
     WitnessPolynomial(usize),
@@ -13,6 +13,61 @@ pub enum PolyIdentifier {
     LookupTableEntriesPolynomial(usize),
     NamedSetupPolynomial(&'static str),
     PermutationPolynomial(usize),
+}
+
+impl PartialEq for PolyIdentifier {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PolyIdentifier::VariablesPolynomial(a), PolyIdentifier::VariablesPolynomial(b)) => a.eq(&b),
+            (PolyIdentifier::GateSetupPolynomial(a_id, a), PolyIdentifier::GateSetupPolynomial(b_id, b)) => {
+                if a.eq(&b) == true {
+                    std::ptr::eq(a_id.as_ptr(), b_id.as_ptr()) // valid for static strings
+                } else {
+                    false
+                }
+            },
+            (PolyIdentifier::GateSelector(a_id), PolyIdentifier::GateSelector(b_id)) => {
+                std::ptr::eq(a_id.as_ptr(), b_id.as_ptr()) // valid for static strings
+            },
+            (PolyIdentifier::LookupSelector, PolyIdentifier::LookupSelector) => true,
+            (PolyIdentifier::LookupTableEntriesPolynomial(a), PolyIdentifier::LookupTableEntriesPolynomial(b)) => a.eq(&b),
+            (PolyIdentifier::PermutationPolynomial(a), PolyIdentifier::PermutationPolynomial(b)) => a.eq(&b),
+            (PolyIdentifier::NamedSetupPolynomial(a_id), PolyIdentifier::NamedSetupPolynomial(b_id)) => {
+                std::ptr::eq(a_id.as_ptr(), b_id.as_ptr()) // valid for static strings
+            },
+            (PolyIdentifier::WitnessPolynomial(a), PolyIdentifier::WitnessPolynomial(b)) => a.eq(&b),
+            _ => false
+        }
+    }
+}
+
+impl Eq for PolyIdentifier {}
+
+impl std::hash::Hash for PolyIdentifier {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            a @ PolyIdentifier::VariablesPolynomial(id)
+            | a @ PolyIdentifier::WitnessPolynomial(id)
+            | a @ PolyIdentifier::PermutationPolynomial(id)
+            | a @ PolyIdentifier::LookupTableEntriesPolynomial(id) => {
+                std::mem::discriminant(a).hash(state);
+                state.write_usize(*id);
+            }
+            a @ PolyIdentifier::GateSetupPolynomial(str_id, id) => {
+                std::mem::discriminant(a).hash(state);
+                state.write_usize(str_id.as_ptr() as usize);
+                state.write_usize(*id);
+            },
+            a @ PolyIdentifier::GateSelector(str_id)
+            | a @ PolyIdentifier::NamedSetupPolynomial(str_id) => {
+                std::mem::discriminant(a).hash(state);
+                state.write_usize(str_id.as_ptr() as usize);
+            },
+            a @ PolyIdentifier::LookupSelector => {
+                std::mem::discriminant(a).hash(state);
+            }
+        }
+    }
 }
 
 pub const LOOKUP_TABLE_TYPE_POLYNOMIAL: &'static str = "LOOKUP_TABLE_TYPE_POLYNOMIAL";
