@@ -187,7 +187,7 @@ pub fn aggregate<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
             let gate = sorted_gates.last().unwrap();
 
             let setup_polys = gate.setup_polynomials();
-            for id in setup_polys.into_iter() {
+            for &id in setup_polys.into_iter() {
                 let commitment = *gate_setup_polys_commitments_iter.next().ok_or(SynthesisError::AssignmentMissing)?;
 
                 setup_commitments_storage.insert(id, commitment);
@@ -201,7 +201,7 @@ pub fn aggregate<E: Engine, C: Circuit<E>, T: Transcript<E::Fr>>(
                 gate_selectors_commitments_storage.insert(key, commitment);
     
                 let setup_polys = gate.setup_polynomials();
-                for id in setup_polys.into_iter() {
+                for &id in setup_polys.into_iter() {
                     let commitment = *gate_setup_polys_commitments_iter.next().ok_or(SynthesisError::AssignmentMissing)?;
     
                     setup_commitments_storage.insert(id, commitment);

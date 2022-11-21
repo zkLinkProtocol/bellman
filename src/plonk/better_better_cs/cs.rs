@@ -92,15 +92,16 @@ pub trait GateInternal<E: Engine>: Send
     fn name(&self) -> &'static str;
     fn degree(&self) -> usize;
     fn can_include_public_inputs(&self) -> bool;
-    fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint>;
-    fn setup_polynomials(&self) -> Vec<PolyIdentifier>;
-    fn variable_polynomials(&self) -> Vec<PolyIdentifier>;
-    fn witness_polynomials(&self) -> Vec<PolyIdentifier> {
-        vec![]
+    fn all_queried_polynomials(&self) -> &'static [PolynomialInConstraint];
+    fn setup_polynomials(&self) -> &'static [PolyIdentifier];
+    fn variable_polynomials(&self) -> &'static [PolyIdentifier];
+    #[inline]
+    fn witness_polynomials(&self) -> &'static [PolyIdentifier] {
+        &[]
     }
     fn benefits_from_linearization(&self) -> bool;
-    fn linearizes_over(&self) -> Vec<PolynomialInConstraint>;
-    fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint>;
+    fn linearizes_over(&self) -> &'static [PolynomialInConstraint];
+    fn needs_opened_for_linearization(&self) -> &'static [PolynomialInConstraint];
     fn num_quotient_terms(&self) -> usize;
     fn verify_on_row<'a>(&self, row: usize, poly_storage: &AssembledPolynomialStorage<'a, E>, last_row: bool) -> E::Fr;
     fn contribute_into_quotient<'a, 'b>(
@@ -1111,6 +1112,7 @@ impl_assembly!{
             Ok(value)
         }
     
+        #[inline]
         fn get_dummy_variable() -> Variable {
             Self::dummy_variable()
         }
@@ -1364,7 +1366,7 @@ impl_assembly!{
             if S::PRODUCE_SETUP {
                 let mut coeffs_it = coefficients_assignments.iter();
 
-                for setup_poly in gate.setup_polynomials().into_iter() {
+                for &setup_poly in gate.setup_polynomials().into_iter() {
                     let poly_ref = storage.setup_map.entry(setup_poly).or_insert(new_vec_with_allocator!(0));
                     if poly_ref.len() < n {
                         poly_ref.resize(n, E::Fr::zero());
@@ -1378,7 +1380,7 @@ impl_assembly!{
 
             let mut variable_it = variables_assignments.iter();
 
-            for var_poly in gate.variable_polynomials().into_iter() {
+            for &var_poly in gate.variable_polynomials().into_iter() {
                 let poly_ref = storage.state_map.entry(var_poly).or_insert(new_vec_with_allocator!(0));
                 if poly_ref.len() < n {
                     poly_ref.resize(n, dummy);
@@ -1394,7 +1396,7 @@ impl_assembly!{
 
             let mut witness_it = witness_assignments.iter();
 
-            for key in gate.witness_polynomials().into_iter() {
+            for &key in gate.witness_polynomials().into_iter() {
                 let poly_ref = storage.witness_map.entry(key).or_insert(vec![]);
                 if poly_ref.len() < n {
                     poly_ref.resize(n, E::Fr::zero());
@@ -1414,7 +1416,7 @@ impl_assembly!{
                 self.gates.insert(gate.clone().into_internal());
 
                 // self.add_gate_setup_polys_into_list(gate);
-                for p in gate.all_queried_polynomials().into_iter() {
+                for &p in gate.all_queried_polynomials().into_iter() {
                     self.all_queried_polys_in_constraints.insert(p);
                 }
                 
@@ -1551,7 +1553,7 @@ impl_assembly!{
         }
 
         // return variable that is not in a constraint formally, but has some value
-        fn dummy_variable() -> Variable {
+        const fn dummy_variable() -> Variable {
             Variable(Index::Aux(0))
         }
 
@@ -1719,7 +1721,7 @@ impl_assembly!{
                 }            
             }
 
-            assert!((self.n()+1).is_power_of_two());
+            assert!((self.n()+1).is_power_of_two(), "padded circuit size is not power of two. self.n() = {}", self.n());
 
             println!("Padded circuit size is 2^{}", (self.n()+1).trailing_zeros());
 
@@ -3416,6 +3418,26 @@ mod test {
         assert!(valid);
     }
 
+    #[test]
+    fn test_bench_long_synthesis() {
+        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::worker::Worker;
+        use crate::plonk::better_better_cs::verifier::*;
+        use crate::plonk::better_better_cs::setup::VerificationKey;
+
+        let mut assembly = TrivialAssembly::<Bn256, PlonkCsWidth4WithNextStepParams, Width4MainGateWithDNext>::new();
+
+        let circuit = TestCircuit4::<Bn256> {
+            _marker: PhantomData
+        };
+
+        circuit.synthesize(&mut assembly).expect("must work");
+
+        dbg!(&assembly.n());
+
+        assembly.finalize_to_size_log_2(26);
+    }
+
     #[derive(Clone, Debug, Hash, Default)]
     pub struct TestBitGate;
 
@@ -3432,32 +3454,36 @@ mod test {
             false
         }
 
-        fn all_queried_polynomials(&self) -> Vec<PolynomialInConstraint> {
-            vec![
+        fn all_queried_polynomials(&self) -> &'static [PolynomialInConstraint] {
+            const A: [PolynomialInConstraint; 1] = [
                 PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
-            ]
+            ];
+
+            &A
         }
 
-        fn setup_polynomials(&self) -> Vec<PolyIdentifier> {
-            vec![]
+        fn setup_polynomials(&self) -> &'static [PolyIdentifier] {
+            &[]
         }
 
-        fn variable_polynomials(&self) -> Vec<PolyIdentifier> {
-            vec![
+        fn variable_polynomials(&self) -> &'static [PolyIdentifier] {
+            const A: [PolyIdentifier; 1] = [
                 PolyIdentifier::VariablesPolynomial(0),
-            ]
+            ];
+
+            &A
         }
 
         fn benefits_from_linearization(&self) -> bool {
             false
         }
 
-        fn linearizes_over(&self) -> Vec<PolynomialInConstraint> {
-            vec![]
+        fn linearizes_over(&self) -> &'static [PolynomialInConstraint] {
+            &[]
         }
 
-        fn needs_opened_for_linearization(&self) -> Vec<PolynomialInConstraint> {
-            vec![]
+        fn needs_opened_for_linearization(&self) -> &'static [PolynomialInConstraint] {
+            &[]
         }
 
         fn num_quotient_terms(&self) -> usize {
@@ -3495,7 +3521,7 @@ mod test {
 
             let coset_factor = E::Fr::multiplicative_generator();
            
-            for p in <Self as GateInternal<E>>::all_queried_polynomials(&self).into_iter() {
+            for &p in <Self as GateInternal<E>>::all_queried_polynomials(&self).into_iter() {
                 ensure_in_map_or_create(&worker, 
                     p, 
                     domain_size, 
