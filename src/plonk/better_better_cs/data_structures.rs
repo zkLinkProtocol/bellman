@@ -20,20 +20,20 @@ impl PartialEq for PolyIdentifier {
         match (self, other) {
             (PolyIdentifier::VariablesPolynomial(a), PolyIdentifier::VariablesPolynomial(b)) => a.eq(&b),
             (PolyIdentifier::GateSetupPolynomial(a_id, a), PolyIdentifier::GateSetupPolynomial(b_id, b)) => {
-                if a.eq(&b) == true {
-                    std::ptr::eq(a_id.as_ptr(), b_id.as_ptr()) // valid for static strings
+                if a.eq(&b) == true {                    
+                    a == b
                 } else {
                     false
                 }
             },
-            (PolyIdentifier::GateSelector(a_id), PolyIdentifier::GateSelector(b_id)) => {
-                std::ptr::eq(a_id.as_ptr(), b_id.as_ptr()) // valid for static strings
+            (PolyIdentifier::GateSelector(a_id), PolyIdentifier::GateSelector(b_id)) => {                
+                *a_id == *b_id
             },
             (PolyIdentifier::LookupSelector, PolyIdentifier::LookupSelector) => true,
             (PolyIdentifier::LookupTableEntriesPolynomial(a), PolyIdentifier::LookupTableEntriesPolynomial(b)) => a.eq(&b),
             (PolyIdentifier::PermutationPolynomial(a), PolyIdentifier::PermutationPolynomial(b)) => a.eq(&b),
             (PolyIdentifier::NamedSetupPolynomial(a_id), PolyIdentifier::NamedSetupPolynomial(b_id)) => {
-                std::ptr::eq(a_id.as_ptr(), b_id.as_ptr()) // valid for static strings
+                *a_id == *b_id
             },
             (PolyIdentifier::WitnessPolynomial(a), PolyIdentifier::WitnessPolynomial(b)) => a.eq(&b),
             _ => false
@@ -55,13 +55,13 @@ impl std::hash::Hash for PolyIdentifier {
             }
             a @ PolyIdentifier::GateSetupPolynomial(str_id, id) => {
                 std::mem::discriminant(a).hash(state);
-                state.write_usize(str_id.as_ptr() as usize);
+                state.write(str_id.as_bytes());
                 state.write_usize(*id);
             },
             a @ PolyIdentifier::GateSelector(str_id)
             | a @ PolyIdentifier::NamedSetupPolynomial(str_id) => {
                 std::mem::discriminant(a).hash(state);
-                state.write_usize(str_id.as_ptr() as usize);
+                state.write(str_id.as_bytes());
             },
             a @ PolyIdentifier::LookupSelector => {
                 std::mem::discriminant(a).hash(state);
