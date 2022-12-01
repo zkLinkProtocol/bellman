@@ -781,13 +781,19 @@ impl_poly_storage! {
                 setup_map: std::collections::HashMap::new(),
             }
         }
-    
-        pub fn new_for_size(size: usize) -> Self {
+
+
+        pub fn new_specialized_for_proving_assembly_and_state_4(size: usize) -> Self {
             assert!(size <= 1 << <E::Fr as PrimeField>::S);
+            dbg!("poly storage for proving assembly with state 4");
+            let mut state_map = std::collections::HashMap::new();
+            for idx in 0..4{
+                state_map.insert(PolyIdentifier::VariablesPolynomial(idx), new_vec_with_allocator!(size));
+            }
             Self {
-                state_map: std::collections::HashMap::with_capacity(size),
-                witness_map: std::collections::HashMap::with_capacity(size),
-                setup_map: std::collections::HashMap::with_capacity(size),
+                state_map,
+                witness_map: std::collections::HashMap::new(),
+                setup_map: std::collections::HashMap::new(),
             }
         }
     
@@ -1488,13 +1494,13 @@ impl_assembly!{
             tmp.add_gate_into_list(&MG::default());
 
             tmp
-        }
-        
-        pub fn new_for_size(size: usize) -> Self {
+        }        
+
+        pub fn new_specialized_for_proving_assembly_and_state_4(size: usize) -> Self {
             assert!(size <= 1 << <E::Fr as PrimeField>::S);
             let mut tmp = Self {
-                inputs_storage: PolynomialStorage::new_for_size(size),
-                aux_storage: PolynomialStorage::new_for_size(size),
+                inputs_storage: PolynomialStorage::new(),
+                aux_storage: PolynomialStorage::new_specialized_for_proving_assembly_and_state_4(size),
 
                 max_constraint_degree: 0,
 
@@ -1526,8 +1532,8 @@ impl_assembly!{
 
                 tables: vec![],
                 multitables: vec![],
-                table_selectors: std::collections::HashMap::with_capacity(size),
-                multitable_selectors: std::collections::HashMap::with_capacity(size),
+                table_selectors: std::collections::HashMap::new(),
+                multitable_selectors: std::collections::HashMap::new(),
                 table_ids_poly: vec![],
                 total_length_of_all_tables: 0,
 
@@ -1551,6 +1557,8 @@ impl_assembly!{
 
             tmp
         }
+
+
 
         // return variable that is not in a constraint formally, but has some value
         const fn dummy_variable() -> Variable {
