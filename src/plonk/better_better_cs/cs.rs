@@ -251,7 +251,7 @@ impl LinearCombinationOfTerms {
 
 #[derive(Clone, Debug)]
 pub enum ArithmeticTerm<E: Engine>{
-    Product(Vec<Variable>, E::Fr),
+    Product(smallvec::SmallVec<[Variable; 2]>, E::Fr),
     SingleVariable(Variable, E::Fr),
     Constant(E::Fr),
 }
@@ -277,12 +277,12 @@ impl<E: Engine> ArithmeticTerm<E> {
                 ArithmeticTerm::Product(terms, coeff)
             },
             ArithmeticTerm::SingleVariable(this, coeff) => {
-                let terms = vec![this, other];
+                let terms = smallvec::smallvec![this, other];
 
                 ArithmeticTerm::Product(terms, coeff)
             },
             ArithmeticTerm::Constant(coeff) => {
-                let terms = vec![other];
+                let terms = smallvec::smallvec![other];
 
                 ArithmeticTerm::Product(terms, coeff)
             },
@@ -304,9 +304,11 @@ impl<E: Engine> ArithmeticTerm<E> {
     }
 }
 
+const DEFAULT_SMALLVEC_CAPACITY: usize = 8;
+
 #[derive(Clone, Debug)]
 pub struct MainGateTerm<E: Engine>{
-    pub(crate) terms: Vec<ArithmeticTerm<E>>,
+    pub(crate) terms: smallvec::SmallVec<[ArithmeticTerm<E>; DEFAULT_SMALLVEC_CAPACITY]>,
     pub(crate) vars_scratch: std::collections::HashMap<Variable, usize>,
     pub(crate) num_multiplicative_terms: usize,
     pub(crate) num_constant_terms: usize
@@ -315,8 +317,8 @@ pub struct MainGateTerm<E: Engine>{
 impl<E: Engine> MainGateTerm<E> {
     pub fn new() -> Self {
         Self {
-            terms: Vec::with_capacity(8),
-            vars_scratch: std::collections::HashMap::with_capacity(8),
+            terms: smallvec::smallvec![],
+            vars_scratch: std::collections::HashMap::with_capacity(DEFAULT_SMALLVEC_CAPACITY),
             num_multiplicative_terms: 0,
             num_constant_terms: 0
         }
