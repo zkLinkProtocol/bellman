@@ -946,6 +946,7 @@ impl_assembly!{
         type MainGate = MG;
     
         // allocate a variable
+        #[inline]
         fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
         where
             F: FnOnce() -> Result<E::Fr, SynthesisError> 
@@ -996,10 +997,12 @@ impl_assembly!{
             Ok(input_var)
         }
     
+        #[inline]
         fn get_main_gate(&self) -> &MG {
             &self.main_gate
         }
     
+        #[inline]
         fn begin_gates_batch_for_step(&mut self) -> Result<(), SynthesisError> {
             debug_assert!(self.trace_step_for_batch.is_none());
             let n = self.num_aux_gates;
@@ -1095,6 +1098,7 @@ impl_assembly!{
             Ok(())
         }
     
+        #[inline]
         fn get_value(&self, var: Variable) -> Result<E::Fr, SynthesisError> {
             if !S::PRODUCE_WITNESS {
                 return Err(SynthesisError::AssignmentMissing);
@@ -1278,24 +1282,24 @@ impl_assembly!{
     
                 // add values for lookup table sorting later
                 let keys_and_values_len = table.applies_over().len();
-                let mut table_entries = Vec::with_capacity(keys_and_values_len);
+                let mut table_entries = arrayvec::ArrayVec::<_, 3>::new();
                 for v in variables.iter() {
                     let value = self.get_value(*v).unwrap();
                     table_entries.push(value);
                 }
                 use std::convert::TryInto;
-                let table_entries_as_array: [_; 3] = table_entries.try_into().unwrap();
+                let table_entries_as_array: [_; 3] = table_entries.into_inner().unwrap();
     
                 let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
                 assert_eq!(variables.len(), table.applies_over().len());
 
-                // TODO: we can substitute a check for valid entry entirely later on
-                let valid_entries = table.is_valid_entry(&table_entries_as_array[..keys_and_values_len]);
-                assert!(valid_entries);
+                // // This check is substituted by the lookup from values into index below
+                // let valid_entries = table.is_valid_entry(&table_entries_as_array[..keys_and_values_len]);
+                // assert!(valid_entries);
     
-                if !valid_entries {
-                    return Err(SynthesisError::Unsatisfiable);
-                }
+                // if !valid_entries {
+                //     return Err(SynthesisError::Unsatisfiable);
+                // }
 
                 let row_idx = self.individual_table_entries_lookups.get(&table_name).unwrap().get(&table_entries_as_array);
                 assert!(row_idx.is_some(), "table most likely doesn't contain a row for {:?}", table_entries_as_array);
@@ -1311,41 +1315,6 @@ impl_assembly!{
         #[track_caller]
         fn apply_multi_lookup_gate(&mut self, variables: &[Variable], table: Arc<MultiTableApplication<E>>) -> Result<(), SynthesisError> {
             unimplemented!("not implementing multitable for now");
-            // let n = self.trace_step_for_batch.expect("may only add table constraint in a transaction");
-    
-            // if S::PRODUCE_SETUP {
-            //     let table_name = table.functional_name();
-            //     let tracker = self.multitable_selectors.get_mut(&table_name).unwrap();
-            //     if tracker.len() != n {
-            //         let padding = n - tracker.len();
-            //         tracker.grow(padding, false);
-            //     }
-            //     tracker.push(true);
-            //     debug_assert_eq!(n+1, tracker.len());
-    
-            //     self.table_ids_poly.resize(n, E::Fr::zero());
-            //     self.table_ids_poly.push(table.table_id());
-            // }
-    
-            // if S::PRODUCE_WITNESS {
-            //     let table_name = table.functional_name();
-            //     let mut table_entries = Vec::with_capacity(table.applies_over().len());
-            //     for v in variables.iter() {
-            //         let value = self.get_value(*v).unwrap();
-            //         table_entries.push(value);
-            //     }
-        
-            //     let entries = self.individual_table_entries.get_mut(&table_name).unwrap();
-            //     assert_eq!(variables.len(), table.applies_over().len());
-        
-            //     assert!(table.is_valid_entry(&table_entries));
-    
-            //     entries.push(table_entries);
-            // }
-    
-            // self.num_multitable_lookups += 1;
-    
-            // Ok(())
         }
     
         fn get_current_step_number(&self) -> usize {
