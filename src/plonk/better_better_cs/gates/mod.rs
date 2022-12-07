@@ -1,5 +1,6 @@
 use super::*;
 use super::cs::*;
+use crate::smallvec::SmallVec;
 
 use crate::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
 use crate::pairing::{Engine, CurveAffine, CurveProjective};

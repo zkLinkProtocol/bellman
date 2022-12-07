@@ -10,6 +10,7 @@ extern crate bit_vec;
 extern crate byteorder;
 
 pub use pairing::*;
+pub use smallvec;
 
 use crate::pairing::ff as ff;
 pub use ff::*;

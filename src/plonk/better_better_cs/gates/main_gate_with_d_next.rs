@@ -242,9 +242,9 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         6..7
     }
 
-    fn format_term(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
-        let mut flattened_variables = vec![padding; 4];
-        let mut flattened_coefficients = vec![E::Fr::zero(); 7];
+    fn format_term(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>, SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>), SynthesisError> {
+        let mut flattened_variables = smallvec::smallvec![padding; 4];
+        let mut flattened_coefficients = smallvec::smallvec![E::Fr::zero(); 7];
         let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
@@ -335,9 +335,9 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         Ok((flattened_variables, flattened_coefficients))
     }
 
-    fn format_linear_term_with_duplicates(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
-        let mut flattened_variables = vec![padding; 4];
-        let mut flattened_coefficients = vec![E::Fr::zero(); 7];
+    fn format_linear_term_with_duplicates(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>, SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>), SynthesisError> {
+        let mut flattened_variables = smallvec::smallvec![padding; 4];
+        let mut flattened_coefficients = smallvec::smallvec![E::Fr::zero(); 7];
         let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
@@ -386,12 +386,12 @@ impl<E: Engine> MainGate<E> for Width4MainGateWithDNext {
         Ok((flattened_variables, flattened_coefficients))
     }
 
-    fn dummy_vars_to_inscribe(dummy: Variable) -> Vec<Variable> {
-        vec![dummy; 4]
+    fn dummy_vars_to_inscribe(dummy: Variable) -> SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]> {
+        smallvec::smallvec![dummy; 4]
     }
 
-    fn empty_coefficients() -> Vec<E::Fr> {
-        vec![E::Fr::zero(); 7]
+    fn empty_coefficients() -> SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]> {
+        smallvec::smallvec![E::Fr::zero(); 7]
     }
 
     fn contribute_into_quotient_for_public_inputs<'a, 'b>(

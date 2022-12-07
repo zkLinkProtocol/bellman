@@ -157,6 +157,10 @@ pub trait Gate<E: Engine>: GateInternal<E>
     }
 }
 
+use smallvec::SmallVec;
+
+pub const DEFAULT_SMALLVEC_CAPACITY: usize = 8;
+
 pub trait MainGate<E: Engine>: Gate<E> {
     const NUM_LINEAR_TERMS: usize;
     const NUM_VARIABLES: usize;
@@ -166,10 +170,10 @@ pub trait MainGate<E: Engine>: Gate<E> {
     fn range_of_linear_terms() -> std::ops::Range<usize>;
     fn index_for_constant_term() -> usize;
     fn range_of_next_step_linear_terms() -> std::ops::Range<usize>;
-    fn format_term(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
-    fn format_linear_term_with_duplicates(instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError>;
-    fn dummy_vars_to_inscribe(dummy: Variable) -> Vec<Variable>;
-    fn empty_coefficients() -> Vec<E::Fr>;
+    fn format_term(instance: MainGateTerm<E>, padding: Variable) -> Result<(SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>, SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>), SynthesisError>;
+    fn format_linear_term_with_duplicates(instance: MainGateTerm<E>, padding: Variable) -> Result<(SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>, SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>), SynthesisError>;
+    fn dummy_vars_to_inscribe(dummy: Variable) -> SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>;
+    fn empty_coefficients() -> SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>;
     fn contribute_into_quotient_for_public_inputs<'a, 'b>(
         &self, 
         domain_size: usize,
@@ -304,11 +308,11 @@ impl<E: Engine> ArithmeticTerm<E> {
     }
 }
 
-const DEFAULT_SMALLVEC_CAPACITY: usize = 8;
+const DEFAULT_SMALLVEC_CAPACITY_FOR_TERM: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct MainGateTerm<E: Engine>{
-    pub(crate) terms: smallvec::SmallVec<[ArithmeticTerm<E>; DEFAULT_SMALLVEC_CAPACITY]>,
+    pub(crate) terms: smallvec::SmallVec<[ArithmeticTerm<E>; DEFAULT_SMALLVEC_CAPACITY_FOR_TERM]>,
     pub(crate) vars_scratch: std::collections::HashMap<Variable, usize>,
     pub(crate) num_multiplicative_terms: usize,
     pub(crate) num_constant_terms: usize
@@ -318,7 +322,7 @@ impl<E: Engine> MainGateTerm<E> {
     pub fn new() -> Self {
         Self {
             terms: smallvec::smallvec![],
-            vars_scratch: std::collections::HashMap::with_capacity(DEFAULT_SMALLVEC_CAPACITY),
+            vars_scratch: std::collections::HashMap::with_capacity(DEFAULT_SMALLVEC_CAPACITY_FOR_TERM),
             num_multiplicative_terms: 0,
             num_constant_terms: 0
         }

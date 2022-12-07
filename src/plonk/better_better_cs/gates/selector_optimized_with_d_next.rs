@@ -257,12 +257,12 @@ impl<E: Engine> MainGate<E> for SelectorOptimizedWidth4MainGateWithDNext {
         7..8
     }
 
-    fn format_term(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
+    fn format_term(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>, SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>), SynthesisError> {
         assert!(instance.num_multiplicative_terms <= 1, 
             "should not use term formatting by this gate if you are using it for optimized selector with 2 multiplicative terms"
         );
-        let mut flattened_variables = vec![padding; 4];
-        let mut flattened_coefficients = vec![E::Fr::zero(); 8];
+        let mut flattened_variables = smallvec::smallvec![padding; 4];
+        let mut flattened_coefficients = smallvec::smallvec![E::Fr::zero(); 8];
         let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
@@ -353,13 +353,13 @@ impl<E: Engine> MainGate<E> for SelectorOptimizedWidth4MainGateWithDNext {
         Ok((flattened_variables, flattened_coefficients))
     }
 
-    fn format_linear_term_with_duplicates(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(Vec<Variable>, Vec<E::Fr>), SynthesisError> {
+    fn format_linear_term_with_duplicates(mut instance: MainGateTerm<E>, padding: Variable) -> Result<(SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]>, SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]>), SynthesisError> {
         assert!(instance.num_multiplicative_terms <= 1, 
             "should not use term formatting by this gate if you are using it for optimized selector with 2 multiplicative terms"
         );
 
-        let mut flattened_variables = vec![padding; 4];
-        let mut flattened_coefficients = vec![E::Fr::zero(); 8];
+        let mut flattened_variables = smallvec::smallvec![padding; 4];
+        let mut flattened_coefficients = smallvec::smallvec![E::Fr::zero(); 8];
         let mut bitmap = SimpleBitmap::new();
 
         let allowed_linear = 4;
@@ -408,12 +408,12 @@ impl<E: Engine> MainGate<E> for SelectorOptimizedWidth4MainGateWithDNext {
         Ok((flattened_variables, flattened_coefficients))
     }
 
-    fn dummy_vars_to_inscribe(dummy: Variable) -> Vec<Variable> {
-        vec![dummy; 4]
+    fn dummy_vars_to_inscribe(dummy: Variable) -> SmallVec<[Variable; DEFAULT_SMALLVEC_CAPACITY]> {
+        smallvec::smallvec![dummy; 4]
     }
 
-    fn empty_coefficients() -> Vec<E::Fr> {
-        vec![E::Fr::zero(); 8]
+    fn empty_coefficients() -> SmallVec<[E::Fr; DEFAULT_SMALLVEC_CAPACITY]> {
+        smallvec::smallvec![E::Fr::zero(); 8]
     }
 
     fn contribute_into_quotient_for_public_inputs<'a, 'b>(
