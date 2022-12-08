@@ -791,7 +791,6 @@ impl_poly_storage! {
 
         pub fn new_specialized_for_proving_assembly_and_state_4(size: usize) -> Self {
             assert!(size <= 1 << <E::Fr as PrimeField>::S);
-            dbg!("poly storage for proving assembly with state 4");
             let mut state_map = std::collections::HashMap::new();
             for idx in 0..4{
                 state_map.insert(PolyIdentifier::VariablesPolynomial(idx), new_vec_with_allocator!(size));
