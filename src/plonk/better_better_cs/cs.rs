@@ -909,7 +909,14 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
 
     pub individual_table_canonical_sorted_entries: std::collections::HashMap<String, Vec<[E::Fr; 3]>>,
     pub individual_table_entries_lookups: std::collections::HashMap<String, std::collections::HashMap<[E::Fr; 3], usize>>,
+    #[cfg(feature = "allocator")]
+    pub individual_table_entries: std::collections::HashMap<String, Vec<u32, A>>,
+    #[cfg(not(feature = "allocator"))]
     pub individual_table_entries: std::collections::HashMap<String, Vec<u32>>,
+    #[cfg(feature = "allocator")]
+    pub reusable_buffer_for_lookup_entries: Vec<Vec<u32, A>>,
+    #[cfg(not(feature = "allocator"))]
+    pub reusable_buffer_for_lookup_entries: Vec<Vec<u32>>,
     pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
     pub known_table_ids: Vec<E::Fr>,
     pub num_table_lookups: usize,
@@ -1181,7 +1188,7 @@ impl_assembly!{
             let table_name = table.functional_name();
             let table_id = table.table_id();
             let number_of_entries = table.size();
-
+    
             // ensure sorted format when we add table
             let mut entries = Self::ensure_sorted_table(&table);
             assert_eq!(entries.len(), 3);
@@ -1201,7 +1208,19 @@ impl_assembly!{
             self.tables.push(shared);
             self.individual_table_canonical_sorted_entries.insert(table_name.clone(), entries_as_arrays);
             self.individual_table_entries_lookups.insert(table_name.clone(), entries_into_table_row);
-            self.individual_table_entries.insert(table_name.clone(), vec![]);
+            assert!(self.reusable_buffer_for_lookup_entries.len() > 0);
+            let buffer_for_current_table = if let Some(mut buffer) =  self.reusable_buffer_for_lookup_entries.pop(){
+                unsafe{
+                    buffer.set_len(0);
+                };
+                buffer
+            }else{
+                dbg!(self.individual_table_entries.len());
+                println!("allocating new buffer for table {} with {} entries", table_name, number_of_entries);
+                new_vec_with_allocator!(0)
+            };
+            
+            self.individual_table_entries.insert(table_name.clone(), buffer_for_current_table);
             self.table_selectors.insert(table_name, BitVec::new());
             self.known_table_ids.push(table_id);
     
@@ -1231,7 +1250,7 @@ impl_assembly!{
             assert!(exists == false);
             self.multitables.push(Arc::from(table));
             self.multitable_selectors.insert(table_name.clone(), BitVec::new());
-            self.individual_table_entries.insert(table_name.clone(), vec![]);
+            self.individual_table_entries.insert(table_name.clone(), new_vec_with_allocator!(0));
     
             Ok(())
         }
@@ -1409,7 +1428,7 @@ impl_assembly!{
             }        
         }
 
-        pub fn new() -> Self {
+        pub fn new() -> Self {            
             let mut tmp = Self {
                 inputs_storage: PolynomialStorage::new(),
                 aux_storage: PolynomialStorage::new(),
@@ -1452,6 +1471,7 @@ impl_assembly!{
                 individual_table_canonical_sorted_entries: std::collections::HashMap::new(),
                 individual_table_entries_lookups: std::collections::HashMap::new(),
                 individual_table_entries: std::collections::HashMap::new(),
+                reusable_buffer_for_lookup_entries: vec![],
                 individual_multitable_entries: std::collections::HashMap::new(),
 
                 known_table_ids: vec![],
@@ -1470,11 +1490,12 @@ impl_assembly!{
             tmp
         }        
 
-        pub fn new_specialized_for_proving_assembly_and_state_4(size: usize) -> Self {
-            assert!(size <= 1 << <E::Fr as PrimeField>::S);
+        pub fn new_specialized_for_proving_assembly_and_state_4(domain_size: usize, aux_size: usize, num_lookup_tables: usize, max_num_lookup_entries: usize) -> Self {
+            assert!(domain_size <= 1 << <E::Fr as PrimeField>::S);
+            let reusable_buffer_for_lookup_entries = (0..num_lookup_tables).map(|_| new_vec_with_allocator!(max_num_lookup_entries)).collect();
             let mut tmp = Self {
                 inputs_storage: PolynomialStorage::new(),
-                aux_storage: PolynomialStorage::new_specialized_for_proving_assembly_and_state_4(size),
+                aux_storage: PolynomialStorage::new_specialized_for_proving_assembly_and_state_4(domain_size),
 
                 max_constraint_degree: 0,
 
@@ -1485,7 +1506,7 @@ impl_assembly!{
                 num_aux: 0,
 
                 input_assingments: vec![],
-                aux_assingments: new_vec_with_allocator!(size),
+                aux_assingments: new_vec_with_allocator!(aux_size),
 
                 main_gate: MG::default(),
 
@@ -1514,6 +1535,7 @@ impl_assembly!{
                 individual_table_canonical_sorted_entries: std::collections::HashMap::new(),
                 individual_table_entries_lookups: std::collections::HashMap::new(),
                 individual_table_entries: std::collections::HashMap::new(),
+                reusable_buffer_for_lookup_entries: reusable_buffer_for_lookup_entries,
                 individual_multitable_entries: std::collections::HashMap::new(),
 
                 known_table_ids: vec![],
@@ -1531,7 +1553,6 @@ impl_assembly!{
 
             tmp
         }
-
 
 
         // return variable that is not in a constraint formally, but has some value

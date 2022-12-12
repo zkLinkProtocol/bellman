@@ -292,6 +292,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         mon_crs: &Crs<E, CrsForMonomialForm>,
         transcript_params: Option<T::InitializationParameters>,
     ) -> Result<Proof<E, C>, SynthesisError> {
+        self.create_proof_by_ref::<_, T>(worker, setup, mon_crs, transcript_params)
+    }
+    
+    pub fn create_proof_by_ref<C: Circuit<E>, T: Transcript<E::Fr>>(
+        &self, 
+        worker: &Worker,
+        setup: &Setup<E, C>,
+        mon_crs: &Crs<E, CrsForMonomialForm>,
+        transcript_params: Option<T::InitializationParameters>,
+    ) -> Result<Proof<E, C>, SynthesisError> {
         assert!(S::PRODUCE_WITNESS);
         assert!(self.is_finalized);
 
