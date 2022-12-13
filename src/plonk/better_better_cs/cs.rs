@@ -1207,16 +1207,14 @@ impl_assembly!{
     
             self.tables.push(shared);
             self.individual_table_canonical_sorted_entries.insert(table_name.clone(), entries_as_arrays);
-            self.individual_table_entries_lookups.insert(table_name.clone(), entries_into_table_row);
-            assert!(self.reusable_buffer_for_lookup_entries.len() > 0);
+            self.individual_table_entries_lookups.insert(table_name.clone(), entries_into_table_row);            
             let buffer_for_current_table = if let Some(mut buffer) =  self.reusable_buffer_for_lookup_entries.pop(){
                 unsafe{
                     buffer.set_len(0);
                 };
                 buffer
             }else{
-                dbg!(self.individual_table_entries.len());
-                println!("allocating new buffer for table {} with {} entries", table_name, number_of_entries);
+                println!("allocating new buffer for table {}", table_name);
                 new_vec_with_allocator!(0)
             };
             
