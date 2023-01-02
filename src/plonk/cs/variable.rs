@@ -1,5 +1,5 @@
 /// Represents a variable in our constraint system.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Variable(pub(crate) Index);
 
 impl Variable {
@@ -18,7 +18,7 @@ impl Variable {
 
 /// Represents the index of either an input variable or
 /// auxillary variable.
-#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
+#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Index {
     Input(usize),
     Aux(usize)
