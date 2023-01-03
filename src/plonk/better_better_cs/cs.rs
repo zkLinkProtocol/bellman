@@ -755,8 +755,9 @@ macro_rules! new_vec_with_allocator {
 
 use crate::plonk::polynomials::*;
 
-#[derive(Clone)]
-pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default = Global> {
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(bound(deserialize = "'de: 'static"))]
+pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default + 'static = Global> {
     #[cfg(feature = "allocator")]
     pub state_map: std::collections::HashMap<PolyIdentifier, Vec<Variable, A>>,
     #[cfg(not(feature = "allocator"))]
@@ -847,7 +848,8 @@ impl_poly_storage! {
         }
     }
 }
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>"))]
 pub struct GateDensityStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateInternal<E>>, BitVec>);
 
 impl<E: Engine> GateDensityStorage<E> {
@@ -868,7 +870,8 @@ pub type TrivialAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeTesting>;
 pub type ProvingAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeProve>;
 pub type SetupAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeGenerateSetup>;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize, MG: serde::Serialize, dyn LookupTableInternal<E>: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>, MG: serde::Deserialize<'de>, dyn LookupTableInternal<E>: serde::de::DeserializeOwned"))]
 pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, #[cfg(feature = "allocator")]A: Allocator + Default = Global> {
     #[cfg(feature = "allocator")]
     pub inputs_storage: PolynomialStorage<E, A>,
@@ -891,16 +894,16 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     pub num_aux: usize,
     pub trace_step_for_batch: Option<usize>,
     pub is_finalized: bool,
-
     pub gates: std::collections::HashSet<Box<dyn GateInternal<E>>>,
     pub all_queried_polys_in_constraints: std::collections::HashSet<PolynomialInConstraint>,
     // pub sorted_setup_polynomial_ids: Vec<PolyIdentifier>,
+
     pub sorted_gates: Vec<Box<dyn GateInternal<E>>>,
     pub aux_gate_density: GateDensityStorage<E>,
     pub explicit_zero_variable: Option<Variable>,
     pub explicit_one_variable: Option<Variable>,
-
     pub tables: Vec<Arc<LookupTableApplication<E>>>,
+    #[serde(skip)]
     pub multitables: Vec<Arc<MultiTableApplication<E>>>,
     pub table_selectors: std::collections::HashMap<String, BitVec>,
     pub multitable_selectors: std::collections::HashMap<String, BitVec>,

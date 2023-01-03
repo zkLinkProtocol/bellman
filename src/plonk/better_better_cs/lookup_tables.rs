@@ -58,10 +58,13 @@ impl<E: Engine> PartialEq for dyn LookupTableInternal<E> {
 impl<E: Engine> Eq for dyn LookupTableInternal<E> {}
 
 /// Applies a single lookup table to a specific set of columns
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(serialize = "dyn LookupTableInternal<E>: serde::Serialize", deserialize = "dyn LookupTableInternal<E>: serde::de::DeserializeOwned"))]
 pub struct LookupTableApplication<E: Engine> {
     name: &'static str,
     apply_over: Vec<PolyIdentifier>,
     table_to_apply: Box<dyn LookupTableInternal<E>>,
+    #[serde(skip)] // TODO
     name_generator: Option<Box<dyn (Fn() -> String) + 'static + Send + Sync>>,
     can_be_combined: bool
 }

@@ -3,7 +3,7 @@ use crate::pairing::*;
 use crate::plonk::polynomials::*;
 use super::cs::GateInternal;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum PolyIdentifier {
     VariablesPolynomial(usize),
     WitnessPolynomial(usize),
@@ -72,9 +72,10 @@ impl std::hash::Hash for PolyIdentifier {
 
 pub const LOOKUP_TABLE_TYPE_POLYNOMIAL: &'static str = "LOOKUP_TABLE_TYPE_POLYNOMIAL";
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TimeDilation(pub usize);
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(bound( deserialize = "'de: 'static"))]
 pub struct PolynomialInConstraint(pub PolyIdentifier, pub TimeDilation);
 
 impl PolynomialInConstraint{
