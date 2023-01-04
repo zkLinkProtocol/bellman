@@ -5,6 +5,7 @@ use crate::bit_vec::BitVec;
 use crate::{SynthesisError};
 #[cfg(feature = "allocator")]
 use std::alloc::{Allocator, Global};
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use crate::worker::Worker;
@@ -157,6 +158,7 @@ pub trait Gate<E: Engine>: GateInternal<E>
     }
 }
 
+use serde::{Serialize, Deserialize};
 use smallvec::SmallVec;
 
 pub const DEFAULT_SMALLVEC_CAPACITY: usize = 8;
@@ -756,14 +758,19 @@ macro_rules! new_vec_with_allocator {
 use crate::plonk::polynomials::*;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(bound(deserialize = "'de: 'static"))]
+#[cfg_attr(feature = "allocator",serde(bound(serialize = "A: serde::Serialize", deserialize = "'de: 'static, A: serde::Deserialize<'de>")))]
+#[cfg_attr(not(feature = "allocator"), serde(bound(deserialize = "'de: 'static")))]
 pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default + 'static = Global> {
     #[cfg(feature = "allocator")]
+    #[cfg_attr(feature = "allocator", serde(serialize_with = "serialize_hashmap_with_allocator"))]
+    #[cfg_attr(feature = "allocator", serde(deserialize_with = "deserialize_hashmap_with_allocator"))]
     pub state_map: std::collections::HashMap<PolyIdentifier, Vec<Variable, A>>,
     #[cfg(not(feature = "allocator"))]
     pub state_map: std::collections::HashMap<PolyIdentifier, Vec<Variable>>,
     pub witness_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
     #[cfg(feature = "allocator")]
+    #[cfg_attr(feature = "allocator", serde(serialize_with = "serialize_hashmap_with_allocator"))]
+    #[cfg_attr(feature = "allocator", serde(deserialize_with = "deserialize_hashmap_with_allocator"))]
     pub setup_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr, A>>,
     #[cfg(not(feature = "allocator"))]
     pub setup_map: std::collections::HashMap<PolyIdentifier, Vec<E::Fr>>,
@@ -871,8 +878,9 @@ pub type ProvingAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeProve>;
 pub type SetupAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeGenerateSetup>;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize, MG: serde::Serialize, dyn LookupTableInternal<E>: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>, MG: serde::Deserialize<'de>, dyn LookupTableInternal<E>: serde::de::DeserializeOwned"))]
-pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, #[cfg(feature = "allocator")]A: Allocator + Default = Global> {
+#[cfg_attr(feature = "allocator", serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize, MG: serde::Serialize, dyn LookupTableInternal<E>: serde::Serialize, A: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>, MG: serde::Deserialize<'de>, dyn LookupTableInternal<E>: serde::de::DeserializeOwned, A: serde::Deserialize<'de>")))]
+#[cfg_attr(not(feature = "allocator"), serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize, MG: serde::Serialize, dyn LookupTableInternal<E>: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>, MG: serde::Deserialize<'de>, dyn LookupTableInternal<E>: serde::de::DeserializeOwned")))]
+pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, #[cfg(feature = "allocator")]A: Allocator + Default + 'static = Global> {
     #[cfg(feature = "allocator")]
     pub inputs_storage: PolynomialStorage<E, A>,
     #[cfg(not(feature = "allocator"))]
@@ -887,6 +895,8 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     pub main_gate: MG,
     pub input_assingments: Vec<E::Fr>,
     #[cfg(feature = "allocator")]
+    #[cfg_attr(feature = "allocator", serde(serialize_with = "serialize_vec_with_allocator"))]
+    #[cfg_attr(feature = "allocator", serde(deserialize_with = "deserialize_vec_with_allocator"))]
     pub aux_assingments: Vec<E::Fr, A>,
     #[cfg(not(feature = "allocator"))]
     pub aux_assingments: Vec<E::Fr>,
@@ -913,10 +923,14 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     pub individual_table_canonical_sorted_entries: std::collections::HashMap<String, Vec<[E::Fr; 3]>>,
     pub individual_table_entries_lookups: std::collections::HashMap<String, std::collections::HashMap<[E::Fr; 3], usize>>,
     #[cfg(feature = "allocator")]
+    #[cfg_attr(feature = "allocator", serde(serialize_with = "serialize_hashmap_with_allocator"))]
+    #[cfg_attr(feature = "allocator", serde(deserialize_with = "deserialize_hashmap_with_allocator"))]
     pub individual_table_entries: std::collections::HashMap<String, Vec<u32, A>>,
     #[cfg(not(feature = "allocator"))]
     pub individual_table_entries: std::collections::HashMap<String, Vec<u32>>,
     #[cfg(feature = "allocator")]
+    #[cfg_attr(feature = "allocator", serde(serialize_with = "serialize_2d_vec_with_allocator"))]
+    #[cfg_attr(feature = "allocator", serde(deserialize_with = "deserialize_2d_vec_with_allocator"))]
     pub reusable_buffer_for_lookup_entries: Vec<Vec<u32, A>>,
     #[cfg(not(feature = "allocator"))]
     pub reusable_buffer_for_lookup_entries: Vec<Vec<u32>>,
@@ -931,18 +945,216 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     _marker_a: std::marker::PhantomData<A>,
 }
 
+cfg_if!{
+    if #[cfg(feature = "allocator")]{
+        use serde::de::{Visitor, SeqAccess, MapAccess};
+
+        struct VecVisitor<T, B: Allocator> {
+            m1: PhantomData<T>,
+            m2: PhantomData<B>,
+        }
+        
+        impl<T, B: Allocator> VecVisitor<T, B>{
+            pub fn new() -> Self{
+                Self{
+                    m1: PhantomData,
+                    m2: PhantomData,
+                }
+            }
+        }
+        
+        impl<'de, T, B> Visitor<'de> for VecVisitor<T, B>
+        where
+            T: Deserialize<'de>,
+            B: Allocator + Default,
+        {
+            type Value = Vec<T, B>;
+        
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a sequence")
+            }
+        
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let size_hint = seq.size_hint();
+                let size_hint = std::cmp::min(size_hint.unwrap_or(0), 4096);
+                let mut values = Vec::with_capacity_in(size_hint, B::default());
+        
+                while let Ok(result) = seq.next_element() {
+                    match result{
+                        Some(value) => values.push(value),
+                        None => (),
+                    }
+                }
+        
+        
+                Ok(values)
+            }
+        }
+        
+        struct TwoDVecVisitor<T, B: Allocator> {
+            m1: PhantomData<T>,
+            m2: PhantomData<B>,
+        }
+        
+        
+        impl<T, B: Allocator> TwoDVecVisitor<T, B>{
+            pub fn new() -> Self{
+                Self{
+                    m1: PhantomData,
+                    m2: PhantomData,
+                }
+            }
+        }
+        
+        impl<'de, T, B> Visitor<'de> for TwoDVecVisitor<T, B>
+        where
+            T: Deserialize<'de>,
+            B: Allocator + Default,
+        {
+            type Value = Vec<Vec<T, B>>;
+        
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a sequence")
+            }
+        
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let size_hint = seq.size_hint();
+                let size_hint = std::cmp::min(size_hint.unwrap_or(0), 4096);
+                let mut final_result = Vec::with_capacity(size_hint);
+                
+        
+                while let Ok(result)  = seq.next_element::<Vec<T>>() {
+                    match result{                
+                        Some(sub_vec) => {
+                            let size_hint = seq.size_hint();
+                            let size_hint = std::cmp::min(size_hint.unwrap_or(0), 4096);
+                            let mut values = Vec::with_capacity_in(size_hint, B::default());
+                            for el in sub_vec{
+                                values.push(el)
+                            }
+                            final_result.push(values);                    
+                    },
+                        None => (),
+                    }
+                }
+        
+                Ok(final_result)
+            }
+        }
+        
+        struct MapVisitor<K, T, B: Allocator> {
+            m0: PhantomData<K>,
+            m1: PhantomData<T>,
+            m2: PhantomData<B>,
+        }
+        
+        impl<K, T, B: Allocator> MapVisitor<K, T, B>{
+            pub fn new() -> Self{
+                Self{
+                    m0: PhantomData,
+                    m1: PhantomData,
+                    m2: PhantomData,
+                }
+            }
+        }
+        
+        impl<'de, K, T, B> Visitor<'de> for MapVisitor<K, T, B>
+        where
+            T: Deserialize<'de>,
+            K: Deserialize<'de>,
+            B: Allocator + Default
+        {
+            type Value = HashMap<K, Vec<T, B>>;
+        
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a 2d sequence")
+            }
+        
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let size_hint = map.size_hint();
+                let size_hint = std::cmp::min(size_hint.unwrap_or(0), 4096);
+                let mut final_map = HashMap::with_capacity(size_hint);
+        
+                while let Ok(entry) = map.next_entry::<K, Vec<T>>() {
+                    let mut values = vec![];
+                    match entry{
+                        Some((key, sub_vec)) => {
+                            for el in sub_vec{
+                                values.push(el)
+                            }
+                        },
+                        None => (),
+                    }
+                }
+        
+        
+                Ok(final_map)
+            }
+        }
+        
+        fn serialize_vec_with_allocator<T: serde::Serialize, S, A: Allocator + serde::Serialize>(data: &Vec<T, A>, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+            data.serialize(serializer)
+        }
+        
+        fn deserialize_vec_with_allocator<'de, D, T: serde::Deserialize<'de>, A: Allocator + Default + serde::Deserialize<'de>>(deserializer: D) -> Result<Vec<T, A>, D::Error> where D: serde::Deserializer<'de> {
+            deserializer.deserialize_seq(VecVisitor::new())
+        }
+        
+        fn serialize_2d_vec_with_allocator<T: serde::Serialize, S, A: Allocator + serde::Serialize>(data: &Vec<Vec<T, A>>, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+            use serde::ser::SerializeSeq;
+            let mut seq = serializer.serialize_seq(Some(data.len()))?;
+            for sub_vec in data {
+                for el in sub_vec{
+                    seq.serialize_element(el)?;
+                }
+            }
+            seq.end()
+        }
+        
+        fn deserialize_2d_vec_with_allocator<'de, D, T: serde::Deserialize<'de>, A: Allocator + Default + serde::Deserialize<'de>>(deserializer: D) -> Result<Vec<Vec<T, A>>, D::Error> where D: serde::Deserializer<'de> {    
+            deserializer.deserialize_seq(TwoDVecVisitor::new())
+        }
+        
+        fn serialize_hashmap_with_allocator<K: serde::Serialize, T: serde::Serialize, S, A: Allocator + Default + serde::Serialize>(data: &HashMap<K, Vec<T, A>>, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+            use serde::ser::{SerializeMap, SerializeSeq};
+        
+            let mut s = serializer.serialize_map(Some(data.len()))?;
+            for (k, v) in data{
+                s.serialize_key(k)?;
+                for el in v.iter(){
+                    s.serialize_value(el)?;
+                }
+            }
+            s.end()
+        }
+        
+        fn deserialize_hashmap_with_allocator<'de, D,K: serde::Deserialize<'de>, T: serde::Deserialize<'de>, A: Allocator + Default>(deserializer: D) -> Result<HashMap<K, Vec<T, A>>, D::Error> where D: serde::Deserializer<'de> {
+            deserializer.deserialize_map(MapVisitor::new())
+        }
+    }
+}
+
 
 macro_rules! impl_assembly {
     {impl Assembly $inherent:tt} => {
         #[cfg(feature = "allocator")]
-        impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, A: Allocator + Default + Send + Sync> Assembly<E, P, MG, S, A> $inherent
+        impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, A: Allocator + Default + 'static + Send + Sync> Assembly<E, P, MG, S, A> $inherent
         
         #[cfg(not(feature = "allocator"))]
         impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> Assembly<E, P, MG, S> $inherent
     };
     {impl ConstraintSystem $inherent:tt} =>{
         #[cfg(feature = "allocator")]
-        impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, A: Allocator + Default + Send + Sync> ConstraintSystem<E> for Assembly<E, P, MG, S, A>  $inherent
+        impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, A: Allocator + Default + 'static + Send + Sync> ConstraintSystem<E> for Assembly<E, P, MG, S, A>  $inherent
 
         #[cfg(not(feature = "allocator"))]
         impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode> ConstraintSystem<E> for Assembly<E, P, MG, S> $inherent
