@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Debug, Hash, Default)]
+#[derive(Clone, Debug, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct SelectorOptimizedWidth4MainGateWithDNext;
 
 impl SelectorOptimizedWidth4MainGateWithDNext {

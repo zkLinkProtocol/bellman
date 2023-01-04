@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Debug, Hash, Default)]
+#[derive(Clone, Debug, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Width4MainGateWithDNext;
 
 impl Width4MainGateWithDNext {
