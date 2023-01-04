@@ -760,7 +760,7 @@ use crate::plonk::polynomials::*;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "allocator",serde(bound(serialize = "A: serde::Serialize", deserialize = "'de: 'static, A: serde::Deserialize<'de>")))]
 #[cfg_attr(not(feature = "allocator"), serde(bound(deserialize = "'de: 'static")))]
-pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default + 'static = Global> {
+pub struct PolynomialStorage<E: Engine, #[cfg(feature = "allocator")]A: Allocator + Default = Global> {
     #[cfg(feature = "allocator")]
     #[cfg_attr(feature = "allocator", serde(serialize_with = "serialize_hashmap_with_allocator"))]
     #[cfg_attr(feature = "allocator", serde(deserialize_with = "deserialize_hashmap_with_allocator"))]
@@ -859,6 +859,12 @@ impl_poly_storage! {
 #[serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>"))]
 pub struct GateDensityStorage<E: Engine>(pub std::collections::HashMap<Box<dyn GateInternal<E>>, BitVec>);
 
+impl<E: Engine> Default for GateDensityStorage<E>{
+    fn default() -> Self {
+        Self(std::collections::HashMap::new())
+    }
+}
+
 impl<E: Engine> GateDensityStorage<E> {
     pub fn new() -> Self {
         Self(std::collections::HashMap::new())
@@ -878,9 +884,9 @@ pub type ProvingAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeProve>;
 pub type SetupAssembly<E, P, MG> = Assembly<E, P, MG, SynthesisModeGenerateSetup>;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "allocator", serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize, MG: serde::Serialize, dyn LookupTableInternal<E>: serde::Serialize, A: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>, MG: serde::Deserialize<'de>, dyn LookupTableInternal<E>: serde::de::DeserializeOwned, A: serde::Deserialize<'de>")))]
-#[cfg_attr(not(feature = "allocator"), serde(bound(serialize = "dyn GateInternal<E>: serde::Serialize, MG: serde::Serialize, dyn LookupTableInternal<E>: serde::Serialize", deserialize = "'de: 'static, dyn GateInternal<E>: serde::Deserialize<'de>, MG: serde::Deserialize<'de>, dyn LookupTableInternal<E>: serde::de::DeserializeOwned")))]
-pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, #[cfg(feature = "allocator")]A: Allocator + Default + 'static = Global> {
+#[cfg_attr(feature = "allocator", serde(bound(serialize = "MG: serde::Serialize, A: serde::Serialize", deserialize = "'de: 'static, MG: serde::Deserialize<'de>, A: serde::Deserialize<'de>")))]
+#[cfg_attr(not(feature = "allocator"), serde(bound(serialize = "MG: serde::Serialize", deserialize = "'de: 'static, MG: serde::Deserialize<'de>")))]
+pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: SynthesisMode, #[cfg(feature = "allocator")]A: Allocator + Default = Global> {
     #[cfg(feature = "allocator")]
     pub inputs_storage: PolynomialStorage<E, A>,
     #[cfg(not(feature = "allocator"))]
@@ -904,14 +910,17 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     pub num_aux: usize,
     pub trace_step_for_batch: Option<usize>,
     pub is_finalized: bool,
+    #[serde(skip)]
     pub gates: std::collections::HashSet<Box<dyn GateInternal<E>>>,
     pub all_queried_polys_in_constraints: std::collections::HashSet<PolynomialInConstraint>,
     // pub sorted_setup_polynomial_ids: Vec<PolyIdentifier>,
-
+    #[serde(skip)]
     pub sorted_gates: Vec<Box<dyn GateInternal<E>>>,
+    #[serde(skip)]
     pub aux_gate_density: GateDensityStorage<E>,
     pub explicit_zero_variable: Option<Variable>,
     pub explicit_one_variable: Option<Variable>,
+    #[serde(skip)]
     pub tables: Vec<Arc<LookupTableApplication<E>>>,
     #[serde(skip)]
     pub multitables: Vec<Arc<MultiTableApplication<E>>>,
