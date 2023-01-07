@@ -944,7 +944,8 @@ pub struct Assembly<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E
     #[cfg(not(feature = "allocator"))]
     pub reusable_buffer_for_lookup_entries: Vec<Vec<u32>>,
     pub individual_multitable_entries: std::collections::HashMap<String, Vec<Vec<E::Fr>>>,
-    pub known_table_ids: Vec<E::Fr>,
+    pub known_table_ids: HashMap<String, E::Fr>,
+    pub known_table_names: Vec<String>,
     pub num_table_lookups: usize,
     pub num_multitable_lookups: usize,
 
@@ -1408,7 +1409,7 @@ impl_assembly!{
         fn add_table(&mut self, table: LookupTableApplication<E>) -> Result<Arc<LookupTableApplication<E>>, SynthesisError> {
             assert!(table.applies_over().len() == 3, "only support tables of width 3");
             assert!(table.can_be_combined(), "can only add tables that are combinable");
-            assert!(!self.known_table_ids.contains(&table.table_id()), "can not add a duplicate table for name {}", table.functional_name());
+            assert!(!self.known_table_ids.contains_key(&table.functional_name()), "can not add a duplicate table for name {}", table.functional_name());
             let table_name = table.functional_name();
             let table_id = table.table_id();
             let number_of_entries = table.size();
@@ -1443,8 +1444,9 @@ impl_assembly!{
             };
             
             self.individual_table_entries.insert(table_name.clone(), buffer_for_current_table);
-            self.table_selectors.insert(table_name, BitVec::new());
-            self.known_table_ids.push(table_id);
+            self.known_table_names.push(table_name.clone());
+            self.table_selectors.insert(table_name.clone(), BitVec::new());
+            self.known_table_ids.insert(table_name, table_id);
     
             self.total_length_of_all_tables += number_of_entries;
     
@@ -1696,7 +1698,8 @@ impl_assembly!{
                 reusable_buffer_for_lookup_entries: vec![],
                 individual_multitable_entries: std::collections::HashMap::new(),
 
-                known_table_ids: vec![],
+                known_table_ids: HashMap::new(),
+                known_table_names: vec![],
 
                 num_table_lookups: 0,
                 num_multitable_lookups: 0,
@@ -1760,7 +1763,8 @@ impl_assembly!{
                 reusable_buffer_for_lookup_entries: reusable_buffer_for_lookup_entries,
                 individual_multitable_entries: std::collections::HashMap::new(),
 
-                known_table_ids: vec![],
+                known_table_ids: HashMap::new(),
+                known_table_names: vec![],
 
                 num_table_lookups: 0,
                 num_multitable_lookups: 0,
