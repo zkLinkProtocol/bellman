@@ -194,6 +194,10 @@ impl<E: Engine> LookupTableApplication<E> {
     pub fn query(&self, keys: &[E::Fr]) -> Result<Vec<E::Fr>, SynthesisError> {
         self.table_to_apply.query(keys)
     }
+
+    pub fn as_internal(&self) -> &dyn LookupTableInternal<E> {
+        self.table_to_apply.as_ref()
+    }
 }
 
 /// Apply multiple tables at the same time to corresponding columns
