@@ -263,6 +263,7 @@ pub struct Transpiler<E: Engine, P: PlonkConstraintSystemParams<E>> {
     current_plonk_input_idx: usize,
     current_plonk_aux_idx: usize,
     scratch: HashSet<crate::cs::Variable>,
+    // deduplication_scratch: HashMap<crate::cs::Variable, E::Fr>,
     deduplication_scratch: HashMap<crate::cs::Variable, usize>,
     transpilation_scratch_space: Option<TranspilationScratchSpace<E>>,
     hints: Vec<(usize, TranspilationVariant)>,
@@ -304,6 +305,7 @@ fn allocate_into_cs<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConst
 fn evaluate_lc<E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem<E, P>>(
     cs: &CS,
     lc: &LinearCombination<E>,  
+    // multiplier: E::Fr, 
     free_term_constant: E::Fr
 ) -> Result<E::Fr, SynthesisError> {
     let mut final_value = E::Fr::zero();
@@ -787,21 +789,21 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
         crate::Variable::new_unchecked(crate::Index::Input(0))
     }
 
-    fn alloc<F, A, AR>(&mut self, _: A, _f: F) -> Result<crate::Variable, crate::SynthesisError>
+    fn alloc<F, A, AR>(&mut self, _: A, f: F) -> Result<crate::Variable, crate::SynthesisError>
     where
         F: FnOnce() -> Result<E::Fr, crate::SynthesisError>,
         A: FnOnce() -> AR,
         AR: Into<String>,
     {
         self.current_plonk_aux_idx += 1;
-
+        f();
         Ok(crate::Variable::new_unchecked(crate::Index::Aux(self.current_plonk_aux_idx)))
     }
 
     fn alloc_input<F, A, AR>(
         &mut self,
         _: A,
-        _f: F,
+        f: F,
     ) -> Result<crate::Variable, crate::SynthesisError>
     where
         F: FnOnce() -> Result<E::Fr, crate::SynthesisError>,
@@ -809,7 +811,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
         AR: Into<String>,
     {
         self.current_plonk_input_idx += 1;
-
+        f();
         Ok(crate::Variable::new_unchecked(crate::Index::Input(self.current_plonk_input_idx)))
     }
 
@@ -850,6 +852,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 unreachable!("R1CS has a gate 1 * 1 = 1");
             },
             (true, false, true) | (false, true, true) => {
+                // println!("C * LC = C");
                 // we have something like c0 * LC = c1
                 // do we form an "addition gate", that may take more than
                 // one gate itself
@@ -895,12 +898,15 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
                 let current_lc_number = self.increment_lc_number();
 
+                // println!("Hint = {:?}", hint);
+
                 self.hints.push((current_lc_number, TranspilationVariant::IntoAdditionGate(hint)));
 
                 return;
             },
             (false, false, true) => {
-                // potential quadatic gate, but in general
+                // println!("LC * LC = C");    
+                // potential quadatic gate, but ig general
                 // it's a full multiplication gate
                 let (is_quadratic_gate, _coeffs) = check_for_quadratic_gate::<E>(
                     &a_lc, 
@@ -917,6 +923,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     self.n += 1;
 
                     let hint = TranspilationVariant::IntoQuadraticGate;
+
+                    // println!("Hint = {:?}", hint);
 
                     self.hints.push((current_lc_number, hint));
 
@@ -954,6 +962,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 // so we count ourselves
                 self.n += 1;
 
+                // println!("Hint = {:?}", hint);
+
                 self.hints.push((current_lc_number, hint));
 
             },
@@ -979,15 +989,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     // not sure that any sane circuit will have this,
                     // but we cover this variant
 
-                    // println!("Warning: strange constraint, LC_C == 0 gate resulting from A=0 or B=0, annotation: {}", _ann().into());
-
                     let mut space = self.transpilation_scratch_space.take().unwrap();
 
                     let (_, _, hint_c) = enforce_lc_as_gates(
                         self,
                         c_lc,
                         one_fr,
-                        c_constant_term,
+                        zero_fr,
                         false,
                         &mut space
                     ).expect("must allocate LCs as gates for constraint like 0 = LC_C");
@@ -998,16 +1006,13 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
                     let hint = TranspilationVariant::MergeLinearCombinations(MergeLcVariant::CIsTheOnlyMeaningful, hint_c);
 
+                    // println!("Hint = {:?}", hint);
+
                     self.hints.push((current_lc_number, hint));
 
                     return;
                 }
 
-                // In a past this has lead to a series of questions, so during the cleanup
-                // we add some comments
-
-                // Pick and LC that will be our "base", that is either LC_A if LC_A is not a trivial constant,
-                // or LC_B
                 let mut final_lc = if !a_is_constant {
                     a_lc
                 } else if !b_is_constant {
@@ -1016,28 +1021,23 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     unreachable!()
                 };
 
-                // if LC_A is constant then multiplies is LC_A constant term, same for LC_B,
-                // so we scale our "base" here, concluding LC_A * LC_B part WITHOUT(!) constants (that are factors in front of CS::one())
                 if multiplier != one_fr {
                     for (_, c) in final_lc.0.iter_mut() {
                         c.mul_assign(&multiplier);
                     }
                 }
 
-                // now work with "leftover", that is LC_A constant term (multiplier around CS::one()) if LC_A is not
-                // a full trivial constant, and same for LC_B
                 let mut free_constant_term = if a_is_constant {
-                    b_constant_term
-                } else if b_is_constant {
                     a_constant_term
+                } else if b_is_constant {
+                    b_constant_term
                 } else {
-                    unreachable!("Must have picked a constant (CS::one()) term from either LC_A or LC_B");
+                    unreachable!()
                 };
-                // again: scale it 
                 free_constant_term.mul_assign(&multiplier);
-                // and subtract constant part of LC_C
                 free_constant_term.sub_assign(&c_constant_term);
 
+                // let final_lc = final_lc - &c;
                 let final_lc = subtract_lcs_with_dedup_stable::<E, Self>(final_lc, c_lc, &mut self.deduplication_scratch);
 
                 let mut space = self.transpilation_scratch_space.take().unwrap();
@@ -1057,6 +1057,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
                 let hint = TranspilationVariant::MergeLinearCombinations(lc_variant, hint_lc);
 
+                // println!("Hint = {:?}", hint);
+
                 self.hints.push((current_lc_number, hint));
 
                 return;
@@ -1066,13 +1068,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 // const * const = LC
                 // A and B are some constants
                 // also strange one, but we cover all the options exhaustively
-                let mut tmp = a_constant_term;
-                tmp.mul_assign(&b_constant_term);
-
-                let mut free_constant_term = c_constant_term;
-                free_constant_term.sub_assign(&tmp);
-
-                // println!("Warning: strange constraint, LC_C == constant gate resulting from A=constant and B=constant, annotation: {}", _ann().into());
+                let mut free_constant_term = a_constant_term;
+                free_constant_term.mul_assign(&b_constant_term);
 
                 let mut space = self.transpilation_scratch_space.take().unwrap();
 
@@ -1091,6 +1088,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
 
                 let hint = TranspilationVariant::MergeLinearCombinations(MergeLcVariant::CIsTheOnlyMeaningful, hint_lc);
 
+                // println!("Hint = {:?}", hint);
+
                 self.hints.push((current_lc_number, hint));
 
             },
@@ -1108,6 +1107,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                     // we don't pass a call to any function that allocates a gate,
                     // so we count ourselves
                     self.n += 1;
+
+                    // println!("Hint = {:?}", hint);
 
                     self.hints.push((current_lc_number, hint));
 
@@ -1151,6 +1152,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> crate::ConstraintSystem<E> fo
                 // we don't pass a call to any function that allocates a gate,
                 // so we count ourselves
                 self.n += 1;
+
+                // println!("Hint = {:?}", hint);
 
                 self.hints.push((current_lc_number, hint));
             }
@@ -1439,7 +1442,17 @@ fn deduplicate_stable<E: Engine, CS: ConstraintSystem<E>>(
         }
     }
 
+    // let _initial_len = deduped_vec.len();
+
     deduped_vec = deduped_vec.into_iter().filter(|(_var, coeff)| !coeff.is_zero()).collect();
+
+    // let _final_len = deduped_vec.len();
+
+    // if _initial_len != _final_len {
+    //     println!("Encountered constraint with zero coeff for variable!");
+    // }
+
+    // assert!(deduped_vec.len() != 0);
 
     scratch.clear();
 
@@ -1943,6 +1956,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                         free_constant_term.sub_assign(&c_constant_term);
 
                         subtract_lcs_with_dedup_stable::<E, Self>(final_lc, c_lc, &mut self.deduplication_scratch)
+                        // final_lc - &c
                     },
                     MergeLcVariant::MergeBCThroughConstantA => {
                         assert!(a_is_constant);
@@ -1958,6 +1972,7 @@ impl<'a, E: Engine, P: PlonkConstraintSystemParams<E>, CS: PlonkConstraintSystem
                         free_constant_term.sub_assign(&c_constant_term);
 
                         subtract_lcs_with_dedup_stable::<E, Self>(final_lc, c_lc, &mut self.deduplication_scratch)
+                        // final_lc - &c
                     },  
                     MergeLcVariant::CIsTheOnlyMeaningful => {
                         free_constant_term = a_constant_term;

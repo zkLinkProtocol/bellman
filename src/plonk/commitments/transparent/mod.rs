@@ -66,7 +66,7 @@ impl<F: PrimeField, FRI: FriIop<F>> Clone for TransparentCommitterParameters<F, 
     }
 }
 
-use crate::Instant;
+use std::time::Instant;
 
 impl<
     F: PrimeField, 
@@ -686,7 +686,7 @@ mod test {
 
     #[test]
     fn test_large_transparent_commitment() {
-        use crate::Instant;
+        use std::time::Instant;
         use crate::pairing::bn256::{Bn256, Fr};
 
         let worker = Worker::new();

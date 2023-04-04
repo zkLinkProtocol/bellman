@@ -91,7 +91,7 @@ impl<F: PrimeField> FriIop<F> for CosetCombiningFriIop<F> {
     }
 }
 
-use crate::Instant;
+use std::time::Instant;
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct FRIProofPrototype<F: PrimeField, I: IopInstance<F>> {
@@ -396,7 +396,7 @@ mod test {
         use crate::plonk::transparent_engine::proth_engine::Fr;
         use crate::plonk::transparent_engine::PartialTwoBitReductionField;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas, OmegasInvBitreversed};
@@ -447,7 +447,7 @@ mod test {
         use crate::plonk::transparent_engine::proth_engine::Fr;
         use crate::plonk::transparent_engine::PartialTwoBitReductionField;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas, OmegasInvBitreversed};

@@ -24,6 +24,7 @@ pub struct Crs<E: Engine, T: CrsType> {
 }
 
 use std::io::{Read, Write};
+use rand::{Rand, thread_rng};
 use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
 use crate::byteorder::BigEndian;
@@ -38,6 +39,24 @@ impl<E: Engine, T: CrsType> PartialEq for Crs<E, T> {
 impl<E: Engine, T: CrsType> Eq for Crs<E, T> { }
 
 impl<E: Engine, T: CrsType> Crs<E, T> {
+    // Completely invalid, only for testing purposes
+    pub fn dummy_crs(size: usize) -> Self {
+        assert!(size.is_power_of_two());
+
+        let mut rng = thread_rng();
+        let base1 = E::G1Affine::Base::rand(&mut rng);
+        let base2 = E::G2Affine::Base::rand(&mut rng);
+        let g1 = vec![E::G1Affine::from_xy_checked(base1,base1).unwrap(); size];
+        let g2 = vec![E::G2Affine::from_xy_checked(base2,base2).unwrap(); 2];
+
+        Self {
+            g1_bases: Arc::new(g1),
+            g2_monomial_bases: Arc::new(g2),
+
+            _marker: std::marker::PhantomData
+        }
+    }
+
     pub fn write<W: Write>(
         &self,
         mut writer: W
@@ -98,20 +117,6 @@ impl<E: Engine, T: CrsType> Crs<E, T> {
 }
 
 impl<E: Engine> Crs<E, CrsForMonomialForm> {
-    pub fn dummy_crs(size: usize) -> Self {
-        assert!(size.is_power_of_two());
-
-        let g1 = vec![E::G1Affine::one(); size];
-        let g2 = vec![E::G2Affine::one(); 2];
-
-        Self {
-            g1_bases: Arc::new(g1),
-            g2_monomial_bases: Arc::new(g2),
-        
-            _marker: std::marker::PhantomData
-        }
-    }
-
     pub fn crs_42(size: usize, worker: &Worker) -> Self {
         // kind of how ceremony would work
         assert!(size.is_power_of_two());
@@ -181,21 +186,6 @@ impl<E: Engine> Crs<E, CrsForMonomialForm> {
 }
 
 impl<E: Engine> Crs<E, CrsForLagrangeForm> {
-    // Completely invalid, only for testing purposes
-    pub fn dummy_crs(size: usize) -> Self {
-        assert!(size.is_power_of_two());
-
-        let g1 = vec![E::G1Affine::one(); size];
-        let g2 = vec![E::G2Affine::one(); 2];
-
-        Self {
-            g1_bases: Arc::new(g1),
-            g2_monomial_bases: Arc::new(g2),
-        
-            _marker: std::marker::PhantomData
-        }
-    }
-    
     pub fn crs_42(size: usize, worker: &Worker) -> Self {
         let tmp = Crs::<E, CrsForMonomialForm>::crs_42(size, &worker);
 
@@ -240,21 +230,6 @@ impl<E: Engine> Crs<E, CrsForLagrangeForm> {
 }
 
 impl<E: Engine> Crs<E, CrsForLagrangeFormOnCoset> {
-    // Completely invalid, only for testing purposes
-    pub fn dummy_crs(size: usize) -> Self {
-        assert!(size.is_power_of_two());
-
-        let g1 = vec![E::G1Affine::one(); size];
-        let g2 = vec![E::G2Affine::one(); 2];
-
-        Self {
-            g1_bases: Arc::new(g1),
-            g2_monomial_bases: Arc::new(g2),
-        
-            _marker: std::marker::PhantomData
-        }
-    }
-
     pub fn crs_42(size: usize, worker: &Worker) -> Self {
         let tmp = Crs::<E, CrsForMonomialForm>::crs_42(size, &worker);
 
@@ -327,7 +302,7 @@ pub fn commit_using_monomials<E: Engine>(
 ) -> Result<E::G1Affine, SynthesisError> {
     println!("Committing coefficients");
 
-    use crate::Instant;
+    use std::time::Instant;
 
     let now = Instant::now();
 
@@ -363,7 +338,7 @@ pub fn commit_using_values<E: Engine>(
     println!("Committing values over domain");
     assert_eq!(poly.size(), crs.g1_bases.len());
 
-    use crate::Instant;
+    use std::time::Instant;
 
     let now = Instant::now();
 
@@ -930,7 +905,7 @@ pub fn make_crs_from_ignition_transcript<S: AsRef<std::ffi::OsStr> + ?Sized>(
     assert_eq!(g1_bases.len(), 100800000 + 1);
     assert_eq!(g2_bases.len(), 2);
 
-    let new = Crs::<crate::pairing::bn256::Bn256, CrsForMonomialForm> {
+    let new = Crs::<Bn256, CrsForMonomialForm> {
         g1_bases: Arc::new(g1_bases),
         g2_monomial_bases: Arc::new(g2_bases),
     
@@ -947,6 +922,17 @@ pub(crate) mod test {
     use crate::worker::Worker;
     use crate::ff::{PrimeField, Field};
     use crate::plonk::polynomials::*;
+
+    #[test]
+    fn test_dummy_crs(){
+        let monomial = Crs::<Bn256, CrsForMonomialForm>::dummy_crs(1);
+        let lagrange = Crs::<Bn256, CrsForLagrangeForm>::dummy_crs(1);
+        let lagrange_coset = Crs::<Bn256, CrsForLagrangeFormOnCoset>::dummy_crs(1);
+
+        println!("Monomial = {:?}", monomial.g1_bases);
+        println!("Lagrange = {:?}", lagrange.g1_bases);
+        println!("Lagrange coset = {:?}", lagrange_coset.g1_bases);
+    }
 
     #[test]
     fn test_transformations_of_crs_1() {
@@ -1055,8 +1041,8 @@ pub(crate) mod test {
         let commitment_values = commit_using_values(&values, &lagrange, &worker).unwrap();
         let commitment_values_on_coset = commit_using_values_on_coset(&values_on_coset, &lagrange_coset, &worker).unwrap();
 
-        assert!(commitment == commitment_values);
-        assert!(commitment == commitment_values_on_coset);
+        assert_eq!(commitment, commitment_values);
+        assert_eq!(commitment, commitment_values_on_coset);
 
     }
 
@@ -1090,15 +1076,15 @@ pub(crate) mod test {
         let commitment_values = commit_using_values(&values, &lagrange, &worker).unwrap();
         let commitment_values_on_coset = commit_using_values_on_coset(&values_on_coset, &lagrange_coset, &worker).unwrap();
 
-        assert!(commitment == commitment_values);
-        assert!(commitment == commitment_values_on_coset);
+        assert_eq!(commitment, commitment_values);
+        assert_eq!(commitment, commitment_values_on_coset);
 
         let opening_poly = open_from_monomials(&poly, z, poly_at_z, &monomial, &worker).unwrap();
         let opening_values = open_from_values(&values, z, poly_at_z, &lagrange, &worker).unwrap();
         let opening_values_on_coset = open_from_values_on_coset(&values_on_coset, Fr::multiplicative_generator(), z, poly_at_z, &lagrange_coset, &worker).unwrap();
 
-        assert!(opening_poly == opening_values);
-        assert!(opening_poly == opening_values_on_coset);
+        assert_eq!(opening_poly, opening_values);
+        assert_eq!(opening_poly, opening_values_on_coset);
 
         let valid = is_valid_opening::<Bn256>(commitment, z, poly_at_z, opening_poly, monomial.g2_monomial_bases[1]);
 
@@ -1248,7 +1234,7 @@ pub(crate) mod test {
     #[ignore]
     fn test_multiexp_performance_on_large_data() {
         use crate::pairing::bn256::{Bn256, Fr};
-        use crate::Instant;
+        use std::time::Instant;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
@@ -1300,7 +1286,7 @@ pub(crate) mod test {
     #[ignore]
     fn test_future_based_multiexp_performance_on_large_data() {
         use crate::pairing::bn256::{Bn256, Fr};
-        use crate::Instant;
+        use std::time::Instant;
         use std::sync::Arc;
 
         let max_size = 1 << 26;
@@ -1356,7 +1342,7 @@ pub(crate) mod test {
     #[ignore]
     fn test_long_naive_division() {
         use crate::pairing::bn256::{Bn256, Fr};
-        use crate::Instant;
+        use std::time::Instant;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
@@ -1467,7 +1453,7 @@ pub(crate) mod test {
     }
 
     fn test_multiexps_inner<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>) {
-        use crate::Instant;
+        use std::time::Instant;
         use std::sync::Arc;
 
         let worker = Worker::new();
@@ -1597,7 +1583,7 @@ pub(crate) mod test {
     // }
 
     // fn test_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-    //     use crate::Instant;
+    //     use std::time::Instant;
     //     use std::sync::Arc;
 
     //     let worker = Worker::new();
@@ -1656,7 +1642,7 @@ pub(crate) mod test {
     // }
 
     // fn test_buffered_multiexp<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>, buffer_sizes: Vec<usize>) {
-    //     use crate::Instant;
+    //     use std::time::Instant;
     //     use std::sync::Arc;
 
     //     let worker = Worker::new();
@@ -1737,7 +1723,7 @@ pub(crate) mod test {
     //     use futures::executor::block_on;
     //     use futures::future::join_all;
 
-    //     use crate::Instant;
+    //     use std::time::Instant;
     //     use std::sync::Arc;
     //     use crate::source::FullDensity;
 
@@ -1833,7 +1819,7 @@ pub(crate) mod test {
     // }
 
     // fn test_l3_shared_multiexp<E: Engine>(max_parallel_jobs: usize, max_size: usize, cpus_per_job: usize, window: usize) {
-    //     use crate::Instant;
+    //     use std::time::Instant;
         
     //     let mut bases = vec![];
     //     let mut scalars = vec![];
@@ -1882,7 +1868,7 @@ pub(crate) mod test {
     // }
 
     fn test_future_based_multiexps_over_window_sizes<E: Engine>(max_size: usize, sizes: Vec<usize>, num_cpus: Vec<usize>, windows: Vec<usize>) {
-        use crate::Instant;
+        use std::time::Instant;
         use std::sync::Arc;
         use crate::source::FullDensity;
 

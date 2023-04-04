@@ -35,24 +35,24 @@ impl<E: Engine> ConstraintSystem<E> for GeneratorAssembly<E> {
     // const ONE: Variable = Variable(Index::Aux(2));
 
     // allocate a variable
-    fn alloc<F>(&mut self, _value: F) -> Result<Variable, SynthesisError>
+    fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError> 
     {
         self.num_aux += 1;
         let index = self.num_aux;
-
+        value();
         Ok(Variable(Index::Aux(index)))
     }
 
     // allocate an input variable
-    fn alloc_input<F>(&mut self, _value: F) -> Result<Variable, SynthesisError>
+    fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError> 
     {
         self.num_inputs += 1;
         let index = self.num_inputs;
-
+        value();
         let input_var = Variable(Index::Input(index));
 
         let gate = Gate::<E::Fr>::new_enforce_constant_gate(input_var, Some(E::Fr::zero()), self.dummy_variable());

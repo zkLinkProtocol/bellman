@@ -978,7 +978,7 @@ mod test {
         use crate::plonk::commitments::transparent::*;
         use crate::plonk::tester::*;
 
-        use crate::Instant;
+        use std::time::Instant;
 
         type Iop = TrivialBlake2sIOP<Fr>;
         type Fri = NaiveFriIop<Fr, Iop>;
@@ -1054,7 +1054,7 @@ mod test {
     //     use crate::plonk::commitments::*;
     //     use crate::plonk::commitments::transparent::*;
 
-    //     use crate::Instant;
+    //     use std::time::Instant;
 
     //     type Iop = TrivialKeccakIOP<Fr>;
     //     type Fri = NaiveFriIop<Fr, Iop>;
@@ -1137,7 +1137,7 @@ mod test {
         println!("Done generating test points and scalars");
 
         let pool = Worker::new();
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let _sparse = multiexp(
             &pool,
@@ -1165,7 +1165,7 @@ mod test {
         use crate::plonk::commitments::transparent::*;
         use crate::plonk::tester::*;
 
-        use crate::Instant;
+        use std::time::Instant;
 
         type Iop = TrivialBlake2sIOP<Fr>;
         type Fri = NaiveFriIop<Fr, Iop>;
@@ -1246,7 +1246,7 @@ mod test {
         use crate::plonk::commitments::transparent::*;
         use crate::plonk::tester::*;
 
-        use crate::Instant;
+        use std::time::Instant;
 
         type Iop = TrivialBlake2sIOP<Fr>;
         type Fri = NaiveFriIop<Fr, Iop>;
@@ -1381,7 +1381,7 @@ mod test {
         use crate::pairing::bn256::Fr;
         use crate::pairing::ff::ScalarEngine;
         use crate::pairing::CurveProjective;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
 

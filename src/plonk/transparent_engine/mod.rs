@@ -63,7 +63,7 @@ mod test {
         use super::Fr as FrMontNaive;
         use super::proth::Fr as FrOptimized;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
 
@@ -133,7 +133,7 @@ mod test {
         use super::Fr as FrMontNaive;
         use super::proth::Fr as FrOptimized;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::fft::best_fft;
@@ -184,7 +184,7 @@ mod test {
         use super::Fr as FrMontNaive;
         use super::proth::Fr as FrOptimized;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::with_precomputation::FftPrecomputations;
@@ -230,7 +230,7 @@ mod test {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
         use super::proth::Fr as Fr;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas};
@@ -280,7 +280,7 @@ mod test {
     //     use rand::{XorShiftRng, SeedableRng, Rand, Rng};
     //     use super::proth::Fr as Fr;
     //     use crate::plonk::polynomials::*;
-    //     use crate::Instant;
+    //     use std::time::Instant;
     //     use crate::worker::*;
     //     use crate::plonk::commitments::transparent::utils::*;
     //     use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas};
@@ -360,7 +360,7 @@ mod test {
         use super::proth::Fr as Fr;
         use super::PartialTwoBitReductionField;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas};
@@ -409,7 +409,7 @@ mod test {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
         use super::proth::Fr as Fr;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
         use crate::plonk::fft::cooley_tukey_ntt::{CTPrecomputations, BitReversedOmegas, best_ct_ntt};

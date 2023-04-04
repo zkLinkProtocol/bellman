@@ -29,26 +29,26 @@ pub struct GeneratorAssembly<E: Engine, P: PlonkConstraintSystemParams<E>> {
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> ConstraintSystem<E, P> for GeneratorAssembly<E, P> {
     // allocate a variable
-    fn alloc<F>(&mut self, _value: F) -> Result<Variable, SynthesisError>
+    fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError> 
     {
 
         self.num_aux += 1;
         let index = self.num_aux;
-
+        value();
         Ok(Variable(Index::Aux(index)))
     }
 
     // allocate an input variable
-    fn alloc_input<F>(&mut self, _value: F) -> Result<Variable, SynthesisError>
+    fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
         F: FnOnce() -> Result<E::Fr, SynthesisError> 
     {
 
         self.num_inputs += 1;
         let index = self.num_inputs;
-
+        value();
         let input_var = Variable(Index::Input(index));
 
         let dummy = self.get_dummy_variable();

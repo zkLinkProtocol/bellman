@@ -82,7 +82,7 @@ impl<F: PrimeField, I: IOP<F> > FriIop<F> for NaiveFriIop<F, I> {
     }
 }
 
-use crate::Instant;
+use std::time::Instant;
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct FRIProofPrototype<F: PrimeField, I: IOP<F>> {

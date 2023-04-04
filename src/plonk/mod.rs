@@ -131,7 +131,7 @@ pub fn make_precomputations<E: Engine, P: PlonkConstraintSystemParams<E>>(
     Ok(precomputations)
 }
 
-pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<E, PlonkCsWidth4WithNextStepParams>, T: Transcript<E::Fr>>(
+pub fn prove_native_by_steps<E: Engine, C: better_cs::cs::Circuit<E, PlonkCsWidth4WithNextStepParams>, T: Transcript<E::Fr>>(
     circuit: &C,
     setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
     setup_precomputations: Option<&SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams>>,
@@ -141,9 +141,9 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
     use crate::plonk::better_cs::utils::{commit_point_as_xy};
     use crate::plonk::better_cs::prover::prove_steps::{FirstVerifierMessage, SecondVerifierMessage, ThirdVerifierMessage, FourthVerifierMessage};
 
-    use crate::Instant;
+    use std::time::Instant;
 
-    let mut assembly = self::better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
+    let mut assembly = better_cs::prover::ProverAssembly::new_with_size_hints(setup.num_inputs, setup.n);
 
     let subtime = Instant::now();
 
@@ -162,14 +162,15 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         T::new()
     };
 
-    let mut precomputed_omegas = crate::plonk::better_cs::prover::prove_steps::PrecomputedOmegas::< E::Fr, BitReversedOmegas<E::Fr> >::None;
-    let mut precomputed_omegas_inv = crate::plonk::better_cs::prover::prove_steps::PrecomputedOmegas::< E::Fr, OmegasInvBitreversed<E::Fr> >::None;
+    let mut precomputed_omegas = better_cs::prover::prove_steps::PrecomputedOmegas::< E::Fr, BitReversedOmegas<E::Fr> >::None;
+    let mut precomputed_omegas_inv = better_cs::prover::prove_steps::PrecomputedOmegas::< E::Fr, OmegasInvBitreversed<E::Fr> >::None;
 
     let mut proof = Proof::<E, PlonkCsWidth4WithNextStepParams>::empty();
 
     let subtime = Instant::now();
 
-    let (first_state, first_message) = assembly.first_step_with_monomial_form_key(
+    let (first_state, first_message) =
+        assembly.first_step_with_monomial_form_key(
         &worker,
         csr_mon_basis,
         &mut precomputed_omegas_inv
@@ -202,7 +203,8 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
 
     let subtime = Instant::now();
 
-    let (second_state, second_message) = self::better_cs::prover::ProverAssembly::second_step_from_first_step(
+    let (second_state, second_message) =
+        self::better_cs::prover::ProverAssembly::second_step_from_first_step(
         first_state,
         first_verifier_message,
         &setup,
@@ -374,7 +376,7 @@ pub fn prove<E: Engine, C: crate::Circuit<E>, T: Transcript<E::Fr>>(
     let omegas_bitreversed = BitReversedOmegas::<E::Fr>::new_for_domain_size(size.next_power_of_two());
     let omegas_inv_bitreversed = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(size.next_power_of_two());
 
-    use crate::Instant;
+    use std::time::Instant;
     let now = Instant::now();
     let proof = assembly.prove::<T, _, _>(
         &worker,
@@ -425,7 +427,7 @@ pub fn prove_from_recomputations<
 
     let worker = Worker::new();
 
-    use crate::Instant;
+    use std::time::Instant;
     let now = Instant::now();
     let proof = assembly.prove::<T, _, _>(
         &worker,

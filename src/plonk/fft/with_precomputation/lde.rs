@@ -205,7 +205,7 @@ pub(crate) fn parallel_lde<F: PrimeField>(
 //     use crate::experiments::vdf::Fr;
 //     use crate::domains::Domain;
 //     use crate::fft::multicore::Worker;
-//     use crate::Instant;
+//     use std::time::Instant;
 
 //     let worker = Worker::new();
 
@@ -252,7 +252,7 @@ pub(crate) fn parallel_lde<F: PrimeField>(
 //     use ff::Field;
 //     use crate::experiments::vdf::Fr;
 //     use crate::domains::Domain;
-//     use crate::Instant;
+//     use std::time::Instant;
 
 //     let mut coeffs = (0..BASE).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
 
@@ -289,7 +289,7 @@ pub(crate) fn parallel_lde<F: PrimeField>(
 //     use ff::Field;
 //     use crate::experiments::vdf::Fr;
 //     use crate::domains::Domain;
-//     use crate::Instant;
+//     use std::time::Instant;
 
 //     let mut coeffs = (0..BASE).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
 
@@ -328,7 +328,7 @@ pub(crate) fn parallel_lde<F: PrimeField>(
 //     use crate::domains::Domain;
 //     use crate::fft::multicore::Worker;
 //     use crate::polynomials::Polynomial;
-//     use crate::Instant;
+//     use std::time::Instant;
 
 //     let worker = Worker::new();
 

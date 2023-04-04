@@ -1724,7 +1724,7 @@ mod test {
         use crate::plonk::commitments::transparent::iop_compiler::*;
         use crate::plonk::commitments::transparent::iop_compiler::coset_combining_blake2s_tree::*;
 
-        use crate::Instant;
+        use std::time::Instant;
 
         let log_2_rate = 4;
         let rate = 1 << log_2_rate;

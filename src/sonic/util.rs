@@ -125,7 +125,7 @@ pub fn polynomial_commitment_opening<
     {
         // let poly = parallel_kate_divison::<E, _>(polynomial_coefficients, point);
 
-        // use crate::Instant;
+        // use std::time::Instant;
         // let start = Instant::now();
 
         let poly = kate_divison(
@@ -294,7 +294,7 @@ pub fn mut_distribute_consequitive_powers<'a, F: Field> (
 //     use crate::worker::Worker;
 //     use crate::multiexp::dense_multiexp;
 
-//     use crate::Instant;
+//     use std::time::Instant;
 //     let start = Instant::now();
 
 //     let s: Vec<<G::Scalar as PrimeField>::Repr> = s.into_iter().map(|e| e.into_repr()).collect::<Vec<_>>();
@@ -347,7 +347,7 @@ where
 
     let pool = Worker::new();
 
-    // use crate::Instant;
+    // use std::time::Instant;
     // let start = Instant::now();
 
     let result = multiexp(
@@ -688,7 +688,7 @@ pub fn multiply_polynomials_fft<E: Engine>(a: Vec<E::Fr>, b: Vec<E::Fr>) -> Vec<
 
     // If full domain is not needed - limit it,
     // e.g. if (2^N)th power is not required, just double omega and get 2^(N-1)th
-    // Compute omega, the 2^exp primitive root of unity
+    // Compute omega, compute the 2^exp primitive root of unity
     for _ in exp..E::Fr::S {
         omega.square();
     }

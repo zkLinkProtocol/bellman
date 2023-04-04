@@ -104,7 +104,7 @@ impl<F: PrimeField> KeccakIopTree<F> {
     }
 }
 
-use crate::Instant;
+use std::time::Instant;
 
 impl<'a, F: PrimeField> IopTree<F> for KeccakIopTree<F> {
     type Combiner = TrivialCombiner<F>;

@@ -184,7 +184,7 @@ fn test_large_fft_speed() {
     use crate::domains::Domain;
     use crate::fft::multicore::Worker;
     use crate::polynomials::Polynomial;
-    use crate::Instant;
+    use std::time::Instant;
 
     let worker = Worker::new();
 

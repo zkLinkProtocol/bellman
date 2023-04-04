@@ -29,9 +29,9 @@ impl<F: PrimeField> Domain<F> {
         }
 
         Ok(Self {
-            size: size,
-            power_of_two: power_of_two,
-            generator: generator
+            size,
+            power_of_two,
+            generator
         })
     }
 

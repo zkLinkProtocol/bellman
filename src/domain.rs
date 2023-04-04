@@ -536,7 +536,7 @@ fn test_field_element_multiplication_bn256() {
 
     let pool = Worker::new();
 
-    let start = crate::Instant::now();
+    let start = std::time::Instant::now();
 
     v1.mul_assign(&pool, &v2);
 
@@ -563,7 +563,7 @@ fn test_fft_bn256() {
 
     let pool = Worker::new();
 
-    let start = crate::Instant::now();
+    let start = std::time::Instant::now();
 
     v1.ifft(&pool);
 

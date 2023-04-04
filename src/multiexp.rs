@@ -701,7 +701,10 @@ pub fn dense_multiexp<G: CurveAffine>(
     let c = if exponents.len() < 32 {
         3u32
     } else {
-        let chunk_len = pool.get_chunk_size(exponents.len());
+        let mut chunk_len = pool.get_chunk_size(exponents.len());
+        if chunk_len < 2 {
+            chunk_len = 2;
+        }
         (f64::from(chunk_len as u32)).ln().ceil() as u32
 
         // (f64::from(exponents.len() as u32)).ln().ceil() as u32
@@ -942,7 +945,7 @@ mod test {
 
         use self::futures::executor::block_on;
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let _fast = block_on(
             multiexp(

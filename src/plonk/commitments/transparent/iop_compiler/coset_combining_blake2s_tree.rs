@@ -26,7 +26,7 @@ pub struct FriSpecificBlake2sTreeParams {
 //     }
 // }
 
-use crate::Instant;
+use std::time::Instant;
 
 impl<F: PrimeField> FriSpecificBlake2sTree<F> {
     const VALUE_BYTE_SIZE: usize = (((F::NUM_BITS as usize) / 64) + 1) * 8;

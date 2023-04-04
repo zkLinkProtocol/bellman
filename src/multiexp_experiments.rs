@@ -3236,7 +3236,7 @@ mod test {
 
         use self::futures::executor::block_on;
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let _fast = block_on(
             multiexp(
@@ -3270,7 +3270,7 @@ mod test {
 
         let pool = Worker::new();
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let dense = dense_multiexp(
             &pool, &g, &v.clone()).unwrap();
@@ -3278,7 +3278,7 @@ mod test {
         let duration_ns = start.elapsed().as_nanos() as f64;
         println!("{} ns for dense for {} samples", duration_ns, SAMPLES);
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let _map_reduce = map_reduce_multiexp_over_fixed_window(
             &pool,
@@ -3292,7 +3292,7 @@ mod test {
 
         // assert_eq!(dense, map_reduce);
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let buffered = buffered_multiexp_over_fixed_window_and_buffer_size(
             &pool,
@@ -3309,7 +3309,7 @@ mod test {
 
         use self::futures::executor::block_on;
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let sparse = block_on(
             multiexp(
@@ -3343,7 +3343,7 @@ mod test {
         println!("Done generating test points and scalars");
 
         let pool = Worker::new();
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let _sparse = multiexp(
             &pool,
@@ -3371,7 +3371,7 @@ mod test {
         let g = (0..SAMPLES).map(|_| <Eng as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>();
 
         let pool = Worker::new();
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         let _dense = dense_multiexp_consume(
             &pool,

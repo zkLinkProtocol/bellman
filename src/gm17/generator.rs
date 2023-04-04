@@ -346,7 +346,7 @@ pub fn generate_parameters<E, C>(
     //     // Compute powers of tau
     //     if verbose {eprintln!("computing powers of tau...")};
 
-    //     let start = crate::Instant::now();
+    //     let start = std::time::Instant::now();
 
     //     {
     //         let domain = domain.as_mut();
@@ -384,7 +384,7 @@ pub fn generate_parameters<E, C>(
         // Compute powers of tau
         if verbose {eprintln!("computing powers of tau...")};
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         {
             let domain = domain.as_mut();
@@ -413,7 +413,7 @@ pub fn generate_parameters<E, C>(
 
         if verbose {eprintln!("computing the `G1^(gamma^2 * Z(t) * t^i)` query with multiple threads...")};
 
-        let start = crate::Instant::now();
+        let start = std::time::Instant::now();
 
         // Compute the H query with multiple threads
         worker.scope(gamma2_z_t_g1.len(), |scope, chunk| {
@@ -476,7 +476,7 @@ pub fn generate_parameters<E, C>(
 
     if verbose {eprintln!("using inverse FFT to convert to intepolation coefficients...")};
     
-    let start = crate::Instant::now();
+    let start = std::time::Instant::now();
 
     // Use inverse FFT to convert to intepolation coefficients
     domain.ifft(&worker);
@@ -486,7 +486,7 @@ pub fn generate_parameters<E, C>(
     if verbose {eprintln!("powers of tau evaluation in radix2 domain in {} s", start.elapsed().as_millis() as f64 / 1000.0)};
 
     if verbose {eprintln!("evaluating polynomials...")};
-    let start = crate::Instant::now();
+    let start = std::time::Instant::now();
 
     // overall strategy:
     // a_g1, a_g2, c_1_g1, c_2_g1 should be combined together by computing

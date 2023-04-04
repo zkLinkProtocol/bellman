@@ -489,7 +489,7 @@ mod test {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
         use crate::plonk::transparent_engine::proth::Fr;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use super::*;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
@@ -631,7 +631,7 @@ mod test {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
         use crate::plonk::transparent_engine::proth::Fr;
         use crate::plonk::polynomials::*;
-        use crate::Instant;
+        use std::time::Instant;
         use super::*;
         use crate::worker::*;
         use crate::plonk::commitments::transparent::utils::*;
