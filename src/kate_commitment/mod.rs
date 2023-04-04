@@ -44,10 +44,10 @@ impl<E: Engine, T: CrsType> Crs<E, T> {
         assert!(size.is_power_of_two());
 
         let mut rng = thread_rng();
-        let base1 = E::G1Affine::Base::rand(&mut rng);
-        let base2 = E::G2Affine::Base::rand(&mut rng);
-        let g1 = vec![E::G1Affine::from_xy_checked(base1,base1).unwrap(); size];
-        let g2 = vec![E::G2Affine::from_xy_checked(base2,base2).unwrap(); 2];
+        let base1 = <E::G1Affine as CurveAffine>::Base::rand(&mut rng);
+        let base2 = <E::G2Affine as CurveAffine>::Base::rand(&mut rng);
+        let g1 = vec![<E::G1Affine as CurveAffine>::from_xy_checked(base1,base1).unwrap(); size];
+        let g2 = vec![<E::G2Affine as CurveAffine>::from_xy_checked(base2,base2).unwrap(); 2];
 
         Self {
             g1_bases: Arc::new(g1),
