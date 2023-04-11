@@ -1863,8 +1863,6 @@ impl_assembly!{
 
             assert!((self.n()+1).is_power_of_two());
 
-            println!("Padded circuit size is 2^{}", (self.n()+1).trailing_zeros());
-
             self.is_finalized = true;
         }
 
@@ -1890,7 +1888,8 @@ impl_assembly!{
             let new_size = *new_size_candidates.iter().max().unwrap();
             assert!(
                 new_size <= 1usize << E::Fr::S, 
-                "Padded circuit size is {}, that is larget than number of roots of unity 2^{}. Padded from {} gates and {} lookup table accesses", 
+                "
+                size is {}, that is larget than number of roots of unity 2^{}. Padded from {} gates and {} lookup table accesses", 
                 new_size, 
                 E::Fr::S,
                 self.n(),
@@ -1951,9 +1950,7 @@ impl_assembly!{
             }
 
             assert!((self.n()+1).is_power_of_two(), "padded circuit size is not power of two. self.n() = {}", self.n());
-
-            println!("Padded circuit size is 2^{}", (self.n()+1).trailing_zeros());
-
+            
             self.is_finalized = true;
         }
 
