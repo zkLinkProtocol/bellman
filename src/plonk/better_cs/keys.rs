@@ -320,6 +320,26 @@ pub fn read_polynomial_values_unpadded<F: PrimeField, R: Read>(mut reader: R) ->
 }
 
 impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
+    // Calculate the number of bytes needed for storage
+    pub fn storage_size(&self) -> usize {
+        let mut bytes_len = 0usize;
+        bytes_len += 8 * 3;
+        for p in self.selector_polynomials.iter() {
+            bytes_len += p.storage_size();
+        }
+
+        bytes_len += 8;
+        for p in self.next_step_selector_polynomials.iter() {
+            bytes_len += p.storage_size();
+        }
+
+        bytes_len += 8;
+        for p in self.permutation_polynomials.iter() {
+            bytes_len += p.storage_size() * self.permutation_polynomials.len();
+        }
+        bytes_len
+    }
+
     pub fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
         writer.write_u64::<BigEndian>(self.n as u64)?;
         writer.write_u64::<BigEndian>(self.num_inputs as u64)?;
