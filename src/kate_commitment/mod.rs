@@ -1314,7 +1314,7 @@ pub(crate) mod test {
 
                 let subtime = Instant::now();
 
-                let scalars_repr = super::elements_into_representations::<Bn256>(
+                let scalars_repr = elements_into_representations::<Bn256>(
                     &subworker,
                     s
                 ).unwrap();

@@ -398,10 +398,8 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         // step 1.5 - if there are lookup tables then draw random "eta" to linearlize over tables
         let mut lookup_data: Option<data_structures::LookupDataHolder<E>> = if self.tables.len() > 0 {
             let eta = transcript.get_challenge();
-            // let eta = E::Fr::from_str("987").unwrap();
 
             // these are selected rows from witness (where lookup applies)
-
             let (selector_poly, table_type_mononial, table_type_values) = if S::PRODUCE_SETUP {
                 let selector_for_lookup_values = self.calculate_lookup_selector_values()?;
                 let table_type_values = self.calculate_table_type_values()?;

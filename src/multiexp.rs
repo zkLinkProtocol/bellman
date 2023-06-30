@@ -563,7 +563,7 @@ pub fn multiexp<Q, D, G, S>(
         // If the density map has a known query size, it should not be
         // inconsistent with the number of exponents.
 
-        assert!(query_size == exponents.len());
+        assert_eq!(query_size, exponents.len());
     }
 
     let mut skip = 0;
@@ -604,7 +604,7 @@ pub(crate) fn multiexp_with_fixed_width<Q, D, G, S>(
         // If the density map has a known query size, it should not be
         // inconsistent with the number of exponents.
 
-        assert!(query_size == exponents.len());
+        assert_eq!(query_size, exponents.len());
     }
 
     let mut skip = 0;

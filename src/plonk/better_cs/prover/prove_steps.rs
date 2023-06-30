@@ -368,8 +368,8 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         // Commit wire polynomials 
 
         let mut first_message = FirstProverMessage::<E, PlonkCsWidth4WithNextStepParams> {
-            n: n,
-            num_inputs: num_inputs,
+            n,
+            num_inputs,
             input_values: input_values.clone(),
             wire_commitments: Vec::with_capacity(4),
 
@@ -449,16 +449,12 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
         let mut wire_polys_as_coefficients = Vec::with_capacity(full_assignments.len());
 
-        match &*precomputed_omegas_inv {
-            PrecomputedOmegas::None => {
-                *precomputed_omegas_inv = PrecomputedOmegas::Owned(CPI::new_for_domain_size(required_domain_size), E::Fr::one());
-            }
-            _ => {}
+        if matches!(precomputed_omegas_inv, PrecomputedOmegas::None) {
+            *precomputed_omegas_inv = PrecomputedOmegas::Owned(CPI::new_for_domain_size(required_domain_size), E::Fr::one());
         }
 
         for wire_poly in full_assignments.iter() {
-            let as_poly = Polynomial::from_values(wire_poly.clone())?;
-            let as_coeffs = as_poly
+            let as_coeffs = Polynomial::from_values(wire_poly.clone())?
                 .ifft_using_bitreversed_ntt(&worker, precomputed_omegas_inv.as_ref(), &E::Fr::one())?;
 
             let commitment = commit_using_monomials(
