@@ -347,7 +347,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> SetupPolynomials<E, P> {
 
         bytes_len += 8;
         for p in self.permutation_polynomials.iter() {
-            bytes_len += p.storage_size() * self.permutation_polynomials.len();
+            bytes_len += p.storage_size();
         }
         bytes_len
     }
