@@ -40,7 +40,7 @@ impl<E: Engine, T: CrsType> PartialEq for Crs<E, T> {
 
 impl<E: Engine, T: CrsType> Eq for Crs<E, T> { }
 
-trait GetRandPoint: CurveAffine{
+trait GetRandPoint: CurveAffine {
     fn get_point_from_rand() -> Self {
         loop {
             let mut rng = thread_rng();
