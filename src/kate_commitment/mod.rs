@@ -24,6 +24,8 @@ pub struct Crs<E: Engine, T: CrsType> {
 }
 
 use std::io::{Read, Write};
+use pairing::bn256::{Bn256, G1Affine};
+use pairing::ff::SqrtField;
 use rand::{Rand, thread_rng};
 use crate::byteorder::ReadBytesExt;
 use crate::byteorder::WriteBytesExt;
@@ -38,16 +40,37 @@ impl<E: Engine, T: CrsType> PartialEq for Crs<E, T> {
 
 impl<E: Engine, T: CrsType> Eq for Crs<E, T> { }
 
+trait GetRandPoint: CurveAffine{
+    fn get_point_from_rand() -> Self {
+        loop {
+            let mut rng = thread_rng();
+            let x = Self::Base::rand(&mut rng);
+
+            // Compute x^3 + b
+            let mut x3b = x;
+            x3b.square();
+            x3b.mul_assign(&x);
+            x3b.add_assign(&Self::b_coeff());
+
+            let point = x3b.sqrt().and_then(|y| {
+                Self::from_xy_checked(x, y).ok()
+            });
+            if let Some(p) = point {
+                break p;
+            }
+        }
+    }
+}
+
+impl<T: CurveAffine> GetRandPoint for T {}
+
 impl<E: Engine, T: CrsType> Crs<E, T> {
     // Completely invalid, only for testing purposes
     pub fn dummy_crs(size: usize) -> Self {
         assert!(size.is_power_of_two());
 
-        let mut rng = thread_rng();
-        let base1 = <E::G1Affine as CurveAffine>::Base::rand(&mut rng);
-        let base2 = <E::G2Affine as CurveAffine>::Base::rand(&mut rng);
-        let g1 = vec![<E::G1Affine as CurveAffine>::from_xy_checked(base1,base1).unwrap(); size];
-        let g2 = vec![<E::G2Affine as CurveAffine>::from_xy_checked(base2,base2).unwrap(); 2];
+        let g1 = vec![E::G1Affine::get_point_from_rand(); size];
+        let g2 = vec![E::G2Affine::get_point_from_rand(); 2];
 
         Self {
             g1_bases: Arc::new(g1),
