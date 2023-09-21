@@ -336,6 +336,12 @@ impl Engine for DummyEngine {
     }
 }
 
+impl ec_gpu::GpuName for Fr {
+    fn name() -> String {
+        ec_gpu::name!()
+    }
+}
+
 impl CurveProjective for Fr {
     type Affine = Fr;
     type Base = Fr;

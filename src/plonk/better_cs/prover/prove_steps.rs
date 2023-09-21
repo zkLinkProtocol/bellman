@@ -1,4 +1,6 @@
 use super::*;
+use ec_gpu_gen::multiexp::MultiexpKernel;
+use ec_gpu_gen::fft::FftKernel;
 
 pub(crate) enum PrecomputationsForPolynomial<'a, F: PrimeField> {
     Borrowed(&'a Polynomial<F, Values>),
@@ -73,6 +75,33 @@ pub(crate) fn get_precomputed_permutation_poly_lde_for_index<'a, E: Engine, CP: 
     }
 }
 
+pub(crate) fn get_precomputed_permutation_poly_lde_for_index_gpu<'a, E: Engine>(
+    index: usize,
+    domain_size: usize, 
+    setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
+    setup_precomputations: &Option< &'a SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
+    worker: &Worker,
+    fft_kern: &mut FftKernel<E::Fr>
+) -> Result<PrecomputationsForPolynomial<'a, E::Fr>, SynthesisError> {
+    let coset_factor = E::Fr::multiplicative_generator();
+
+    if let Some(prec) = setup_precomputations {
+        let p = &prec.permutation_polynomials_on_coset_of_size_4n_bitreversed[index];
+
+        return Ok(PrecomputationsForPolynomial::Borrowed(p));
+    } else {
+        let p = setup.permutation_polynomials[index]
+            .clone()
+            .bitreversed_lde_using_gpu_fft(
+                &worker, 
+                LDE_FACTOR, 
+                &coset_factor,
+                fft_kern
+            )?;
+        return Ok(PrecomputationsForPolynomial::Owned(p));
+    }
+}
+
 pub(crate) fn get_precomputed_selector_lde_for_index<'a, E: Engine, CP: CTPrecomputations<E::Fr>>(
     index: usize,
     domain_size: usize, 
@@ -103,7 +132,33 @@ pub(crate) fn get_precomputed_selector_lde_for_index<'a, E: Engine, CP: CTPrecom
                 precomputed_omegas.as_ref(), 
                 &coset_factor
             )?;
+        return Ok(PrecomputationsForPolynomial::Owned(p));
+    }
+}
 
+pub(crate) fn get_precomputed_selector_lde_for_index_gpu<'a, E: Engine>(
+    index: usize,
+    domain_size: usize, 
+    setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
+    setup_precomputations: &Option< &'a SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
+    worker: &Worker,
+    fft_kern: &mut FftKernel<E::Fr>
+) -> Result<PrecomputationsForPolynomial<'a, E::Fr>, SynthesisError> {
+    let coset_factor = E::Fr::multiplicative_generator();
+
+    if let Some(prec) = setup_precomputations {
+        let p = &prec.selector_polynomials_on_coset_of_size_4n_bitreversed[index];
+
+        return Ok(PrecomputationsForPolynomial::Borrowed(p));
+    } else {
+        let p = setup.selector_polynomials[index]
+            .clone()
+            .bitreversed_lde_using_gpu_fft(
+                &worker, 
+                LDE_FACTOR, 
+                &coset_factor,
+                fft_kern
+            )?;
         return Ok(PrecomputationsForPolynomial::Owned(p));
     }
 }
@@ -143,6 +198,33 @@ pub(crate) fn get_precomputed_next_step_selector_lde_for_index<'a, E: Engine, CP
     }
 }
 
+pub(crate) fn get_precomputed_next_step_selector_lde_for_index_gpu<'a, E: Engine>(
+    index: usize,
+    domain_size: usize, 
+    setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
+    setup_precomputations: &Option< &'a SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
+    worker: &Worker,
+    fft_kern: &mut FftKernel<E::Fr>
+) -> Result<PrecomputationsForPolynomial<'a, E::Fr>, SynthesisError> {
+    let coset_factor = E::Fr::multiplicative_generator();
+
+    if let Some(prec) = setup_precomputations {
+        let p = &prec.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed[index];
+
+        return Ok(PrecomputationsForPolynomial::Borrowed(p));
+    } else {
+        let p = setup.next_step_selector_polynomials[index]
+            .clone()
+            .bitreversed_lde_using_gpu_fft(
+                &worker, 
+                LDE_FACTOR, 
+                &coset_factor,
+                fft_kern
+            )?;
+        return Ok(PrecomputationsForPolynomial::Owned(p));
+    }
+}
+
 pub(crate) fn get_precomputed_x_lde<'a, E: Engine>(
     domain_size: usize, 
     setup_precomputations: &Option< &'a SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
@@ -161,7 +243,6 @@ pub(crate) fn get_precomputed_x_lde<'a, E: Engine>(
         ])?;
         x_poly.distribute_powers(&worker, x_poly.omega);
         x_poly.bitreverse_enumeration(&worker);
-
         return Ok(PrecomputationsForPolynomial::Owned(x_poly));
     }
 }
@@ -187,7 +268,6 @@ pub(crate) fn get_precomputed_inverse_divisor<'a, E: Engine>(
             )?;
         vanishing_poly_inverse_bitreversed.batch_inversion(&worker)?;
         vanishing_poly_inverse_bitreversed.bitreverse_enumeration(&worker);
-
         return Ok(PrecomputationsForPolynomial::Owned(vanishing_poly_inverse_bitreversed));
     }
 }
@@ -411,7 +491,9 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         self, 
         worker: &Worker, 
         crs_mons: &Crs<E, CrsForMonomialForm>, 
-        precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>
+        precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>,
+        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
+        fft_kern: &mut Option<FftKernel<E::Fr>>
     ) -> Result<(
         FirstPartialProverState<E, PlonkCsWidth4WithNextStepParams>, 
         FirstProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -454,13 +536,18 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         }
 
         for wire_poly in full_assignments.iter() {
-            let as_coeffs = Polynomial::from_values(wire_poly.clone())?
-                .ifft_using_bitreversed_ntt(&worker, precomputed_omegas_inv.as_ref(), &E::Fr::one())?;
+            let as_coeffs = match fft_kern {
+                Some(ref mut k) => Polynomial::from_values(wire_poly.clone())?
+                    .ifft_gpu(&worker, &E::Fr::one(), k)?,
+                _ => Polynomial::from_values(wire_poly.clone())?
+                    .ifft_using_bitreversed_ntt(&worker, precomputed_omegas_inv.as_ref(), &E::Fr::one())?,
+            };
 
-            let commitment = commit_using_monomials(
-                &as_coeffs, 
-                &crs_mons, 
-                &worker
+            let commitment = commit_using_monomials_gpu(
+                &as_coeffs,
+                &crs_mons,
+                &worker,
+                g1_multiexp_kern
             )?;
 
             wire_polys_as_coefficients.push(as_coeffs);
@@ -497,7 +584,9 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         crs_mons: &Crs<E, CrsForMonomialForm>, 
         setup_precomputations: &Option< &SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
         precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>,
-        worker: &Worker
+        worker: &Worker,
+        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
+        fft_kern: &mut Option<FftKernel<E::Fr>>
     ) -> Result<(
         SecondPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
         SecondProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -563,7 +652,12 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
             // we need to only do up to the last one
             for p in setup.permutation_polynomials.iter() {
-                let as_values = p.clone().fft(&worker);
+                let as_values = match fft_kern {
+                    Some(ref mut k) => p.clone().fft_gpu(
+                        &worker, &E::Fr::one(), k
+                    ).unwrap(),
+                    _ => p.clone().fft(&worker),
+                };
                 let mut as_values = as_values.into_coeffs();
                 as_values
                     .pop()
@@ -611,18 +705,26 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         // assert!(z.as_ref().last().expect("must exist") == &E::Fr::one());
 
         // interpolate on the main domain
-        let z_in_monomial_form = z.ifft_using_bitreversed_ntt(
+        let z_in_monomial_form = match fft_kern {
+            Some(ref mut k) => z.ifft_gpu(
+                &worker,
+                &E::Fr::one(),
+                k
+            )?,
+            _ => z.ifft_using_bitreversed_ntt(
+                &worker,
+                precomputed_omegas_inv.as_ref(),
+                &E::Fr::one()
+            )?,
+        };
+
+        let z_commitment = commit_using_monomials_gpu(
+            &z_in_monomial_form,
+            &crs_mons,
             &worker,
-            precomputed_omegas_inv.as_ref(),
-            &E::Fr::one()
+            g1_multiexp_kern
         )?;
-
-        let z_commitment = commit_using_monomials(
-            &z_in_monomial_form, 
-            &crs_mons, 
-            &worker
-        )?;
-
+        
         let state = SecondPartialProverState::<E, PlonkCsWidth4WithNextStepParams> {
             required_domain_size,
             non_residues: first_state.non_residues,
@@ -650,7 +752,9 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         setup_precomputations: &Option< &SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
         precomputed_omegas: &mut PrecomputedOmegas<E::Fr, CP>,
         precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>,
-        worker: &Worker
+        worker: &Worker,
+        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
+        fft_kern: &mut Option<FftKernel<E::Fr>>
     ) -> Result<(
         ThirdPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
         ThirdProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -693,22 +797,38 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
                 let mut d_next = monomial.clone();
                 d_next.distribute_powers(&worker, d_next.omega);
 
-                let lde = d_next.bitreversed_lde_using_bitreversed_ntt(
-                    &worker, 
-                    LDE_FACTOR, 
-                    precomputed_omegas.as_ref(), 
-                    &coset_factor
-                )?;
+                let lde = match fft_kern {
+                    Some(ref mut k) => d_next.bitreversed_lde_using_gpu_fft(
+                        &worker, 
+                        LDE_FACTOR, 
+                        &coset_factor,
+                        k
+                    )?,
+                    _ => d_next.bitreversed_lde_using_bitreversed_ntt(
+                        &worker, 
+                        LDE_FACTOR, 
+                        precomputed_omegas.as_ref(), 
+                        &coset_factor
+                    )?,
+                };
 
                 witness_next_ldes_on_coset.push(lde);
             }
 
-            let lde = monomial.clone().bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                LDE_FACTOR, 
-                precomputed_omegas.as_ref(), 
-                &coset_factor
-            )?;
+            let lde = match fft_kern {
+                Some(ref mut k) => monomial.clone().bitreversed_lde_using_gpu_fft(
+                    &worker, 
+                    LDE_FACTOR, 
+                    &coset_factor,
+                    k
+                )?,
+                _ => monomial.clone().bitreversed_lde_using_bitreversed_ntt(
+                    &worker, 
+                    LDE_FACTOR, 
+                    precomputed_omegas.as_ref(), 
+                    &coset_factor
+                )?,
+            };
             witness_ldes_on_coset.push(lde);
         }
 
@@ -729,73 +849,126 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             }
             // go into monomial form
 
-            let mut inputs_poly = inputs_poly.ifft_using_bitreversed_ntt(&worker, precomputed_omegas_inv.as_ref(), &E::Fr::one())?;
+            let mut inputs_poly = match fft_kern {
+                Some(ref mut k) => inputs_poly.ifft_gpu(
+                    &worker, &E::Fr::one(), k
+                )?,
+                _ => inputs_poly.ifft_using_bitreversed_ntt(&worker, precomputed_omegas_inv.as_ref(), &E::Fr::one())?
+            };
 
             // add constants selectors vector
             inputs_poly.add_assign(&worker, setup.selector_polynomials.last().unwrap());
 
             // LDE
-            let mut t_1 = inputs_poly.bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                LDE_FACTOR, 
-                precomputed_omegas.as_ref(), 
-                &coset_factor
-            )?;
+            let mut t_1 = match fft_kern {
+                Some(ref mut k) => inputs_poly.bitreversed_lde_using_gpu_fft(
+                    &worker, 
+                    LDE_FACTOR, 
+                    &coset_factor,
+                    k
+                )?,
+                _ => inputs_poly.bitreversed_lde_using_bitreversed_ntt(
+                    &worker, 
+                    LDE_FACTOR, 
+                    precomputed_omegas.as_ref(), 
+                    &coset_factor
+                )?,
+            };
 
             // t_1 is now q_constant
 
             // Q_A * A
             let mut tmp = witness_ldes_on_coset[0].clone();
-            let a_selector = get_precomputed_selector_lde_for_index(
-                0, 
-                required_domain_size, 
-                &setup, 
-                &setup_precomputations,
-                precomputed_omegas,
-                &worker
-            )?;
+            let a_selector = match fft_kern {
+                Some(ref mut k) => get_precomputed_selector_lde_for_index_gpu(
+                    0, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    &worker,
+                    k
+                )?,
+                _ => get_precomputed_selector_lde_for_index(
+                    0, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    precomputed_omegas,
+                    &worker
+                )?,
+            };
             tmp.mul_assign(&worker, &a_selector.as_ref());
             t_1.add_assign(&worker, &tmp);
             drop(a_selector);
 
             // Q_B * B
             tmp.reuse_allocation(&witness_ldes_on_coset[1]);
-            let b_selector = get_precomputed_selector_lde_for_index(
-                1, 
-                required_domain_size, 
-                &setup, 
-                &setup_precomputations,
-                precomputed_omegas,
-                &worker
-            )?;
+            let b_selector = match fft_kern {
+                Some(ref mut k) => get_precomputed_selector_lde_for_index_gpu(
+                    1, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    &worker,
+                    k
+                )?,
+                _ => get_precomputed_selector_lde_for_index(
+                    1, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    precomputed_omegas,
+                    &worker
+                )?,
+            };
             tmp.mul_assign(&worker, &b_selector.as_ref());
             t_1.add_assign(&worker, &tmp);
             drop(b_selector);
 
             // Q_C * C
             tmp.reuse_allocation(&witness_ldes_on_coset[2]);
-            let c_selector = get_precomputed_selector_lde_for_index(
-                2, 
-                required_domain_size, 
-                &setup, 
-                &setup_precomputations,
-                precomputed_omegas,
-                &worker
-            )?;
+            let c_selector = match fft_kern {
+                Some(ref mut k) => get_precomputed_selector_lde_for_index_gpu(
+                    2, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    &worker,
+                    k
+                )?,
+                _ => get_precomputed_selector_lde_for_index(
+                    2, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    precomputed_omegas,
+                    &worker
+                )?,
+            };
             tmp.mul_assign(&worker, c_selector.as_ref());
             t_1.add_assign(&worker, &tmp);
             drop(c_selector);
 
             // Q_D * D
             tmp.reuse_allocation(&witness_ldes_on_coset[3]);
-            let d_selector = get_precomputed_selector_lde_for_index(
-                3, 
-                required_domain_size, 
-                &setup, 
-                &setup_precomputations,
-                precomputed_omegas,
-                &worker
-            )?;
+            let d_selector = match fft_kern {
+                Some(ref mut k) => get_precomputed_selector_lde_for_index_gpu(
+                    3, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    &worker,
+                    k
+                )?,
+                _ => get_precomputed_selector_lde_for_index(
+                    3, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    precomputed_omegas,
+                    &worker
+                )?,
+            };
             tmp.mul_assign(&worker, d_selector.as_ref());
             t_1.add_assign(&worker, &tmp);
             drop(d_selector);
@@ -803,27 +976,47 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             // Q_M * A * B
             tmp.reuse_allocation(&witness_ldes_on_coset[0]);
             tmp.mul_assign(&worker, &witness_ldes_on_coset[1]);
-            let m_selector = get_precomputed_selector_lde_for_index(
-                4, 
-                required_domain_size, 
-                &setup, 
-                &setup_precomputations,
-                precomputed_omegas,
-                &worker
-            )?;
+            let m_selector = match fft_kern {
+                Some(ref mut k) => get_precomputed_selector_lde_for_index_gpu(
+                    4, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    &worker,
+                    k
+                )?,
+                _ => get_precomputed_selector_lde_for_index(
+                    4, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    precomputed_omegas,
+                    &worker
+                )?,
+            };
             tmp.mul_assign(&worker, &m_selector.as_ref());
             t_1.add_assign(&worker, &tmp);
             drop(m_selector);
 
             tmp.reuse_allocation(&witness_next_ldes_on_coset[0]);
-            let d_next_selector = get_precomputed_next_step_selector_lde_for_index(
-                0, 
-                required_domain_size, 
-                &setup, 
-                &setup_precomputations,
-                precomputed_omegas,
-                &worker
-            )?;
+            let d_next_selector = match fft_kern {
+                Some(ref mut k) => get_precomputed_next_step_selector_lde_for_index_gpu(
+                    0, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    &worker,
+                    k
+                )?,
+                _ => get_precomputed_next_step_selector_lde_for_index(
+                    0, 
+                    required_domain_size, 
+                    &setup, 
+                    &setup_precomputations,
+                    precomputed_omegas,
+                    &worker
+                )?,
+            };
             tmp.mul_assign(&worker, d_next_selector.as_ref());
             t_1.add_assign(&worker, &tmp);
             drop(d_next_selector);
@@ -836,21 +1029,37 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
         // now compute the permutation argument
 
-        let z_coset_lde_bitreversed = z_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
-            &worker, 
-            LDE_FACTOR, 
-            precomputed_omegas.as_ref(), 
-            &coset_factor
-        )?;
+        let z_coset_lde_bitreversed = match fft_kern {
+            Some(ref mut k) => z_in_monomial_form.clone().bitreversed_lde_using_gpu_fft(
+                &worker, 
+                LDE_FACTOR, 
+                &coset_factor,
+                k
+            )?,
+            _ => z_in_monomial_form.clone().bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                LDE_FACTOR, 
+                precomputed_omegas.as_ref(), 
+                &coset_factor
+            )?,
+        };
 
         assert!(z_coset_lde_bitreversed.size() == required_domain_size*LDE_FACTOR);
 
-        let z_shifted_coset_lde_bitreversed = z_shifted_in_monomial_form.bitreversed_lde_using_bitreversed_ntt(
-            &worker, 
-            LDE_FACTOR, 
-            precomputed_omegas.as_ref(), 
-            &coset_factor
-        )?;
+        let z_shifted_coset_lde_bitreversed = match fft_kern {
+            Some(ref mut k) => z_shifted_in_monomial_form.bitreversed_lde_using_gpu_fft(
+                &worker, 
+                LDE_FACTOR, 
+                &coset_factor,
+                k
+            )?,
+            _ => z_shifted_in_monomial_form.bitreversed_lde_using_bitreversed_ntt(
+                &worker, 
+                LDE_FACTOR, 
+                precomputed_omegas.as_ref(), 
+                &coset_factor
+            )?,
+        };
 
         assert!(z_shifted_coset_lde_bitreversed.size() == required_domain_size*LDE_FACTOR);
 
@@ -902,14 +1111,24 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             // A + beta*perm_a + gamma
 
             for (idx, w) in witness_ldes_on_coset.iter().enumerate() {
-                    let perm = get_precomputed_permutation_poly_lde_for_index(
-                        idx, 
-                        required_domain_size, 
-                        &setup, 
-                        &setup_precomputations,
-                        precomputed_omegas,
-                        &worker
-                    )?;
+                    let perm = match fft_kern {
+                        Some(ref mut k) => get_precomputed_permutation_poly_lde_for_index_gpu(
+                            idx, 
+                            required_domain_size, 
+                            &setup, 
+                            &setup_precomputations,
+                            &worker,
+                            k
+                        )?,
+                        _ => get_precomputed_permutation_poly_lde_for_index(
+                            idx, 
+                            required_domain_size, 
+                            &setup, 
+                            &setup_precomputations,
+                            precomputed_omegas,
+                            &worker
+                        )?,
+                    };
                     tmp.reuse_allocation(&w);
                     tmp.add_constant(&worker, &gamma);
                     tmp.add_assign_scaled(&worker, perm.as_ref(), &beta);
@@ -931,12 +1150,20 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             let mut z_minus_one_by_l_0 = z_coset_lde_bitreversed;
             z_minus_one_by_l_0.sub_constant(&worker, &E::Fr::one());
 
-            let l_coset_lde_bitreversed = l_0.bitreversed_lde_using_bitreversed_ntt(
-                &worker, 
-                LDE_FACTOR, 
-                precomputed_omegas.as_ref(), 
-                &coset_factor
-            )?;
+            let l_coset_lde_bitreversed = match fft_kern {
+                Some(ref mut k) => l_0.bitreversed_lde_using_gpu_fft(
+                    &worker, 
+                    LDE_FACTOR, 
+                    &coset_factor,
+                    k
+                )?,
+                _ => l_0.bitreversed_lde_using_bitreversed_ntt(
+                    &worker, 
+                    LDE_FACTOR, 
+                    precomputed_omegas.as_ref(), 
+                    &coset_factor
+                )?,
+            };
 
             z_minus_one_by_l_0.mul_assign(&worker, &l_coset_lde_bitreversed);
 
@@ -956,8 +1183,9 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
         t_1.bitreverse_enumeration(&worker);
 
-        let t_poly_in_monomial_form = t_1.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
-
+        // let t_poly_in_monomial_form = t_1.icoset_fft_for_generator(&worker, &E::Fr::multiplicative_generator());
+        let omega_4x = <OmegasInvBitreversed::<E::Fr> as CTPrecomputations::<E::Fr>>::new_for_domain_size(t_1.as_ref().len().next_power_of_two());
+        let t_poly_in_monomial_form = t_1.ifft_using_bitreversed_ntt(&worker, &omega_4x, &E::Fr::multiplicative_generator()).unwrap();
         let t_poly_parts = t_poly_in_monomial_form.break_into_multiples(required_domain_size)?;
 
         let state = ThirdPartialProverState::<E, PlonkCsWidth4WithNextStepParams> {
@@ -978,10 +1206,11 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         };
 
         for t_part in state.t_poly_parts.iter() {
-            let t_part_commitment = commit_using_monomials(
-                &t_part, 
-                &crs_mons, 
-                &worker
+            let t_part_commitment = commit_using_monomials_gpu(
+                &t_part,
+                &crs_mons,
+                &worker,
+                g1_multiexp_kern
             )?;
 
             message.quotient_poly_commitments.push(t_part_commitment);
@@ -994,7 +1223,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         third_state: ThirdPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
         third_verifier_message: ThirdVerifierMessage<E, PlonkCsWidth4WithNextStepParams>,
         setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
-        worker: &Worker
+        worker: &Worker,
     ) -> Result<(
         FourthPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
         FourthProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -1223,7 +1452,8 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         fourth_verifier_message: FourthVerifierMessage<E, PlonkCsWidth4WithNextStepParams>,
         setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
         crs_mons: &Crs<E, CrsForMonomialForm>, 
-        worker: &Worker
+        worker: &Worker,
+        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
     ) -> Result<FifthProverMessage<E, PlonkCsWidth4WithNextStepParams>, SynthesisError>
     {
         let FourthVerifierMessage { z, v, .. } = fourth_verifier_message;
@@ -1307,16 +1537,18 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         let open_at_z_omega = polys.pop().unwrap().0;
         let open_at_z = polys.pop().unwrap().0;
 
-        let opening_at_z = commit_using_monomials(
-            &open_at_z, 
+        let opening_at_z = commit_using_monomials_gpu(
+            &open_at_z,
             &crs_mons,
-            &worker
+            &worker,
+            g1_multiexp_kern
         )?;
 
-        let opening_at_z_omega = commit_using_monomials(
-            &open_at_z_omega, 
+        let opening_at_z_omega = commit_using_monomials_gpu(
+            &open_at_z_omega,
             &crs_mons,
-            &worker
+            &worker,
+            g1_multiexp_kern
         )?;
 
         let message = FifthProverMessage::<E, PlonkCsWidth4WithNextStepParams> {

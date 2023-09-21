@@ -21,6 +21,10 @@ use crate::plonk::fft::cooley_tukey_ntt::*;
 
 use super::LDE_FACTOR;
 
+use ec_gpu_gen::multiexp::MultiexpKernel;
+use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+use crate::GPU_DEVICES;
+
 pub(crate) mod prove_steps;
 
 // #[derive(Debug, Clone)]
@@ -293,6 +297,14 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         } else {
             T::new()
         };
+        let programs = GPU_DEVICES
+            .iter()
+            .map(|device| ec_gpu_gen::program!(device))
+            .collect::<Result<_, _>>().ok();
+        let mut gpu_kern: Option<MultiexpKernel<'_, E::G1Affine>> = match programs {
+            Some(p) => MultiexpKernel::<E::G1Affine>::create(p, &GPU_DEVICES).ok(),
+            _ => None
+        };
             
         assert!(self.is_finalized);
 
@@ -320,12 +332,12 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         // let coset_factor = E::Fr::one();
 
         // Commit wire polynomials 
-
         for wire_poly in full_assignments.iter() {
-            let commitment = commit_using_raw_values(
+            let commitment = commit_using_raw_values_gpu(
                 &wire_poly, 
                 &crs_vals, 
-                &worker
+                &worker,
+                &mut gpu_kern
             )?;
 
             commit_point_as_xy::<E, _>(&mut transcript, &commitment);
@@ -423,10 +435,11 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         // println!("Z last = {}", z.as_ref().last().unwrap());
         // assert!(z.as_ref().last().expect("must exist") == &E::Fr::one());
 
-        let z_commitment = commit_using_values(
+        let z_commitment = commit_using_values_gpu(
             &z, 
             &crs_vals, 
-            &worker
+            &worker,
+            &mut gpu_kern
         )?;
         proof.grand_product_commitment = z_commitment;
 
@@ -649,10 +662,11 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         let mut t_poly_parts = t_poly_in_monomial_form.break_into_multiples(required_domain_size)?;
 
         for t_part in t_poly_parts.iter() {
-            let t_part_commitment = commit_using_monomials(
-                &t_part, 
-                &crs_mon, 
-                &worker
+            let t_part_commitment = commit_using_monomials_gpu(
+                &t_part,
+                &crs_mon,
+                &worker,
+                &mut gpu_kern
             )?;
 
             commit_point_as_xy::<E, _>(&mut transcript, &t_part_commitment);
@@ -938,16 +952,18 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         let open_at_z_omega = polys.pop().unwrap().0;
         let open_at_z = polys.pop().unwrap().0;
 
-        let opening_at_z = commit_using_monomials(
-            &open_at_z, 
+        let opening_at_z = commit_using_monomials_gpu(
+            &open_at_z,
             &crs_mon,
-            &worker
+            &worker,
+            &mut gpu_kern
         )?;
 
-        let opening_at_z_omega = commit_using_monomials(
-            &open_at_z_omega, 
+        let opening_at_z_omega = commit_using_monomials_gpu(
+            &open_at_z_omega,
             &crs_mon,
-            &worker
+            &worker,
+            &mut gpu_kern
         )?;
 
         proof.opening_at_z_proof = opening_at_z;

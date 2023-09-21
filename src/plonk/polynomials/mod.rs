@@ -11,6 +11,7 @@ use crate::plonk::fft::cooley_tukey_ntt::CTPrecomputations;
 use crate::plonk::fft::cooley_tukey_ntt::partial_reduction;
 
 use crate::plonk::transparent_engine::PartialTwoBitReductionField;
+use ec_gpu_gen::fft::FftKernel;
 
 pub trait PolynomialForm: Sized + Copy + Clone {}
 
@@ -1416,14 +1417,16 @@ impl<F: PrimeField> Polynomial<F, Values> {
 
     pub fn icoset_fft_for_generator(self, worker: &Worker, coset_generator: &F) -> Polynomial<F, Coefficients>
     {
+        let now = std::time::Instant::now();
         debug_assert!(self.coeffs.len().is_power_of_two());
         let geninv = coset_generator.inverse().expect("must exist");
         let mut res = self.ifft(worker);
         res.distribute_powers(worker, geninv);
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc icoset_fft_for_generator taken {}ms", dur);
 
         res
     }
-
 
     pub fn add_assign(&mut self, worker: &Worker, other: &Polynomial<F, Values>) {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
@@ -2269,9 +2272,8 @@ impl<F: PrimeField> Polynomial<F, Values> {
         precomputed_omegas: &P,
         coset_generator: &F
     ) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
-        if self.coeffs.len() <= worker.cpus * 4 {
-            return Ok(self.ifft(&worker));
-        }
+        let now = std::time::Instant::now();
+        let coeffs_len = self.coeffs.len();
 
         let mut coeffs: Vec<_> = self.coeffs;
         let exp = self.exp;
@@ -2295,8 +2297,45 @@ impl<F: PrimeField> Polynomial<F, Values> {
         });
 
         if geninv != F::one() {
-            this.distribute_powers(&worker, geninv);
+        this.distribute_powers(&worker, geninv);
         }
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc ifft_using_bitreversed_ntt with {} samples taken {}ms", coeffs_len, dur);
+
+        Ok(this)
+    }
+
+    pub fn ifft_gpu(
+        mut self, 
+        worker: &Worker, 
+        coset_generator: &F,
+        kern: &mut FftKernel<F>,
+    ) -> Result<Polynomial<F, Coefficients>, SynthesisError> {
+        let now = std::time::Instant::now();
+        let coeffs_len = self.coeffs.len();
+
+        cooley_tukey_ntt::gpu_fft(&mut self.coeffs, &[self.omegainv], self.exp, false, kern);
+        let mut this = Polynomial::from_coeffs(self.coeffs)?;
+
+        let geninv = coset_generator.inverse().expect("must exist");
+
+        worker.scope(coeffs_len, |scope, chunk| {
+            let minv = this.minv;
+
+            for v in this.coeffs.chunks_mut(chunk) {
+                scope.spawn(move |_| {
+                    for v in v {
+                        v.mul_assign(&minv);
+                    }
+                });
+            }
+        });
+
+        if geninv != F::one() {
+        this.distribute_powers(&worker, geninv);
+        }
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc ifft_gpu with {} samples taken {}ms", coeffs_len, dur);
 
         Ok(this)
     }
@@ -2312,7 +2351,7 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
         debug_assert!(self.coeffs.len().is_power_of_two());
         debug_assert_eq!(self.size(), precomputed_omegas.domain_size());
-        
+        let now = std::time::Instant::now();
         if factor == 1 {
             return Ok(self.fft(&worker));
         }
@@ -2407,6 +2446,104 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
             }
         });
 
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc bitreversed_lde_using_bitreversed_ntt taken {}ms", dur);
+        Polynomial::from_values(result)
+    }
+
+    pub fn bitreversed_lde_using_gpu_fft(
+        self, 
+        worker: &Worker, 
+        factor: usize,
+        coset_factor: &F,
+        kern: &mut FftKernel<F>,
+    ) -> Result<Polynomial<F, Values>, SynthesisError> {
+        debug_assert!(self.coeffs.len().is_power_of_two());
+        let now = std::time::Instant::now();
+        if factor == 1 {
+            return Ok(self.fft(&worker));
+        }
+
+        let num_cpus = worker.cpus;
+
+        assert!(factor.is_power_of_two());
+        let current_size = self.coeffs.len();
+        let new_size = self.coeffs.len() * factor;
+        let domain = Domain::<F>::new_for_size(new_size as u64)?;
+
+        // let mut results = vec![self.coeffs.clone(); factor];
+
+        let mut result = Vec::with_capacity(new_size);
+        unsafe { result.set_len(new_size)};
+
+        let r = &mut result[..] as *mut [F];
+
+        let coset_omega = domain.generator;
+
+        let log_n = self.exp;
+
+        let range: Vec<usize> = (0..factor).collect();
+
+        let self_coeffs_ref = &self.coeffs;
+
+        // copy
+        worker.scope(range.len(), |scope, chunk| {
+            for coset_idx in range.chunks(chunk) {
+                let r = unsafe {&mut *r};
+                scope.spawn(move |_| {
+                    for coset_idx in coset_idx.iter() {
+                        let start = current_size * coset_idx;
+                        let end = start + current_size;
+                        let copy_start_pointer: *mut F = r[start..end].as_mut_ptr();
+                        
+                        unsafe { std::ptr::copy_nonoverlapping(self_coeffs_ref.as_ptr(), copy_start_pointer, current_size) };
+                    }
+                });
+            }
+        });
+
+        let to_spawn = factor;
+        let coset_size = current_size;
+
+        use crate::plonk::commitments::transparent::utils::log2_floor;
+
+        let factor_log = log2_floor(factor) as usize;
+
+        // let chunk = Worker::chunk_size_for_num_spawned_threads(factor, to_spawn);
+
+        // Each coset will produce values at specific indexes only, e.g
+        // coset factor of omega^0 = 1 will produce elements that are only at places == 0 mod 16
+        // coset factor of omega^1 will produce elements that are only at places == 1 mod 16
+        // etc. We expect the output to be bitreversed, so 
+        // elements for coset factor of omega^0 = 1 will need to be placed first (00 top bits, bitreversed 00)
+        // elements for coset factor of omega^1 will need to be placed after the first half (10 top bits, bitreversed 01)
+
+        worker.scope(0, |scope, _| {
+            for coset_idx in 0..to_spawn {
+                let r = unsafe {&mut *r};
+                scope.spawn(move |_| {
+                    let from = coset_size * coset_idx;
+                    let to = from + coset_size;
+                    let one = F::one();
+                    let bitreversed_power = cooley_tukey_ntt::bitreverse(coset_idx, factor_log); 
+                    let mut coset_generator = coset_omega.pow(&[bitreversed_power as u64]);
+                    coset_generator.mul_assign(&coset_factor);
+                    if coset_generator != one {
+                        distribute_powers_with_num_cpus(&mut r[from..to], &worker, coset_generator, num_cpus);
+                    }
+                });
+            }
+        });
+
+        for coset_idx in 0..to_spawn  {
+            let r = unsafe {&mut *r};
+            let from = coset_size * coset_idx;
+            let to = from + coset_size;
+            cooley_tukey_ntt::gpu_fft(&mut r[from..to], &[self.omega], log_n, true, kern);
+        }
+
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc bitreversed_lde_using_gpu_fft taken {}ms", dur);
         Polynomial::from_values(result)
     }
 
@@ -2418,7 +2555,9 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         precomputed_omegas: &P,
         coset_generator: &F
     ) -> Result<Polynomial<F, Values>, SynthesisError> {
-        if self.coeffs.len() <= worker.cpus * 4 {
+        let now = std::time::Instant::now();
+        let coeffs_len = self.coeffs.len();
+        if coeffs_len <= worker.cpus * 4 {
             return Ok(self.coset_fft_for_generator(&worker, *coset_generator));
         }
 
@@ -2433,8 +2572,32 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
         let mut this = Polynomial::from_values(coeffs)?;
         
         this.bitreverse_enumeration(&worker);
-
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc fft_using_bitreversed_ntt with {} samples taken {}ms", coeffs_len, dur);
         Ok(this)
+    }
+
+    pub fn fft_gpu(
+        mut self, 
+        worker: &Worker, 
+        coset_generator: &F,
+        kern: &mut FftKernel<F>,
+    ) -> Result<Polynomial<F, Values>, SynthesisError> {
+        let now = std::time::Instant::now();
+        let coeffs_len = self.coeffs.len();
+        // if coeffs_len <= worker.cpus * 4 {
+        //     return Ok(self.coset_fft_for_generator(&worker, *coset_generator));
+        // }
+
+        if coset_generator != &F::one() {
+            self.distribute_powers(&worker, *coset_generator);
+        }
+
+        cooley_tukey_ntt::gpu_fft(&mut self.coeffs, &[self.omega], self.exp, false, kern);
+        
+        let dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+        println!("calc fft_gpu with {} samples taken {}ms", coeffs_len, dur);
+        Ok(Polynomial::from_values(self.coeffs)?)
     }
 
     /// taken in natural enumeration
@@ -2577,7 +2740,6 @@ mod test {
     }
 
     #[test]
-    #[ignore]
     fn test_fft_scaling() {
         use crate::pairing::bn256::Fr;
         use crate::ff::{Field, PrimeField};
@@ -2585,38 +2747,154 @@ mod test {
 
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
         use crate::worker::Worker;
+        use std::time::Instant;
+
+        use ec_gpu_gen::fft::FftKernel;
+        use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+        use crate::GPU_DEVICES;
+        use crate::plonk::fft::cooley_tukey_ntt::*;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
 
-        assert!(worker.cpus >= 16, "should be tested only on large machines");
-    
         let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
 
-        for size in vec![1 << 23, 1 << 24, 1 << 25, 1 << 26] {
-            let poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
-            use crate::plonk::fft::cooley_tukey_ntt::*;
+        let programs = GPU_DEVICES
+            .iter()
+            .map(|device| ec_gpu_gen::program!(device))
+            .collect::<Result<_, _>>().unwrap();
+        let mut kern = FftKernel::<Fr>::create(programs).unwrap();
 
-            let omegas_bitreversed = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
-            for cpus in vec![4, 8, 16, 32] {
+        for size in vec![1 << 26] {
+            let mut poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
+            let omegas_bitreversed: BitReversedOmegas<Fr> = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
+            for cpus in vec![256] {
             // for cpus in vec![16, 24, 32] {
 
-                use std::time::Instant;
-
                 let subworker = Worker::new_with_cpus(cpus);
+                let poly1 = poly.clone();
+                let poly2 = poly.clone();
 
-                let poly = poly.clone();
-
-                let now = Instant::now();
-
-                let _ = poly.fft_using_bitreversed_ntt_output_bitreversed(
+                let poly1 = poly1.fft_gpu(
+                    &subworker,
+                    &Fr::one(),
+                    &mut kern
+                ).unwrap();
+                let poly2 = poly2.fft_using_bitreversed_ntt(
                     &subworker,
                     &omegas_bitreversed,
                     &Fr::one()
-                    // &Fr::multiplicative_generator()
+                ).unwrap();
+                // println!("{:?}", poly1);
+                // println!("{:?}", poly2);
+                assert!(poly1 == poly2);
+            }
+        }
+    }
+
+    #[test]
+    fn test_ifft_scaling() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+        use std::time::Instant;
+
+        use ec_gpu_gen::fft::FftKernel;
+        use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+        use crate::GPU_DEVICES;
+        use crate::plonk::fft::cooley_tukey_ntt::*;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
+
+        let programs = GPU_DEVICES
+            .iter()
+            .map(|device| ec_gpu_gen::program!(device))
+            .collect::<Result<_, _>>().unwrap();
+        let mut kern = FftKernel::<Fr>::create(programs).unwrap();
+
+        for size in vec![1 << 26] {
+            let mut poly = Polynomial::from_values(scalars[..size].to_vec()).unwrap();
+            let omegas_inv_bitreversed = <OmegasInvBitreversed::<Fr> as CTPrecomputations::<Fr>>::new_for_domain_size(size.next_power_of_two());
+            for cpus in vec![256] {
+            // for cpus in vec![16, 24, 32] {
+                let subworker = Worker::new_with_cpus(cpus);
+                let poly1 = poly.clone();
+                let poly2 = poly.clone();
+
+                let poly1 = poly1.ifft_gpu(
+                    &subworker,
+                    &Fr::one(),
+                    &mut kern
+                ).unwrap();
+                let poly2 = poly2.ifft_using_bitreversed_ntt(
+                    &subworker,
+                    &omegas_inv_bitreversed,
+                    &Fr::one()
+                ).unwrap();
+                // println!("{:?}", poly1);
+                // println!("{:?}", poly2);
+                assert!(poly1 == poly2);
+            }
+        }
+    }
+
+    #[test]
+    fn test_bitreversed_fft_scaling() {
+        use crate::pairing::bn256::Fr;
+        use crate::ff::{Field, PrimeField};
+        use super::*;
+
+        use rand::{XorShiftRng, SeedableRng, Rand, Rng};
+        use crate::worker::Worker;
+        use std::time::Instant;
+
+        use ec_gpu_gen::fft::FftKernel;
+        use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+        use crate::GPU_DEVICES;
+        use crate::plonk::fft::cooley_tukey_ntt::*;
+
+        let max_size = 1 << 26;
+        let worker = Worker::new();
+
+        let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
+
+        let programs = GPU_DEVICES
+            .iter()
+            .map(|device| ec_gpu_gen::program!(device))
+            .collect::<Result<_, _>>().unwrap();
+        let mut kern = FftKernel::<Fr>::create(programs).unwrap();
+
+        for size in vec![1 << 26] {
+            let mut poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
+            let omegas_bitreversed = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
+            // for cpus in vec![256] {
+            for cpus in vec![4, 8, 16, 256] {
+                let subworker = Worker::new_with_cpus(cpus);
+                let poly1 = poly.clone();
+                let poly2 = poly.clone();
+
+                let poly1 = poly1.bitreversed_lde_using_gpu_fft(
+                    &subworker,
+                    4,
+                    &Fr::one(),
+                    &mut kern
+                ).unwrap();
+                let poly2 = poly2.bitreversed_lde_using_bitreversed_ntt(
+                    &subworker,
+                    4,
+                    &omegas_bitreversed,
+                    &Fr::one()
                 ).unwrap();
 
-                println!("Total FFT time time for {} points on {} cpus = {:?}", size, cpus, now.elapsed());
+                // println!("{:?}", poly1);
+                // println!("{:?}", poly2);
+                assert!(poly1 == poly2);
             }
         }
     }

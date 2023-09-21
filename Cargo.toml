@@ -17,7 +17,8 @@ rand = "0.4"
 bit-vec = "0.6"
 cfg-if = "1.*"
 
-pairing = {package = "pairing_ce", version = "0.24.*" }
+# pairing = {package = "pairing_ce", version = "0.24.*" }
+pairing = {path = "../pairing", package = "pairing_ce"}
 byteorder = "1"
 
 futures = {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
@@ -41,8 +42,11 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 
 hex = "*"
 
+ec-gpu = { path = "../ec-gpu/ec-gpu" }
+ec-gpu-gen = { path = "../ec-gpu/ec-gpu-gen" }
+
 [features]
-default = ["multicore", "plonk"]
+default = ["multicore", "plonk", "cuda"]
 multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []
@@ -52,3 +56,10 @@ plonk = ["lazy_static", "tiny-keccak", "blake2s_const"]
 marlin = ["tiny-keccak", "blake2s_const"]
 wasm = ["web-sys"]
 asm = ["pairing/asm"]
+
+cuda = ["ec-gpu-gen/cuda"]
+opencl = ["ec-gpu-gen/opencl"]
+
+[build-dependencies]
+pairing = {path = "../pairing", package = "pairing_ce"}
+ec-gpu-gen = { path = "../ec-gpu/ec-gpu-gen" }

@@ -1,8 +1,10 @@
-use crate::pairing::ff::PrimeField;
-use crate::worker::*;
+use crate::pairing::ff::{PrimeField, ScalarEngine};
+use crate::{worker::*, GPU_DEVICES};
 use crate::plonk::domains::*;
 
 pub(crate) mod partial_reduction;
+use ec_gpu_gen::fft::FftKernel;
+use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
 
 pub trait CTPrecomputations<F: PrimeField>: Send + Sync {
     fn new_for_domain_size(size: usize) -> Self;
@@ -511,6 +513,15 @@ pub(crate) fn parallel_ct_ntt<F: PrimeField, P: CTPrecomputations<F>>(
     // }
 }
 
+pub(crate) fn gpu_fft<F: PrimeField>(
+    a: &mut [F],
+    omegas: &[F],
+    log_n: u32,
+    reverse: bool,
+    kern: &mut FftKernel<F>,
+) {
+    kern.radix_fft_many(&mut [a], &omegas, &[log_n], reverse);
+}
 
 #[cfg(test)]
 mod test {
@@ -634,9 +645,9 @@ mod test {
     }
 
     #[test]
-    fn test_bench_ct_parallel_fft() {
+    fn test_bench_ct_gpu_fft() {
         use rand::{XorShiftRng, SeedableRng, Rand, Rng};
-        use crate::plonk::transparent_engine::proth::Fr;
+        //use crate::plonk::transparent_engine::proth::Fr;
         use crate::plonk::polynomials::*;
         use std::time::Instant;
         use super::*;
@@ -646,38 +657,54 @@ mod test {
         use super::CTPrecomputations;
         use super::BitReversedOmegas;
         use crate::plonk::domains::Domain;
+        use crate::pairing::ff::Field;
+        use crate::pairing::bn256::Fr;
 
-        let poly_sizes = vec![1_000_000, 2_000_000, 4_000_000];
+        // let poly_sizes = vec![1_000_000, 2_000_000, 4_000_000];
+        let poly_sizes = vec![1 << 26];
 
         // let poly_sizes = vec![1000usize];
 
         let worker = Worker::new();
+        let programs = GPU_DEVICES
+            .iter()
+            .map(|device| ec_gpu_gen::program!(device))
+            .collect::<Result<_, _>>()
+            .expect("Cannot create programs!");
+        let mut kern = FftKernel::<Fr>::create(programs).expect("Cannot initialize kernel!");
 
         for poly_size in poly_sizes.into_iter() {
             let poly_size = poly_size as usize;
             let poly_size = poly_size.next_power_of_two();
             let precomp = BitReversedOmegas::<Fr>::new_for_domain_size(poly_size);
+            let mut omega = Fr::root_of_unity();
+            let mut m = 1;
+            let mut exp = 0;
+            while m < poly_size {
+                m *= 2;
+                exp += 1;
+            }
+            for _ in exp..Fr::S {
+                omega.square();
+            }
             let domain = Domain::<Fr>::new_for_size(poly_size as u64).unwrap();
-
-            let omega = domain.generator;
             let log_n = domain.power_of_two as u32;
 
-            let res1 = {
-                let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
-                let mut coeffs = (0..poly_size).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
-                let start = Instant::now();
-                parallel_fft(&mut coeffs, &worker, &omega, log_n, worker.log_num_cpus());
-                println!("parallel FFT for size {} taken {:?}", poly_size, start.elapsed());
+            // let res1 = {
+            //     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+            //     let mut coeffs: Vec<Fr> = (0..poly_size).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+            //     let start = Instant::now();
+            //     parallel_fft(&mut coeffs, &worker, &omega, log_n, worker.log_num_cpus());
+            //     println!("parallel FFT for size {} taken {:?}", poly_size, start.elapsed());
 
-                coeffs
-            };
+            //     coeffs
+            // };
 
             let res2 = {
                 let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
                 let mut coeffs = (0..poly_size).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
                 let start = Instant::now();
                 parallel_ct_ntt(&mut coeffs, &worker, log_n, worker.log_num_cpus(), &precomp);
-                println!("parallel NTT for size {} taken {:?}", poly_size, start.elapsed());
 
                 let log_n = log_n as usize;
                 for k in 0..poly_size {
@@ -686,11 +713,23 @@ mod test {
                         coeffs.swap(rk, k);
                     }
                 }
+                println!("parallel NTT for size {} taken {:?}", poly_size, start.elapsed());
 
                 coeffs
             };
 
-            assert!(res1 == res2);
+            let res3 = {
+                let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+                let mut coeffs = (0..poly_size).map(|_| Fr::rand(rng)).collect::<Vec<_>>();
+                let start = Instant::now();
+                gpu_fft(&mut coeffs, &[omega], log_n, false, &mut kern);
+                println!("Gpu FFT for size {} taken {:?}", poly_size, start.elapsed());
+
+                coeffs
+            };
+
+            // assert!(res1 == res2);
+            assert!(res2 == res3);
         }
     }
 }

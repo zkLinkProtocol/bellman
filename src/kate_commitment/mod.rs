@@ -5,6 +5,7 @@ use crate::plonk::polynomials::*;
 use std::sync::Arc;
 use crate::multiexp;
 use crate::SynthesisError;
+use ec_gpu_gen::multiexp::MultiexpKernel;
 
 pub trait CrsType {}
 
@@ -353,6 +354,50 @@ pub fn commit_using_monomials<E: Engine>(
     Ok(res.into_affine())
 }
 
+pub fn commit_using_monomials_gpu<E: Engine>(
+    poly: &Polynomial<E::Fr, Coefficients>,
+    crs: &Crs<E, CrsForMonomialForm>,
+    worker: &Worker,
+    kern: &mut Option<MultiexpKernel<E::G1Affine>>
+) -> Result<E::G1Affine, SynthesisError> {
+    match kern {
+        Some(ref mut k) => {
+            println!("Committing coefficients in GPU");
+
+            use std::time::Instant;
+
+            let now = Instant::now();
+
+            let subtime = Instant::now();
+
+            let scalars_repr = elements_into_representations::<E>(
+                &worker,
+                &poly.as_ref()
+            )?;
+
+            println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+            let subtime = Instant::now();
+
+            let res = multiexp::dense_multiexp_gpu(
+                &crs.g1_bases[..scalars_repr.len()],
+                &scalars_repr,
+                k
+            )?;
+
+            println!("Multiexp taken {:?}", subtime.elapsed());
+
+            println!("Commtiment taken {:?}", now.elapsed());
+
+            Ok(res.into_affine())
+        },
+        _ => {
+            println!("GPU Initialized faild, rollback to CPU");
+            commit_using_monomials(poly, crs, worker)
+        }
+    }
+}
+
 pub fn commit_using_values<E: Engine>(
     poly: &Polynomial<E::Fr, Values>,
     crs: &Crs<E, CrsForLagrangeForm>,
@@ -389,6 +434,51 @@ pub fn commit_using_values<E: Engine>(
     Ok(res.into_affine())
 }
 
+pub fn commit_using_values_gpu<E: Engine>(
+    poly: &Polynomial<E::Fr, Values>,
+    crs: &Crs<E, CrsForLagrangeForm>,
+    worker: &Worker,
+    kern: &mut Option<MultiexpKernel<E::G1Affine>>
+) -> Result<E::G1Affine, SynthesisError> {
+    match kern {
+        Some(ref mut k) => {
+            println!("Committing values over domain");
+            assert_eq!(poly.size(), crs.g1_bases.len());
+
+            use std::time::Instant;
+
+            let now = Instant::now();
+
+            let subtime = Instant::now();
+
+            let scalars_repr = elements_into_representations::<E>(
+                &worker,
+                &poly.as_ref()
+            )?;
+
+            println!("Scalars conversion taken {:?}", subtime.elapsed());
+
+            let subtime = Instant::now();
+
+            let res = multiexp::dense_multiexp_gpu(
+                &crs.g1_bases,
+                &scalars_repr,
+                k
+            )?;
+
+            println!("Multiexp taken {:?}", subtime.elapsed());
+
+            println!("Commtiment taken {:?}", now.elapsed());
+
+            Ok(res.into_affine())
+        },
+        _ => {
+            println!("GPU Initialized faild, rollback to CPU");
+            commit_using_values(poly, crs, worker)
+        }
+    }
+}
+
 pub fn commit_using_raw_values<E: Engine>(
     values: &[E::Fr],
     crs: &Crs<E, CrsForLagrangeForm>,
@@ -408,6 +498,36 @@ pub fn commit_using_raw_values<E: Engine>(
     )?;
 
     Ok(res.into_affine())
+}
+
+pub fn commit_using_raw_values_gpu<E: Engine>(
+    values: &[E::Fr],
+    crs: &Crs<E, CrsForLagrangeForm>,
+    worker: &Worker,
+    kern: &mut Option<MultiexpKernel<E::G1Affine>>
+) -> Result<E::G1Affine, SynthesisError> {
+    match kern {
+        Some(ref mut k) => {
+            assert_eq!(values.len().next_power_of_two(), crs.g1_bases.len());
+            println!("Committing raw values over domain");
+            let scalars_repr = elements_into_representations::<E>(
+                &worker,
+                &values
+            )?;
+        
+            let res = multiexp::dense_multiexp_gpu(
+                &crs.g1_bases[0..values.len()],
+                &scalars_repr,
+                k
+            )?;
+        
+            Ok(res.into_affine())
+        },
+        _ => {
+            println!("GPU Initialized faild, rollback to CPU");
+            commit_using_raw_values(values, crs, worker)
+        }
+    }
 }
 
 use crate::source::QueryDensity;

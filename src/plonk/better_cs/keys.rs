@@ -15,6 +15,10 @@ use std::marker::PhantomData;
 use super::utils::*;
 use super::LDE_FACTOR;
 
+use ec_gpu_gen::multiexp::MultiexpKernel;
+use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+use crate::GPU_DEVICES;
+
 #[derive(Debug, Clone, Eq)]
 pub struct SetupPolynomials<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub n: usize,
@@ -841,18 +845,27 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>> VerificationKey<E, P> {
             _marker: std::marker::PhantomData,
         };
 
+        let programs = GPU_DEVICES
+            .iter()
+            .map(|device| ec_gpu_gen::program!(device))
+            .collect::<Result<_, _>>().ok();
+        let mut gpu_kern: Option<MultiexpKernel<'_, E::G1Affine>> = match programs {
+            Some(p) => MultiexpKernel::<E::G1Affine>::create(p, &GPU_DEVICES).ok(),
+            _ => None
+        };
+
         for p in setup.selector_polynomials.iter() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = commit_using_monomials_gpu(p, &crs, &worker, &mut gpu_kern)?;
             new.selector_commitments.push(commitment);
         }
 
         for p in setup.next_step_selector_polynomials.iter() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = commit_using_monomials_gpu(p, &crs, &worker, &mut gpu_kern)?;
             new.next_step_selector_commitments.push(commitment);
         }
 
         for p in setup.permutation_polynomials.iter() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = commit_using_monomials_gpu(p, &crs, &worker, &mut gpu_kern)?;
             new.permutation_commitments.push(commitment);
         }
 

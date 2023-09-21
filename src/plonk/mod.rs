@@ -30,6 +30,12 @@ use crate::kate_commitment::*;
 use self::better_cs::cs::{PlonkCsWidth4WithNextStepParams, PlonkConstraintSystemParams};
 use crate::plonk::commitments::transcript::*;
 use crate::plonk::fft::cooley_tukey_ntt::*;
+use crate::pairing::ff::{PrimeField, Field};
+
+use ec_gpu_gen::multiexp::MultiexpKernel;
+use ec_gpu_gen::fft::FftKernel;
+use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+use crate::GPU_DEVICES;
 
 pub fn transpile<E: Engine, C: crate::Circuit<E>>(circuit: C) -> Result<Vec<(usize, TranspilationVariant)>, SynthesisError> {
     let mut transpiler = Transpiler::<E, PlonkCsWidth4WithNextStepParams>::new();
@@ -122,12 +128,10 @@ pub fn make_precomputations<E: Engine, P: PlonkConstraintSystemParams<E>>(
     setup: &SetupPolynomials<E, P>
 ) -> Result<SetupPolynomialsPrecomputations<E, P>, SynthesisError> {
     let worker = Worker::new();
-
     let precomputations = SetupPolynomialsPrecomputations::from_setup(
         &setup, 
         &worker, 
     )?;
-
     Ok(precomputations)
 }
 
@@ -153,8 +157,33 @@ pub fn prove_native_by_steps<E: Engine, C: better_cs::cs::Circuit<E, PlonkCsWidt
     println!("Synthesis taken {:?}", subtime.elapsed());
 
     let worker = Worker::new();
+    let programs = GPU_DEVICES
+        .iter()
+        .map(|device| ec_gpu_gen::program!(device))
+        .collect::<Result<_, _>>().ok();
+    let mut g1_multiexp_kern = match programs {
+        Some(p) => MultiexpKernel::<E::G1Affine>::create(p, &GPU_DEVICES).ok(),
+        _ => None
+    };
+    let programs = GPU_DEVICES
+        .iter()
+        .map(|device| ec_gpu_gen::program!(device))
+        .collect::<Result<_, _>>().ok();
+    let mut fft_kern = match programs {
+        Some(p) => FftKernel::<E::Fr>::create(p).ok(),
+        _ => None
+    };
 
     let now = Instant::now();
+    // let s = make_precomputations(&setup).unwrap();
+    // println!("memory usage(byte)");
+    // println!("selector_polynomials_on_coset_of_size_4n_bitreversed {}", s.selector_polynomials_on_coset_of_size_4n_bitreversed[0].storage_size()*s.selector_polynomials_on_coset_of_size_4n_bitreversed.len());
+    // println!("next_step_selector_polynomials_on_coset_of_size_4n_bitreversed {}", s.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed[0].storage_size()*s.next_step_selector_polynomials_on_coset_of_size_4n_bitreversed.len());
+    // println!("permutation_polynomials_on_coset_of_size_4n_bitreversed {}", s.permutation_polynomials_on_coset_of_size_4n_bitreversed[0].storage_size()*s.permutation_polynomials_on_coset_of_size_4n_bitreversed.len());
+    // println!("permutation_polynomials_values_of_size_n_minus_one {}", s.permutation_polynomials_values_of_size_n_minus_one[0].storage_size()*s.permutation_polynomials_values_of_size_n_minus_one.len());
+    // println!("inverse_divisor_on_coset_of_size_4n_bitreversed {}", s.inverse_divisor_on_coset_of_size_4n_bitreversed.storage_size());
+    // println!("x_on_coset_of_size_4n_bitreversed {}", s.x_on_coset_of_size_4n_bitreversed.storage_size());
+    // let setup_precomputations = Some(&s);
 
     let mut transcript = if let Some(p) = transcript_init_params {
         T::new_from_params(p)
@@ -173,7 +202,9 @@ pub fn prove_native_by_steps<E: Engine, C: better_cs::cs::Circuit<E, PlonkCsWidt
         assembly.first_step_with_monomial_form_key(
         &worker,
         csr_mon_basis,
-        &mut precomputed_omegas_inv
+        &mut precomputed_omegas_inv,
+        &mut g1_multiexp_kern,
+        &mut fft_kern
     )?;
 
     println!("First step (witness commitment) taken {:?}", subtime.elapsed());
@@ -211,7 +242,9 @@ pub fn prove_native_by_steps<E: Engine, C: better_cs::cs::Circuit<E, PlonkCsWidt
         csr_mon_basis,
         &setup_precomputations,
         &mut precomputed_omegas_inv,
-        &worker
+        &worker,
+        &mut g1_multiexp_kern,
+        &mut fft_kern
     )?;
 
     println!("Second step (grand product commitment) taken {:?}", subtime.elapsed());
@@ -239,7 +272,9 @@ pub fn prove_native_by_steps<E: Engine, C: better_cs::cs::Circuit<E, PlonkCsWidt
         &setup_precomputations,
         &mut precomputed_omegas,
         &mut precomputed_omegas_inv,
-        &worker
+        &worker,
+        &mut g1_multiexp_kern,
+        &mut fft_kern
     )?;
 
     println!("Third step (quotient calculation and commitment) taken {:?}", subtime.elapsed());
@@ -314,7 +349,8 @@ pub fn prove_native_by_steps<E: Engine, C: better_cs::cs::Circuit<E, PlonkCsWidt
         fourth_verifier_message,
         &setup,
         csr_mon_basis,
-        &worker
+        &worker,
+        &mut g1_multiexp_kern,
     )?;
 
     println!("Fifth step (proving opening at z) taken {:?}", subtime.elapsed());
