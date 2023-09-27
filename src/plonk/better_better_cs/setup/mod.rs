@@ -20,9 +20,7 @@ use std::io::{Read, Write};
 
 use crate::plonk::better_cs::keys::*;
 
-use ec_gpu_gen::multiexp::MultiexpKernel;
-use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
-use crate::GPU_DEVICES;
+use crate::gpulock::{LockedFFTKernel, LockedMSMKernel};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Setup<E: Engine, C: Circuit<E>> {
@@ -206,16 +204,8 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
 
             _marker: std::marker::PhantomData,
         };
-        
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>().ok();
-        let mut gpu_kern: Option<MultiexpKernel<'_, E::G1Affine>> = match programs {
-            Some(p) => MultiexpKernel::<E::G1Affine>::create(p, &GPU_DEVICES).ok(),
-            _ => None
-        };
 
+        let mut gpu_kern = LockedMSMKernel::<E>::new();
         for (p, c) in vec![
             (&setup.gate_setup_monomials, &mut new.gate_setup_commitments),
             (&setup.gate_selectors_monomials, &mut new.gate_selectors_commitments),

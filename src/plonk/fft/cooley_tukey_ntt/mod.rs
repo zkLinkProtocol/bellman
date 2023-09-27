@@ -1,10 +1,9 @@
 use crate::pairing::ff::{PrimeField, ScalarEngine};
-use crate::{worker::*, GPU_DEVICES};
+use crate::worker::*;
 use crate::plonk::domains::*;
 
 pub(crate) mod partial_reduction;
 use ec_gpu_gen::fft::FftKernel;
-use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
 
 pub trait CTPrecomputations<F: PrimeField>: Send + Sync {
     fn new_for_domain_size(size: usize) -> Self;
@@ -658,7 +657,8 @@ mod test {
         use super::BitReversedOmegas;
         use crate::plonk::domains::Domain;
         use crate::pairing::ff::Field;
-        use crate::pairing::bn256::Fr;
+        use crate::pairing::bn256::{Bn256, Fr};
+        use crate::gpulock::LockedFFTKernel;
 
         // let poly_sizes = vec![1_000_000, 2_000_000, 4_000_000];
         let poly_sizes = vec![1 << 26];
@@ -666,12 +666,7 @@ mod test {
         // let poly_sizes = vec![1000usize];
 
         let worker = Worker::new();
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>()
-            .expect("Cannot create programs!");
-        let mut kern = FftKernel::<Fr>::create(programs).expect("Cannot initialize kernel!");
+        let mut kern = LockedFFTKernel::<Bn256>::new().unwrap();
 
         for poly_size in poly_sizes.into_iter() {
             let poly_size = poly_size as usize;

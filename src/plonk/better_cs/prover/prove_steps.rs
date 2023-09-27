@@ -1,6 +1,7 @@
 use super::*;
 use ec_gpu_gen::multiexp::MultiexpKernel;
 use ec_gpu_gen::fft::FftKernel;
+use crate::gpulock::{LockedFFTKernel, LockedMSMKernel};
 
 pub(crate) enum PrecomputationsForPolynomial<'a, F: PrimeField> {
     Borrowed(&'a Polynomial<F, Values>),
@@ -492,8 +493,6 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         worker: &Worker, 
         crs_mons: &Crs<E, CrsForMonomialForm>, 
         precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>,
-        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
-        fft_kern: &mut Option<FftKernel<E::Fr>>
     ) -> Result<(
         FirstPartialProverState<E, PlonkCsWidth4WithNextStepParams>, 
         FirstProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -536,19 +535,23 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         }
 
         for wire_poly in full_assignments.iter() {
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let as_coeffs = match fft_kern {
                 Some(ref mut k) => Polynomial::from_values(wire_poly.clone())?
                     .ifft_gpu(&worker, &E::Fr::one(), k)?,
                 _ => Polynomial::from_values(wire_poly.clone())?
                     .ifft_using_bitreversed_ntt(&worker, precomputed_omegas_inv.as_ref(), &E::Fr::one())?,
             };
+            drop(fft_kern);
 
+            let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
             let commitment = commit_using_monomials_gpu(
                 &as_coeffs,
                 &crs_mons,
                 &worker,
-                g1_multiexp_kern
+                &mut g1_multiexp_kern
             )?;
+            drop(g1_multiexp_kern);
 
             wire_polys_as_coefficients.push(as_coeffs);
 
@@ -585,8 +588,6 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         setup_precomputations: &Option< &SetupPolynomialsPrecomputations<E, PlonkCsWidth4WithNextStepParams> >,
         precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>,
         worker: &Worker,
-        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
-        fft_kern: &mut Option<FftKernel<E::Fr>>
     ) -> Result<(
         SecondPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
         SecondProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -651,6 +652,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             }
 
             // we need to only do up to the last one
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             for p in setup.permutation_polynomials.iter() {
                 let as_values = match fft_kern {
                     Some(ref mut k) => p.clone().fft_gpu(
@@ -668,6 +670,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
                 permutation_polynomials_values_of_size_n_minus_one.push(p);
             }
+            drop(fft_kern);
         }
 
         let z_den = {
@@ -705,6 +708,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         // assert!(z.as_ref().last().expect("must exist") == &E::Fr::one());
 
         // interpolate on the main domain
+        let mut fft_kern = LockedFFTKernel::<E>::new();
         let z_in_monomial_form = match fft_kern {
             Some(ref mut k) => z.ifft_gpu(
                 &worker,
@@ -717,13 +721,16 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
                 &E::Fr::one()
             )?,
         };
+        drop(fft_kern);
 
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         let z_commitment = commit_using_monomials_gpu(
             &z_in_monomial_form,
             &crs_mons,
             &worker,
-            g1_multiexp_kern
+            &mut g1_multiexp_kern
         )?;
+        drop(g1_multiexp_kern);
         
         let state = SecondPartialProverState::<E, PlonkCsWidth4WithNextStepParams> {
             required_domain_size,
@@ -753,8 +760,6 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         precomputed_omegas: &mut PrecomputedOmegas<E::Fr, CP>,
         precomputed_omegas_inv: &mut PrecomputedOmegas<E::Fr, CPI>,
         worker: &Worker,
-        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
-        fft_kern: &mut Option<FftKernel<E::Fr>>
     ) -> Result<(
         ThirdPartialProverState<E, PlonkCsWidth4WithNextStepParams>,
         ThirdProverMessage<E, PlonkCsWidth4WithNextStepParams>
@@ -790,7 +795,8 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
 
         let mut witness_ldes_on_coset = vec![];
         let mut witness_next_ldes_on_coset = vec![];
- 
+
+        let mut fft_kern = LockedFFTKernel::<E>::new();
         for (idx, monomial) in witness_polys_in_monomial_form.iter().enumerate() {
             // this is D polynomial and we need to make next
             if idx == <PlonkCsWidth4WithNextStepParams as PlonkConstraintSystemParams<E>>::STATE_WIDTH - 1 {
@@ -831,7 +837,6 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             };
             witness_ldes_on_coset.push(lde);
         }
-
 
         let SecondVerifierMessage { alpha, beta, gamma, .. } = second_verifier_message;
 
@@ -1060,6 +1065,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
                 &coset_factor
             )?,
         };
+        drop(fft_kern);
 
         assert!(z_shifted_coset_lde_bitreversed.size() == required_domain_size*LDE_FACTOR);
 
@@ -1109,31 +1115,31 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             let mut contrib_z = z_shifted_coset_lde_bitreversed;
 
             // A + beta*perm_a + gamma
-
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             for (idx, w) in witness_ldes_on_coset.iter().enumerate() {
-                    let perm = match fft_kern {
-                        Some(ref mut k) => get_precomputed_permutation_poly_lde_for_index_gpu(
-                            idx, 
-                            required_domain_size, 
-                            &setup, 
-                            &setup_precomputations,
-                            &worker,
-                            k
-                        )?,
-                        _ => get_precomputed_permutation_poly_lde_for_index(
-                            idx, 
-                            required_domain_size, 
-                            &setup, 
-                            &setup_precomputations,
-                            precomputed_omegas,
-                            &worker
-                        )?,
-                    };
-                    tmp.reuse_allocation(&w);
-                    tmp.add_constant(&worker, &gamma);
-                    tmp.add_assign_scaled(&worker, perm.as_ref(), &beta);
-                    contrib_z.mul_assign(&worker, &tmp);
-                }
+                let perm = match fft_kern {
+                    Some(ref mut k) => get_precomputed_permutation_poly_lde_for_index_gpu(
+                        idx, 
+                        required_domain_size, 
+                        &setup, 
+                        &setup_precomputations,
+                        &worker,
+                        k
+                    )?,
+                    _ => get_precomputed_permutation_poly_lde_for_index(
+                        idx, 
+                        required_domain_size, 
+                        &setup, 
+                        &setup_precomputations,
+                        precomputed_omegas,
+                        &worker
+                    )?,
+                };
+                tmp.reuse_allocation(&w);
+                tmp.add_constant(&worker, &gamma);
+                tmp.add_assign_scaled(&worker, perm.as_ref(), &beta);
+                contrib_z.mul_assign(&worker, &tmp);
+            }
 
             t_1.sub_assign_scaled(&worker, &contrib_z, &quotient_linearization_challenge);
 
@@ -1150,6 +1156,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             let mut z_minus_one_by_l_0 = z_coset_lde_bitreversed;
             z_minus_one_by_l_0.sub_constant(&worker, &E::Fr::one());
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let l_coset_lde_bitreversed = match fft_kern {
                 Some(ref mut k) => l_0.bitreversed_lde_using_gpu_fft(
                     &worker, 
@@ -1164,6 +1171,7 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
                     &coset_factor
                 )?,
             };
+            drop(fft_kern);
 
             z_minus_one_by_l_0.mul_assign(&worker, &l_coset_lde_bitreversed);
 
@@ -1205,12 +1213,13 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
             _marker: std::marker::PhantomData
         };
 
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         for t_part in state.t_poly_parts.iter() {
             let t_part_commitment = commit_using_monomials_gpu(
                 &t_part,
                 &crs_mons,
                 &worker,
-                g1_multiexp_kern
+                &mut g1_multiexp_kern
             )?;
 
             message.quotient_poly_commitments.push(t_part_commitment);
@@ -1453,7 +1462,6 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         setup: &SetupPolynomials<E, PlonkCsWidth4WithNextStepParams>,
         crs_mons: &Crs<E, CrsForMonomialForm>, 
         worker: &Worker,
-        g1_multiexp_kern: &mut Option<MultiexpKernel<E::G1Affine>>,
     ) -> Result<FifthProverMessage<E, PlonkCsWidth4WithNextStepParams>, SynthesisError>
     {
         let FourthVerifierMessage { z, v, .. } = fourth_verifier_message;
@@ -1537,18 +1545,19 @@ impl<E: Engine> ProverAssembly4WithNextStep<E> {
         let open_at_z_omega = polys.pop().unwrap().0;
         let open_at_z = polys.pop().unwrap().0;
 
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         let opening_at_z = commit_using_monomials_gpu(
             &open_at_z,
             &crs_mons,
             &worker,
-            g1_multiexp_kern
+            &mut g1_multiexp_kern
         )?;
 
         let opening_at_z_omega = commit_using_monomials_gpu(
             &open_at_z_omega,
             &crs_mons,
             &worker,
-            g1_multiexp_kern
+            &mut g1_multiexp_kern
         )?;
 
         let message = FifthProverMessage::<E, PlonkCsWidth4WithNextStepParams> {

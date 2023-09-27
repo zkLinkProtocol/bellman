@@ -23,11 +23,7 @@ use crate::byteorder::WriteBytesExt;
 use std::io::{Read, Write};
 
 use crate::plonk::better_cs::keys::*;
-
-use ec_gpu_gen::multiexp::MultiexpKernel;
-use ec_gpu_gen::fft::FftKernel;
-use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
-use crate::GPU_DEVICES;
+use crate::gpulock::{LockedFFTKernel, LockedMSMKernel};
 
 pub fn write_tuple_with_one_index<F: PrimeField, W: Write>(
     tuple: &(usize, F),
@@ -314,22 +310,6 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let num_state_polys = <Self as ConstraintSystem<E>>::Params::STATE_WIDTH;
         let num_witness_polys = <Self as ConstraintSystem<E>>::Params::WITNESS_WIDTH;
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>().ok();
-        let mut g1_multiexp_kern = match programs {
-            Some(p) => MultiexpKernel::<E::G1Affine>::create(p, &GPU_DEVICES).ok(),
-            _ => None
-        };
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>().ok();
-        let mut fft_kern = match programs {
-            Some(p) => FftKernel::<E::Fr>::create(p).ok(),
-            _ => None
-        };
 
         let mut values_storage = self.make_assembled_poly_storage(worker, true)?;
 
@@ -351,6 +331,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             }
         } else {
             // compute from setup
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             for idx in 0..num_state_polys {
                 let key = PolyIdentifier::PermutationPolynomial(idx);
                 // let vals = setup.permutation_monomials[idx].clone().fft(&worker).into_coeffs();
@@ -377,6 +358,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             self.max_constraint_degree.next_power_of_two()
         );
 
+        let mut fft_kern = LockedFFTKernel::<E>::new();
         let mut monomials_storage = match fft_kern {
             Some(ref mut k) => Self::create_monomial_storage_gpu(
                 &worker, 
@@ -391,10 +373,12 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 true
             )?,
         };
+        drop(fft_kern);
 
         monomials_storage.extend_from_setup(setup)?;
 
         // step 1 - commit state and witness, enumerated. Also commit sorted polynomials for table arguments
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         for i in 0..num_state_polys {
             let key = PolyIdentifier::VariablesPolynomial(i);
             let poly_ref = monomials_storage.get_poly(key);
@@ -430,6 +414,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             proof.witness_polys_commitments.push(commitment);
         }
+        drop(g1_multiexp_kern);
 
         // step 1.5 - if there are lookup tables then draw random "eta" to linearlize over tables
         let mut lookup_data: Option<data_structures::LookupDataHolder<E>> = if self.tables.len() > 0 {
@@ -440,6 +425,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 let selector_for_lookup_values = self.calculate_lookup_selector_values()?;
                 let table_type_values = self.calculate_table_type_values()?;
 
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let table_type_poly_monomial = match fft_kern {
                     Some(ref mut k) => Polynomial::from_values(table_type_values.clone())?.ifft_gpu(
                         &worker,
@@ -478,6 +464,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 let table_type_poly = PolynomialProxy::from_borrowed(table_type_poly_ref);
 
                 // let mut table_type_values = table_type_poly_ref.clone().fft(&worker).into_coeffs();
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let mut table_type_values = match fft_kern {
                     Some(ref mut k) => table_type_poly_ref.clone().fft_gpu(
                             &worker,
@@ -501,6 +488,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     self.calculate_masked_lookup_entries(&values_storage)?
                 } else {
                     // let selector_values = PolynomialProxy::from_owned(selector_poly.as_ref().clone().fft(&worker));
+                    let mut fft_kern = LockedFFTKernel::<E>::new();
                     let selector_values = match fft_kern {
                         Some(ref mut k) => selector_poly.as_ref().clone().fft_gpu(
                             &worker,
@@ -567,6 +555,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
                 assert!(full_t_poly_values[0].is_zero());
 
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let t_poly_monomial = match fft_kern {
                     Some(ref mut k) => Polynomial::from_values(full_t_poly_values.clone())?.ifft_gpu(
                         &worker,
@@ -600,6 +589,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 }
 
                 // let mut t_poly_values = t_poly_values_monomial_aggregated.clone().fft(&worker);
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let mut t_poly_values = match fft_kern {
                     Some(ref mut k) => t_poly_values_monomial_aggregated.clone().fft_gpu(
                         &worker,
@@ -612,6 +602,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                         &E::Fr::one()
                     )?,
                 };
+                drop(fft_kern);
                 let mut t_values_shifted_coeffs = t_poly_values.clone().into_coeffs();
                 let _ = t_poly_values.pop_last()?;
 
@@ -652,6 +643,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
                 assert!(full_s_poly_values[0].is_zero());
 
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let s_poly_monomial =  match fft_kern {
                     Some(ref mut k) => Polynomial::from_values(full_s_poly_values.clone())?.ifft_gpu(
                         &worker,
@@ -672,12 +664,14 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 )
             };
 
+            let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
             let s_poly_commitment = commit_using_monomials_gpu(
                 &s_poly_monomial,
                 mon_crs,
                 &worker,
                 &mut g1_multiexp_kern
             )?;
+            drop(g1_multiexp_kern);
 
             commit_point_as_xy::<E, T>(
                 &mut transcript,
@@ -807,6 +801,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         assert!(z.as_ref()[0] == E::Fr::one());
 
+        let mut fft_kern = LockedFFTKernel::<E>::new();
         let copy_permutation_z_in_monomial_form = match fft_kern {
             Some(ref mut k) => z.ifft_gpu(
                 &worker,
@@ -819,13 +814,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 &E::Fr::one()
             )?,
         };
+        drop(fft_kern);
 
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         let copy_permutation_z_poly_commitment = commit_using_monomials_gpu(
             &copy_permutation_z_in_monomial_form,
             mon_crs,
             &worker,
             &mut g1_multiexp_kern
         )?;
+        drop(g1_multiexp_kern);
 
         commit_point_as_xy::<E, T>(
             &mut transcript,
@@ -916,6 +914,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             // data.t_poly_monomial = Some(t_poly_monomial);
             // data.s_poly_monomial = Some(s_poly_monomial);
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let z = match fft_kern {
                 Some(ref mut k) => z.ifft_gpu(
                     &worker,
@@ -928,13 +927,16 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &E::Fr::one()
                 )?,
             };
+            drop(fft_kern);
 
+            let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
             let lookup_z_poly_commitment = commit_using_monomials_gpu(
                 &z,
                 mon_crs,
                 &worker,
                 &mut g1_multiexp_kern
             )?;
+            drop(g1_multiexp_kern);
     
             commit_point_as_xy::<E, T>(
                 &mut transcript,
@@ -996,6 +998,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             let input_values = self.input_assingments.clone();
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let mut t = match fft_kern {
                 Some(ref mut k) => gate.contribute_into_quotient_for_public_inputs_gpu(
                     required_domain_size,
@@ -1065,6 +1068,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 // we have to multiply by the masking poly (selector)
                 let key = PolyIdentifier::GateSelector(gate.name());
                 let monomial_selector = monomials_storage.gate_selectors.get(&key).unwrap().as_ref();
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let selector_lde = match fft_kern {
                     Some(ref mut k) => monomial_selector.clone_padded_to_domain()?.bitreversed_lde_using_gpu_fft(
                         &worker,
@@ -1097,6 +1101,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         // z(omega^0) - 1 == 0
         let l_0 = calculate_lagrange_poly::<E::Fr>(&worker, required_domain_size.next_power_of_two(), 0)?;
 
+        let mut fft_kern = LockedFFTKernel::<E>::new();
         let l_0_coset_lde_bitreversed = match fft_kern {
             Some(ref mut k) => l_0.bitreversed_lde_using_gpu_fft(
                 &worker,
@@ -1111,6 +1116,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 &coset_factor
             )?,
         };
+        drop(fft_kern);
 
         let mut copy_grand_product_alphas = None;
         let x_poly_lde_bitreversed = {
@@ -1120,6 +1126,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             current_alpha.mul_assign(&alpha);
             let alpha_0 = current_alpha;
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let z_coset_lde_bitreversed = match fft_kern {
                 Some(ref mut k) => copy_permutation_z_in_monomial_form.clone().bitreversed_lde_using_gpu_fft(
                     &worker,
@@ -1134,6 +1141,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &coset_factor
                 )?,
             };
+            drop(fft_kern);
 
             assert!(z_coset_lde_bitreversed.size() == required_domain_size*lde_factor);
 
@@ -1189,6 +1197,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             // A + beta*perm_a + gamma
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             for idx in 0..num_state_polys {
                 let key = PolyIdentifier::VariablesPolynomial(idx);
 
@@ -1214,6 +1223,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 contrib_z.mul_assign(&worker, &tmp);
                 drop(perm);
             }
+            drop(fft_kern);
 
             t_poly.sub_assign_scaled(&worker, &contrib_z, &current_alpha);
 
@@ -1259,7 +1269,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             let alpha_0 = current_alpha;
 
             // same grand product argument for lookup permutation except divisor is now with one point cut
-
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let z_lde = match fft_kern {
                 Some(ref mut k) => z_poly_in_monomial_form.clone().bitreversed_lde_using_gpu_fft(
                     &worker,
@@ -1274,6 +1284,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &coset_factor
                 )?,
             };
+            drop(fft_kern);
 
             let z_lde_shifted = z_lde.clone_shifted_assuming_bitreversed(
                 lde_factor,
@@ -1290,6 +1301,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             let data = lookup_data.as_ref().unwrap();
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let s_lde = match fft_kern {
                 Some(ref mut k) => data.s_poly_monomial.as_ref().unwrap().clone().bitreversed_lde_using_gpu_fft(
                     &worker,
@@ -1304,6 +1316,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &coset_factor
                 )?,
             };
+            drop(fft_kern);
 
             let s_lde_shifted = s_lde.clone_shifted_assuming_bitreversed(
                 lde_factor,
@@ -1320,6 +1333,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             drop(s_lde_shifted);
             drop(z_lde_shifted);
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let t_lde = match fft_kern {
                 Some(ref mut k) => data.t_poly_monomial.as_ref().unwrap().as_ref().clone().bitreversed_lde_using_gpu_fft(
                     &worker,
@@ -1334,6 +1348,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &coset_factor
                 )?,
             };
+            drop(fft_kern);
 
             let t_lde_shifted = t_lde.clone_shifted_assuming_bitreversed(
                 lde_factor,
@@ -1374,6 +1389,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                 drop(c_ref);
                 current.mul_assign(&eta);
 
+                let mut fft_kern = LockedFFTKernel::<E>::new();
                 let table_type_lde = match fft_kern {
                     Some(ref mut k) => lookup_data.as_ref().unwrap().table_type_poly_monomial.as_ref().unwrap().as_ref().clone().bitreversed_lde_using_gpu_fft(
                         &worker,
@@ -1407,6 +1423,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                         &coset_factor
                     )?
                 };
+                drop(fft_kern);
 
                 tmp.mul_assign(&worker, &lookup_selector_lde);
 
@@ -1469,6 +1486,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             let l_last = calculate_lagrange_poly::<E::Fr>(&worker, required_domain_size.next_power_of_two(), required_domain_size - 1)?;
 
+            let mut fft_kern = LockedFFTKernel::<E>::new();
             let l_last_coset_lde_bitreversed = match fft_kern {
                 Some(ref mut k) => l_last.bitreversed_lde_using_gpu_fft(
                     &worker,
@@ -1483,6 +1501,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
                     &coset_factor
                 )?,
             };
+            drop(fft_kern);
 
             tmp.reuse_allocation(&z_lde);
             tmp.sub_constant(&worker, &expected);
@@ -1550,6 +1569,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
         let mut t_poly_parts = t_poly.break_into_multiples(required_domain_size)?;
 
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         for part in t_poly_parts.iter() {
             let commitment = commit_using_monomials_gpu(
                 part,
@@ -1565,6 +1585,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
 
             proof.quotient_poly_parts_commitments.push(commitment);
         }
+        drop(g1_multiexp_kern);
 
         // draw opening point
         let z = transcript.get_challenge();
@@ -2329,6 +2350,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
         let open_at_z_omega = polys.pop().unwrap().0;
         let open_at_z = polys.pop().unwrap().0;
 
+        let mut g1_multiexp_kern = LockedMSMKernel::<E>::new();
         let opening_at_z = commit_using_monomials_gpu(
             &open_at_z,
             &mon_crs,
@@ -2342,6 +2364,7 @@ impl<E: Engine, P: PlonkConstraintSystemParams<E>, MG: MainGate<E>, S: Synthesis
             &worker,
             &mut g1_multiexp_kern
         )?;
+        drop(g1_multiexp_kern);
 
         proof.opening_proof_at_z = opening_at_z;
         proof.opening_proof_at_z_omega = opening_at_z_omega;

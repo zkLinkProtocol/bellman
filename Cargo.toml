@@ -44,6 +44,7 @@ hex = "*"
 
 ec-gpu = { path = "../ec-gpu/ec-gpu" }
 ec-gpu-gen = { path = "../ec-gpu/ec-gpu-gen" }
+fs2 = "0.4.3"
 
 [features]
 default = ["multicore", "plonk", "cuda"]

@@ -2741,7 +2741,7 @@ mod test {
 
     #[test]
     fn test_fft_scaling() {
-        use crate::pairing::bn256::Fr;
+        use crate::pairing::bn256::{Bn256, Fr};
         use crate::ff::{Field, PrimeField};
         use super::*;
 
@@ -2750,20 +2750,15 @@ mod test {
         use std::time::Instant;
 
         use ec_gpu_gen::fft::FftKernel;
-        use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
-        use crate::GPU_DEVICES;
         use crate::plonk::fft::cooley_tukey_ntt::*;
+        use crate::gpulock::LockedFFTKernel;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
 
         let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
 
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>().unwrap();
-        let mut kern = FftKernel::<Fr>::create(programs).unwrap();
+        let mut kern = LockedFFTKernel::<Bn256>::new().unwrap();
 
         for size in vec![1 << 26] {
             let mut poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
@@ -2794,7 +2789,7 @@ mod test {
 
     #[test]
     fn test_ifft_scaling() {
-        use crate::pairing::bn256::Fr;
+        use crate::pairing::bn256::{Bn256, Fr};
         use crate::ff::{Field, PrimeField};
         use super::*;
 
@@ -2803,20 +2798,15 @@ mod test {
         use std::time::Instant;
 
         use ec_gpu_gen::fft::FftKernel;
-        use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
-        use crate::GPU_DEVICES;
         use crate::plonk::fft::cooley_tukey_ntt::*;
+        use crate::gpulock::LockedFFTKernel;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
 
         let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
 
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>().unwrap();
-        let mut kern = FftKernel::<Fr>::create(programs).unwrap();
+        let mut kern = LockedFFTKernel::<Bn256>::new().unwrap();
 
         for size in vec![1 << 26] {
             let mut poly = Polynomial::from_values(scalars[..size].to_vec()).unwrap();
@@ -2846,7 +2836,7 @@ mod test {
 
     #[test]
     fn test_bitreversed_fft_scaling() {
-        use crate::pairing::bn256::Fr;
+        use crate::pairing::bn256::{Bn256, Fr};
         use crate::ff::{Field, PrimeField};
         use super::*;
 
@@ -2855,20 +2845,15 @@ mod test {
         use std::time::Instant;
 
         use ec_gpu_gen::fft::FftKernel;
-        use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
-        use crate::GPU_DEVICES;
         use crate::plonk::fft::cooley_tukey_ntt::*;
+        use crate::gpulock::LockedFFTKernel;
 
         let max_size = 1 << 26;
         let worker = Worker::new();
 
         let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
 
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>().unwrap();
-        let mut kern = FftKernel::<Fr>::create(programs).unwrap();
+        let mut kern = LockedFFTKernel::<Bn256>::new().unwrap();
 
         for size in vec![1 << 26] {
             let mut poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();

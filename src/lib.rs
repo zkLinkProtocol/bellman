@@ -44,14 +44,9 @@ mod source;
 mod multiexp;
 mod prefetch;
 
-use ec_gpu_gen::rust_gpu_tools::{Device, Program};
-use ec_gpu_gen::threadpool::Worker;
-
 #[cfg(any(feature = "cuda", feature = "opencl"))]
-lazy_static! {
-    static ref GPU_POOL: Worker = Worker::new();
-    static ref GPU_DEVICES: Vec<&'static Device> = Device::all();
-}
+pub mod gpulock;
+extern crate fs2;
 
 #[cfg(test)]
 mod tests;

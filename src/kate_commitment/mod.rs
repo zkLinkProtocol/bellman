@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::multiexp;
 use crate::SynthesisError;
 use ec_gpu_gen::multiexp::MultiexpKernel;
+use crate::gpulock::LockedMSMKernel;
 
 pub trait CrsType {}
 
@@ -358,7 +359,7 @@ pub fn commit_using_monomials_gpu<E: Engine>(
     poly: &Polynomial<E::Fr, Coefficients>,
     crs: &Crs<E, CrsForMonomialForm>,
     worker: &Worker,
-    kern: &mut Option<MultiexpKernel<E::G1Affine>>
+    kern: &mut Option<LockedMSMKernel<E>>
 ) -> Result<E::G1Affine, SynthesisError> {
     match kern {
         Some(ref mut k) => {
@@ -392,7 +393,6 @@ pub fn commit_using_monomials_gpu<E: Engine>(
             Ok(res.into_affine())
         },
         _ => {
-            println!("GPU Initialized faild, rollback to CPU");
             commit_using_monomials(poly, crs, worker)
         }
     }
@@ -438,7 +438,7 @@ pub fn commit_using_values_gpu<E: Engine>(
     poly: &Polynomial<E::Fr, Values>,
     crs: &Crs<E, CrsForLagrangeForm>,
     worker: &Worker,
-    kern: &mut Option<MultiexpKernel<E::G1Affine>>
+    kern: &mut Option<LockedMSMKernel<E>>
 ) -> Result<E::G1Affine, SynthesisError> {
     match kern {
         Some(ref mut k) => {
@@ -473,7 +473,6 @@ pub fn commit_using_values_gpu<E: Engine>(
             Ok(res.into_affine())
         },
         _ => {
-            println!("GPU Initialized faild, rollback to CPU");
             commit_using_values(poly, crs, worker)
         }
     }
@@ -504,7 +503,7 @@ pub fn commit_using_raw_values_gpu<E: Engine>(
     values: &[E::Fr],
     crs: &Crs<E, CrsForLagrangeForm>,
     worker: &Worker,
-    kern: &mut Option<MultiexpKernel<E::G1Affine>>
+    kern: &mut Option<LockedMSMKernel<E>>
 ) -> Result<E::G1Affine, SynthesisError> {
     match kern {
         Some(ref mut k) => {
@@ -524,7 +523,6 @@ pub fn commit_using_raw_values_gpu<E: Engine>(
             Ok(res.into_affine())
         },
         _ => {
-            println!("GPU Initialized faild, rollback to CPU");
             commit_using_raw_values(values, crs, worker)
         }
     }

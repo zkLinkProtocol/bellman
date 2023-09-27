@@ -30,7 +30,6 @@ use cfg_if;
 use ec_gpu_gen::multiexp::MultiexpKernel;
 use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
 use ec_gpu::GpuName;
-use crate::{GPU_DEVICES, GPU_POOL};
 
 /// This genious piece of code works in the following way:
 /// - choose `c` - the bit length of the region that one thread works on
@@ -834,6 +833,10 @@ fn get_window_size_for_length(length: usize, chunk_length: usize) -> u32 {
     };
 }
 
+lazy_static! {
+    static ref GPU_POOL: ec_gpu_gen::threadpool::Worker = ec_gpu_gen::threadpool::Worker::new();
+}
+
 #[cfg(any(feature = "cuda", feature = "opencl"))]
 pub fn dense_multiexp_gpu<G: CurveAffine + GpuName>(
     bases: & [G],
@@ -1027,16 +1030,11 @@ mod test {
         use rand::{self, Rand, Rng, SeedableRng, StdRng};
         use crate::pairing::bn256::Bn256;
         use std::time::Instant;
+        use crate::gpulock::LockedMSMKernel;
     
         const MAX_LOG_D: usize = 26;
         const START_LOG_D: usize = 26;
-        let programs = GPU_DEVICES
-            .iter()
-            .map(|device| ec_gpu_gen::program!(device))
-            .collect::<Result<_, _>>()
-            .expect("Cannot create programs!");
-        let mut kern = MultiexpKernel::<<Bn256 as Engine>::G1Affine>::create(programs, &GPU_DEVICES)
-            .expect("Cannot initialize kernel!");
+        let mut kern = LockedMSMKernel::<Bn256>::new().unwrap();
         
         let cpupool = Worker::new();
     
