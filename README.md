@@ -2,6 +2,39 @@
  
 Originally developed for ZCash, with extensions from us to make it a little more pleasant. Uses our "community edition" pairing for Ethereum's BN256 curve. Now published as `bellman_ce` on `crate.io` to allow ease of use.
 
+## GPU
+
+This fork contains GPU parallel acceleration to the FFT and Multiexponentation algorithms in the groth16 prover codebase under the compilation features `cuda` and `opencl`.
+
+### Requirements
+- NVIDIA or AMD GPU Graphics Driver
+- OpenCL
+
+( For AMD devices we recommend [ROCm](https://rocm-documentation.readthedocs.io/en/latest/Installation_Guide/Installation-Guide.html) )
+
+### Environment variables
+
+The gpu extension contains some env vars that may be set externally to this library.
+
+- `BELLMAN_NO_GPU`
+
+    Will disable the GPU feature from the library and force usage of the CPU.
+
+  ```rust
+  // Example
+  env::set_var("BELLMAN_NO_GPU", "1");
+  ```
+
+- `EC_GPU_CUDA_NVCC_ARGS`
+
+    By default the CUDA kernel is compiled for several architectures, which may take a long time. `EC_GPU_CUDA_NVCC_ARGS` can be used to override those arguments. The input and output file will still be automatically set.
+
+  ```console
+  // Example for compiling the kernel for only the Ampere architecture.
+  // https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#virtual-architecture-feature-list
+  EC_GPU_CUDA_NVCC_ARGS="--fatbin --gpu-architecture=sm_86 --generate-code=arch=compute_86,code=sm_86"
+  ```
+
 ## Features
 
 There are two available features to be used in production and are stable and will not be changed in terms of API. Those are Groth16 proof system implementation.

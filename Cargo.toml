@@ -18,7 +18,7 @@ bit-vec = "0.6"
 cfg-if = "1.*"
 
 # pairing = {package = "pairing_ce", version = "0.24.*" }
-pairing = {path = "../pairing", package = "pairing_ce"}
+pairing = { git = "https://github.com/zkLinkProtocol/pairing.git", branch = "master", package = "pairing_ce" }
 byteorder = "1"
 
 futures = {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
@@ -42,8 +42,8 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 
 hex = "*"
 
-ec-gpu = { path = "../ec-gpu/ec-gpu" }
-ec-gpu-gen = { path = "../ec-gpu/ec-gpu-gen" }
+ec-gpu = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "master", package = "ec-gpu" }
+ec-gpu-gen = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "master", package = "ec-gpu-gen" }
 fs2 = "0.4.3"
 
 [features]
@@ -62,5 +62,5 @@ cuda = ["ec-gpu-gen/cuda"]
 opencl = ["ec-gpu-gen/opencl"]
 
 [build-dependencies]
-pairing = {path = "../pairing", package = "pairing_ce"}
-ec-gpu-gen = { path = "../ec-gpu/ec-gpu-gen" }
+pairing = { git = "https://github.com/zkLinkProtocol/pairing.git", branch = "master", package = "pairing_ce" }
+ec-gpu-gen = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "master", package = "ec-gpu-gen" }
