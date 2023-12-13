@@ -5,7 +5,6 @@ use crate::plonk::polynomials::*;
 use std::sync::Arc;
 use crate::multiexp;
 use crate::SynthesisError;
-use ec_gpu_gen::multiexp::MultiexpKernel;
 use crate::gpulock::LockedMSMKernel;
 
 pub trait CrsType {}

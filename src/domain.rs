@@ -553,8 +553,9 @@ use ec_gpu::GpuName;
 use pairing::bn256::Bn256;
 use pairing::bn256::Fr;
 
+#[cfg(any(feature = "cuda", feature = "opencl"))]
 #[test]
-fn test_fft_bn256() {
+fn test_fft_bn256_gpu() {
     use rand::{self, Rand, Rng, SeedableRng, StdRng};
     use num_cpus;
 

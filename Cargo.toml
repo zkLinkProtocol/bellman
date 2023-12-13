@@ -47,7 +47,7 @@ ec-gpu-gen = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "m
 fs2 = "0.4.3"
 
 [features]
-default = ["multicore", "plonk", "cuda"]
+default = ["multicore", "plonk"]
 multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []

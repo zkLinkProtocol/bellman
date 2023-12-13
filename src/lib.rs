@@ -44,7 +44,6 @@ mod source;
 mod multiexp;
 mod prefetch;
 
-#[cfg(any(feature = "cuda", feature = "opencl"))]
 pub mod gpulock;
 extern crate fs2;
 

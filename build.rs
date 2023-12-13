@@ -4,11 +4,9 @@ fn main() {
 /// The build script is used to generate the CUDA kernel and OpenCL source at compile-time, if the
 /// `cuda` and/or `opencl` feature is enabled.
 
-use pairing::bn256::{G1Affine, G2Affine, Fq, Fq2, Fr};
-
 #[cfg(any(feature = "cuda", feature = "opencl"))]
 fn gpu_kernel() { 
-  //use blstrs::{Fp, Fp2, G1Affine, G2Affine, Scalar};
+  use pairing::bn256::{G1Affine, G2Affine, Fq, Fq2, Fr};
   use ec_gpu_gen::SourceBuilder;
 
   let source_builder = SourceBuilder::new()

@@ -847,6 +847,16 @@ pub fn dense_multiexp_gpu<G: CurveAffine + GpuName>(
     kern.multiexp(&GPU_POOL, bases, exponents, 0, exponents.len()).map_err(SynthesisError::from)
 }
 
+#[cfg(not(any(feature = "cuda", feature = "opencl")))]
+pub fn dense_multiexp_gpu<G: CurveAffine + GpuName>(
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    kern: &mut MultiexpKernel<G>,
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    Err(SynthesisError::GpuError(ec_gpu_gen::EcError::Simple("gpu feature disable")))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

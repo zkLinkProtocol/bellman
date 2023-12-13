@@ -81,6 +81,12 @@ pub struct LockedFFTKernel<'a, E> where E: Engine {
 }
 
 impl<'a, E> LockedFFTKernel<'a, E> where E: Engine {
+    #[cfg(not(any(feature = "cuda", feature = "opencl")))]
+    pub fn new() -> Option<Self> {
+        None
+    }
+
+    #[cfg(any(feature = "cuda", feature = "opencl"))]
     pub fn new() -> Option<Self> {
         match GPULock::lock() {
             Some(lock) => {
@@ -127,6 +133,12 @@ pub struct LockedMSMKernel<'a, E> where E: Engine {
 }
 
 impl<'a, E> LockedMSMKernel<'a, E> where E: Engine {
+    #[cfg(not(any(feature = "cuda", feature = "opencl")))]
+    pub fn new() -> Option<Self> {
+        None
+    }
+
+    #[cfg(any(feature = "cuda", feature = "opencl"))]
     pub fn new() -> Option<Self> {
         match GPULock::lock() {
             Some(lock) => {
