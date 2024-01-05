@@ -41,13 +41,16 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 # poseidon_hash = {path = "../poseidon_hash", optional = true }
 
 hex = "*"
+itertools = "*"
 
 ec-gpu = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "master", package = "ec-gpu" }
 ec-gpu-gen = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "master", package = "ec-gpu-gen" }
 fs2 = "0.4.3"
 
+gpu-ffi = { git = "https://github.com/matter-labs/era-heavy-ops-service" }
+
 [features]
-default = ["multicore", "plonk"]
+default = ["multicore", "plonk", "allocator"]
 multicore = ["crossbeam", "futures/thread-pool"]
 sonic = ["tiny-keccak", "blake2-rfc"]
 gm17 = []
@@ -57,6 +60,7 @@ plonk = ["lazy_static", "tiny-keccak", "blake2s_const"]
 marlin = ["tiny-keccak", "blake2s_const"]
 wasm = ["web-sys"]
 asm = ["pairing/asm"]
+allocator = []
 
 cuda = ["ec-gpu-gen/cuda"]
 opencl = ["ec-gpu-gen/opencl"]

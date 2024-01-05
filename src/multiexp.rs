@@ -1041,9 +1041,11 @@ mod test {
         use crate::pairing::bn256::Bn256;
         use std::time::Instant;
         use crate::gpulock::LockedMSMKernel;
+        use crate::gpu_prover::{AsyncVec, DeviceMemoryManager, TestConfigs, PolyId, PolyForm};
+        use crate::compact_bn256::G1Affine as CompactG1Affine;
     
-        const MAX_LOG_D: usize = 26;
-        const START_LOG_D: usize = 26;
+        const MAX_LOG_D: usize = 25;
+        const START_LOG_D: usize = 25;
         let mut kern = LockedMSMKernel::<Bn256>::new().unwrap();
         
         let cpupool = Worker::new();
@@ -1085,6 +1087,23 @@ mod test {
             println!("GPU accerlate {}x", cpu_dur/gpu_dur);
             println!("cpu result {:?}", dense.into_affine());
             println!("gpu result {:?}", gpu.into_affine());
+
+            let device_ids = vec![0];
+            let compact_bases = vec![CompactG1Affine::zero(); samples];
+            let mut manager = DeviceMemoryManager::
+                <<Bn256 as ScalarEngine>::Fr, TestConfigs>::init(&device_ids, compact_bases.as_slice()).unwrap();
+                let now = Instant::now();
+            let p = (0..samples).map(|_| <Bn256 as ScalarEngine>::Fr::rand(&mut rng)).collect::<Vec<_>>();
+            let mut p = AsyncVec::from(p.to_vec_in(crate::gpu_prover::cuda_bindings::CudaAllocator));
+            manager
+                .async_copy_to_device(&mut p, PolyId::A, PolyForm::Monomial, 0..samples)
+                .unwrap();
+            let handle = manager.msm(PolyId::A).unwrap();
+            let actual = handle.get_result(&mut manager).unwrap();
+            println!("{:?}", actual);
+            let gpu_dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+            println!("GPU calc took {}ms.", gpu_dur);
+
             bases = [bases.clone(), bases.clone()].concat();
         }
     }

@@ -1,5 +1,7 @@
 #![ allow( dead_code, unused_imports, unused_mut, unused_variables, unused_macros, unused_assignments, unreachable_patterns ) ]
-
+#![feature(get_mut_unchecked)]
+#![feature(nonnull_slice_from_raw_parts)]
+#![cfg_attr(feature = "allocator", feature(allocator_api))]
 #[macro_use]
 
 extern crate cfg_if;
@@ -46,6 +48,8 @@ mod prefetch;
 
 pub mod gpulock;
 extern crate fs2;
+
+pub mod gpu_prover;
 
 #[cfg(test)]
 mod tests;

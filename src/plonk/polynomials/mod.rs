@@ -2628,6 +2628,8 @@ impl<F: PrimeField> Polynomial<F, Coefficients> {
 
 #[cfg(test)]
 mod test {
+    use crate::gpu_prover::{ManagerConfigs, cuda_bindings::CudaAllocator};
+
 
     #[test]
     fn test_shifted_grand_product() {
@@ -2753,33 +2755,53 @@ mod test {
         use crate::plonk::fft::cooley_tukey_ntt::*;
         use crate::gpulock::LockedFFTKernel;
 
-        let max_size = 1 << 26;
+        use crate::compact_bn256::G1Affine as CompactG1Affine;
+        use crate::pairing::CurveAffine;
+        use crate::gpu_prover::{AsyncVec, DeviceMemoryManager, TestConfigs, PolyId, PolyForm};
+
+        let max_size = 1 << 25;
         let worker = Worker::new();
 
         let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
 
         let mut kern = LockedFFTKernel::<Bn256>::new().unwrap();
 
-        for size in vec![1 << 26] {
+        for size in vec![1 << 25] {
             let mut poly = Polynomial::from_coeffs(scalars[..size].to_vec()).unwrap();
             let omegas_bitreversed: BitReversedOmegas<Fr> = BitReversedOmegas::<Fr>::new_for_domain_size(size.next_power_of_two());
             for cpus in vec![256] {
             // for cpus in vec![16, 24, 32] {
 
                 let subworker = Worker::new_with_cpus(cpus);
-                let poly1 = poly.clone();
+                // let poly1 = poly.clone();
                 let poly2 = poly.clone();
-
-                let poly1 = poly1.fft_gpu(
+                
+                let bases = vec![CompactG1Affine::zero(); max_size];
+                let device_ids = vec![0];
+                let mut manager = DeviceMemoryManager::<Fr, TestConfigs>::init(&device_ids, &bases).unwrap();
+                let mut now = Instant::now();
+                let mut p = AsyncVec::from(scalars.to_vec_in(CudaAllocator));
+                manager
+                    .async_copy_to_device(&mut p, PolyId::QA, PolyForm::Monomial, 0..max_size).unwrap();
+                manager
+                    .multigpu_fft_to_free_slot(PolyId::QA, false).unwrap();
+                manager
+                    .copy_from_device_to_host_pinned(PolyId::QA, PolyForm::Values).unwrap();
+                let result = manager
+                    .get_host_slot_values(PolyId::QA, PolyForm::Values).unwrap();
+                let poly1 = Polynomial::from_values(result.to_vec()).unwrap();
+                let gpu_dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+                println!("GPU took {}ms.", gpu_dur);
+                let poly2 = poly2.fft_gpu(
                     &subworker,
                     &Fr::one(),
                     &mut kern
                 ).unwrap();
-                let poly2 = poly2.fft_using_bitreversed_ntt(
-                    &subworker,
-                    &omegas_bitreversed,
-                    &Fr::one()
-                ).unwrap();
+                // let poly2 = poly2.fft_using_bitreversed_ntt(
+                //     &subworker,
+                //     &omegas_bitreversed,
+                //     &Fr::one()
+                // ).unwrap();
                 // println!("{:?}", poly1);
                 // println!("{:?}", poly2);
                 assert!(poly1 == poly2);
@@ -2801,32 +2823,52 @@ mod test {
         use crate::plonk::fft::cooley_tukey_ntt::*;
         use crate::gpulock::LockedFFTKernel;
 
-        let max_size = 1 << 26;
+        use crate::compact_bn256::G1Affine as CompactG1Affine;
+        use crate::pairing::CurveAffine;
+        use crate::gpu_prover::{AsyncVec, DeviceMemoryManager, TestConfigs, PolyId, PolyForm};
+
+        let max_size = 1 << 25;
         let worker = Worker::new();
 
         let scalars = crate::kate_commitment::test::make_random_field_elements::<Fr>(&worker, max_size);
 
         let mut kern = LockedFFTKernel::<Bn256>::new().unwrap();
 
-        for size in vec![1 << 26] {
+        for size in vec![1 << 25] {
             let mut poly = Polynomial::from_values(scalars[..size].to_vec()).unwrap();
             let omegas_inv_bitreversed = <OmegasInvBitreversed::<Fr> as CTPrecomputations::<Fr>>::new_for_domain_size(size.next_power_of_two());
             for cpus in vec![256] {
             // for cpus in vec![16, 24, 32] {
                 let subworker = Worker::new_with_cpus(cpus);
-                let poly1 = poly.clone();
+                // let poly1 = poly.clone();
                 let poly2 = poly.clone();
 
-                let poly1 = poly1.ifft_gpu(
+                let bases = vec![CompactG1Affine::zero(); max_size];
+                let device_ids = vec![0];
+                let mut manager = DeviceMemoryManager::<Fr, TestConfigs>::init(&device_ids, &bases).unwrap();
+                let mut now = Instant::now();
+                let mut p = AsyncVec::from(scalars.to_vec_in(CudaAllocator));
+                manager
+                    .async_copy_to_device(&mut p, PolyId::QA, PolyForm::Values, 0..max_size).unwrap();
+                manager
+                    .multigpu_ifft_to_free_slot(PolyId::QA, false).unwrap();
+                manager
+                    .copy_from_device_to_host_pinned(PolyId::QA, PolyForm::Monomial).unwrap();
+                let result = manager
+                    .get_host_slot_values(PolyId::QA, PolyForm::Monomial).unwrap();
+                let poly1 = Polynomial::from_coeffs(result.to_vec()).unwrap();
+                let gpu_dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+                println!("GPU took {}ms.", gpu_dur);
+                let poly2 = poly2.ifft_gpu(
                     &subworker,
                     &Fr::one(),
                     &mut kern
                 ).unwrap();
-                let poly2 = poly2.ifft_using_bitreversed_ntt(
-                    &subworker,
-                    &omegas_inv_bitreversed,
-                    &Fr::one()
-                ).unwrap();
+                // let poly2 = poly2.ifft_using_bitreversed_ntt(
+                //     &subworker,
+                //     &omegas_inv_bitreversed,
+                //     &Fr::one()
+                // ).unwrap();
                 // println!("{:?}", poly1);
                 // println!("{:?}", poly2);
                 assert!(poly1 == poly2);
