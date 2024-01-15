@@ -7,6 +7,8 @@ pub mod setup;
 pub mod proof;
 pub mod verifier;
 pub mod trees;
+pub mod selector_optimized_width4_main_gate;
+pub mod width4_main_gate_with_dnext;
 
 #[cfg(feature = "redshift")]
 pub mod redshift;
