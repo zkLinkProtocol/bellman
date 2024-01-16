@@ -43,6 +43,14 @@ pub struct Polynomial<F: PrimeField, P: PolynomialForm> {
 
 
 impl<F: PrimeField, P: PolynomialForm> Polynomial<F, P> {
+    // Calculate the number of bytes needed for storage
+    pub fn storage_size(&self) -> usize {
+        let mut bytes_len = 0usize;
+        bytes_len += 8;
+        bytes_len += self.coeffs.len() * 32;
+        bytes_len
+    }
+    
     pub fn size(&self) -> usize {
         self.coeffs.len()
     }

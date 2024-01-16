@@ -129,6 +129,25 @@ use crate::byteorder::WriteBytesExt;
 use crate::byteorder::BigEndian;
 
 impl TranspilationVariant {
+    // Calculate the number of bytes needed for storage
+    pub fn storage_size(&self) -> usize {
+        let mut bytes_len = 0usize;
+        bytes_len += 1;
+        match self {
+            TranspilationVariant::IntoAdditionGate(_) => {
+                bytes_len += 1;
+            }
+            TranspilationVariant::MergeLinearCombinations(..) => {
+                bytes_len += 2;
+            },
+            TranspilationVariant::IntoMultiplicationGate(_) => {
+                bytes_len += 3;
+            },
+            _ => {}
+        }
+        bytes_len
+    }
+    
     pub fn into_u8(&self) -> u8 {
         match self {
             TranspilationVariant::IntoQuadraticGate => 1u8,
