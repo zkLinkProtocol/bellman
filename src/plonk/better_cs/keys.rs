@@ -15,6 +15,7 @@ use std::marker::PhantomData;
 use super::utils::*;
 use super::LDE_FACTOR;
 
+#[derive(Debug, Clone, Eq)]
 pub struct SetupPolynomials<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub n: usize,
     pub num_inputs: usize,
@@ -23,6 +24,16 @@ pub struct SetupPolynomials<E: Engine, P: PlonkConstraintSystemParams<E>> {
     pub permutation_polynomials: Vec<Polynomial<E::Fr, Coefficients>>,
 
     pub(crate) _marker: std::marker::PhantomData<P>,
+}
+
+impl<E: Engine, P: PlonkConstraintSystemParams<E>> PartialEq for SetupPolynomials<E, P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.n == other.n
+        && self.num_inputs == other.num_inputs
+        && self.selector_polynomials == other.selector_polynomials
+        && self.next_step_selector_polynomials == other.next_step_selector_polynomials
+        && self.permutation_polynomials == other.permutation_polynomials
+    }
 }
 
 use crate::byteorder::BigEndian;
