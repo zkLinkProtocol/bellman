@@ -40,8 +40,6 @@ blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_co
 # poseidon_hash = {path = "../poseidon_hash", optional = true }
 
 hex = "*"
-serde = { version = "1.0.194", features = ["derive"] }
-smallvec = "1.11.2"
 
 [features]
 default = ["multicore", "plonk"]
