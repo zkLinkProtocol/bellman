@@ -27,6 +27,10 @@ use super::SynthesisError;
 
 use cfg_if;
 
+use ec_gpu_gen::multiexp::MultiexpKernel;
+use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+use ec_gpu::GpuName;
+
 /// This genious piece of code works in the following way:
 /// - choose `c` - the bit length of the region that one thread works on
 /// - make `2^c - 1` buckets and initialize them with `G = infinity` (that's equivalent of zero)
@@ -834,6 +838,30 @@ fn get_window_size_for_length(length: usize, chunk_length: usize) -> u32 {
     };
 }
 
+lazy_static! {
+    static ref GPU_POOL: ec_gpu_gen::threadpool::Worker = ec_gpu_gen::threadpool::Worker::new();
+}
+
+#[cfg(any(feature = "cuda", feature = "opencl"))]
+pub fn dense_multiexp_gpu<G: CurveAffine + GpuName>(
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    kern: &mut MultiexpKernel<G>,
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    kern.multiexp(&GPU_POOL, bases, exponents, 0, exponents.len()).map_err(SynthesisError::from)
+}
+
+#[cfg(not(any(feature = "cuda", feature = "opencl")))]
+pub fn dense_multiexp_gpu<G: CurveAffine + GpuName>(
+    bases: & [G],
+    exponents: & [<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr],
+    kern: &mut MultiexpKernel<G>,
+) -> Result<<G as CurveAffine>::Projective, SynthesisError>
+{
+    Err(SynthesisError::GpuError(ec_gpu_gen::EcError::Simple("gpu feature disable")))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1011,84 +1039,58 @@ mod test {
         }
     }
 
+    #[cfg(any(feature = "cuda", feature = "opencl"))]
     #[test]
-    fn bench_bls_addition() {
-        use rand::{self, Rand};
-        use crate::pairing::bls12_381::Bls12;
-
-        let size = 100000u32;
-        let rng = &mut rand::thread_rng();
-
-        let A = (0..size).map(|_| <Bls12 as Engine>::G1::rand(rng)).collect::<Vec<_>>();
-        let B = (0..size).map(|_| <Bls12 as Engine>::G1::rand(rng)).collect::<Vec<_>>();
-
-        let start = std::time::Instant::now();
-
-        let C = (0..size).map(|i| {
-            let mut temp = A[i as usize];
-            temp.add_assign(&B[i as usize]);
-            temp
-        }).collect::<Vec<_>>();
-
-        let duration_ns = start.elapsed().as_nanos() as f64;
-        println!("Elapsed {} ns for {} samples", duration_ns, size);
-        let time_per_sample = duration_ns/(size as f64);
-        println!("Elapsed {} ns per sample", time_per_sample);
-    }
+    fn gpu_multiexp_consistency_bn256() {
+        use rand::{self, Rand, Rng, SeedableRng, StdRng};
+        use crate::pairing::bn256::Bn256;
+        use std::time::Instant;
+        use crate::gpulock::LockedMSMKernel;
     
-    #[test]
-    fn bench_bls_doubling() {
-        use rand::{self, Rand};
-        use crate::pairing::bls12_381::Bls12;
-
-        let size = 100000u32;
-        let rng = &mut rand::thread_rng();
-
-        let A = (0..size).map(|_| <Bls12 as Engine>::G1::rand(rng)).collect::<Vec<_>>();
-
-        let start = std::time::Instant::now();
-
-        let B = (0..size).map(|i| {
-            let mut temp = A[i as usize];
-            temp.double();
-            temp
-        }).collect::<Vec<_>>();
-
-        let duration_ns = start.elapsed().as_nanos() as f64;
-        println!("Elapsed {} ns for {} samples", duration_ns, size);
-        let time_per_sample = duration_ns/(size as f64);
-        println!("Elapsed {} ns per sample", time_per_sample);
-    }
-
-    #[test]
-    fn bench_Pippenger_with_small_chunk() {
-        use rand::{self, Rand};
-        use crate::pairing::bls12_381::Bls12;
-
-        let size = 1000000u32;
-        let rng = &mut rand::thread_rng();
-
-        let v = Arc::new((0..size).map(|_| <Bls12 as ScalarEngine>::Fr::rand(rng).into_repr()).collect::<Vec<_>>());
-        let g = Arc::new((0..size).map(|_| <Bls12 as Engine>::G1::rand(rng).into_affine()).collect::<Vec<_>>());
-
-        let pool = Worker::new();
-        println!("loading {} cpus", pool.cpus);
-
-        let start = std::time::Instant::now();
-
-        let fast = block_on(
-            multiexp(
-                &pool,
-                (g, 0),
-                FullDensity,
-                v
-            )
-        ).unwrap();
-
-        let duration_ns = start.elapsed().as_nanos() as f64;
-        println!("Elapsed {} ns for Pippenger", duration_ns);
-        let time_per_sample = duration_ns/(size as f64);
-        println!("Elapsed {} ns per sample", time_per_sample);
-
+        const MAX_LOG_D: usize = 26;
+        const START_LOG_D: usize = 26;
+        let mut kern = LockedMSMKernel::<Bn256>::new().unwrap();
+        
+        let cpupool = Worker::new();
+    
+        // let seed: &[_] = &[1, 2, 3, 4];
+        // let mut rng: StdRng = SeedableRng::from_seed(seed);
+        let mut rng = rand::thread_rng();
+    
+        let mut bases = (0..(1 << 10))
+            .map(|_| <Bn256 as Engine>::G1::rand(&mut rng).into_affine())
+            .collect::<Vec<_>>();
+    
+        for _ in 10..START_LOG_D {
+            bases = [bases.clone(), bases.clone()].concat();
+        }
+    
+        for log_d in START_LOG_D..=MAX_LOG_D {
+            let samples = 1 << log_d;
+            println!("Testing Multiexp for {} elements...", samples);
+            let g: Arc<Vec<_>> = Arc::new(bases.clone());
+            let v =  (0..samples).map(|_| <Bn256 as ScalarEngine>::Fr::rand(&mut rng).into_repr()).collect::<Vec<_>>();
+    
+            let mut now = Instant::now();
+            // println!("base {:?}", g);
+            // println!("exp {:?}", v);
+            let dense = dense_multiexp(
+                &cpupool,
+                &g,
+                &v,
+            ).unwrap();
+            let cpu_dur = now.elapsed().as_secs() * 1000 as u64 + now.elapsed().subsec_millis() as u64;
+            println!("CPU took {}ms.", cpu_dur);
+    
+            let mut now = Instant::now();
+            let gpu = dense_multiexp_gpu(&g, &v, &mut kern).unwrap();
+            let gpu_dur = now.elapsed().as_secs() * 1000 + now.elapsed().subsec_millis() as u64;
+            println!("GPU took {}ms.", gpu_dur);
+    
+            println!("GPU accerlate {}x", cpu_dur/gpu_dur);
+            println!("cpu result {:?}", dense.into_affine());
+            println!("gpu result {:?}", gpu.into_affine());
+            bases = [bases.clone(), bases.clone()].concat();
+        }
     }
 }

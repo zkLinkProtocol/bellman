@@ -18,12 +18,13 @@ bit-vec = { version = "0.6", features = ["serde"] }
 cfg-if = "1.*"
 smallvec = "1.10"
 arrayvec = "0.7"
+
 byteorder = "1"
 num_cpus = "1"
 serde = {version = "1", features = ["derive", "rc"]}
 
-pairing = {package = "pairing_ce", version = "0.28.*" }
-# pairing = {package = "pairing_ce", path = "../pairing"}
+# pairing = {package = "pairing_ce", version = "0.28.*" }
+pairing = { git = "https://github.com/zkLinkProtocol/pairing.git", branch = "dev", package = "pairing_ce" }
 
 futures = {package = "futures", version = "0.3", default_features = false, features = ["executor"]}
 crossbeam = {version = "0.7", optional = true}
@@ -35,6 +36,10 @@ blake2s_simd = {version = "0.5"}
 lazy_static = {version = "1", optional = true}
 blake2s_const = {version = "0.6", optional = true, path = "./src/plonk/blake2_const/blake2s/"}
 hex = "*"
+
+ec-gpu = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "dev", package = "ec-gpu" }
+ec-gpu-gen = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "dev", package = "ec-gpu-gen" }
+fs2 = "0.4.3"
 
 [features]
 default = ["multicore", "plonk"]
@@ -49,8 +54,15 @@ wasm = ["web-sys"]
 asm = ["pairing/asm"]
 allocator = []
 
+cuda = ["ec-gpu-gen/cuda"]
+opencl = ["ec-gpu-gen/opencl"]
+
 [profile.release]
 debug = true
 
 [profile.bench]
 debug = true
+
+[build-dependencies]
+pairing = { git = "https://github.com/zkLinkProtocol/pairing.git", branch = "dev", package = "pairing_ce" }
+ec-gpu-gen = { git = "https://github.com/zkLinkProtocol/ec-gpu.git", branch = "dev", package = "ec-gpu-gen" }

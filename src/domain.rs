@@ -17,7 +17,8 @@ use crate::pairing::{
 
 use crate::pairing::ff::{
     Field, 
-    PrimeField
+    PrimeField,
+    ScalarEngine
 };
 
 use super::{
@@ -546,29 +547,62 @@ fn test_field_element_multiplication_bn256() {
     println!("Tested on {} samples on {} CPUs with {} ns per field element multiplication", SAMPLES, cpus, time_per_sample);
 }
 
+use ec_gpu_gen::fft::FftKernel;
+use ec_gpu_gen::rust_gpu_tools::{program_closures, Device, Program};
+use ec_gpu::GpuName;
+use pairing::bn256::Bn256;
+use pairing::bn256::Fr;
+
+#[cfg(any(feature = "cuda", feature = "opencl"))]
 #[test]
-fn test_fft_bn256() {
-    use rand::{self, Rand};
-    use crate::pairing::bn256::Bn256;
-    use crate::pairing::bn256::Fr;
+fn test_fft_bn256_gpu() {
+    use rand::{self, Rand, Rng, SeedableRng, StdRng};
     use num_cpus;
 
     let cpus = num_cpus::get();
-    const SAMPLES: usize = 1 << 27;
+    const SAMPLES: usize = 1 << 26;
 
-    let rng = &mut rand::thread_rng();
-    let v1 = (0..SAMPLES).map(|_| Scalar::<Bn256>(Fr::rand(rng))).collect::<Vec<_>>();
+    // let seed: &[_] = &[1, 2, 3, 4];
+    // let mut rng: StdRng = SeedableRng::from_seed(seed);
+    let mut rng = rand::thread_rng();
+    let cpu_data = (0..SAMPLES).map(|_| Scalar::<Bn256>(Fr::rand(&mut rng))).collect::<Vec<_>>();
+    let gpu_data = cpu_data.clone();
+    let mut cpu = EvaluationDomain::from_coeffs(cpu_data).unwrap();
+    let mut gpu = EvaluationDomain::from_coeffs(gpu_data).unwrap();
 
-    let mut v1 = EvaluationDomain::from_coeffs(v1).unwrap();
-
+    let devices = Device::all();
+    let programs = devices
+        .iter()
+        .map(|device| ec_gpu_gen::program!(device))
+        .collect::<Result<_, _>>()
+        .expect("Cannot create programs!");
+    let mut kern = FftKernel::<<Bn256 as ScalarEngine>::Fr>::create(programs)
+        .expect("Cannot initialize kernel!");
     let pool = Worker::new();
 
-    let start = std::time::Instant::now();
+    let mut now = std::time::Instant::now();
+    cpu.fft(&pool);
+    let cpu_duration_ns = now.elapsed().as_nanos() as f64;
 
-    v1.ifft(&pool);
+    // for val in gpu.coeffs.iter() {
+    //     println!("{:?}", val.0);
+    // }
+    // println!("size {} {}", std::mem::size_of::<Fr>(), std::mem::size_of::<Scalar<Bn256>>());
+    let mut gpu_data_ref: Vec<Fr> = unsafe { std::mem::transmute(gpu.coeffs) };
+    // println!("Converted Data: {:?}", gpu_conv_data);
+    println!("omega {:?}", &[gpu.omega]);
+    let mut now = std::time::Instant::now();
+    kern.radix_fft_many(&mut [&mut gpu_data_ref], &[gpu.omega], &[gpu.exp], false);
+    let gpu_duration_ns = now.elapsed().as_nanos() as f64;
 
-    let duration_ns = start.elapsed().as_nanos() as f64;
-    println!("Elapsed {} ns for {} samples", duration_ns, SAMPLES);
-    let time_per_sample = duration_ns/(SAMPLES as f64);
+    println!("CPU Elapsed {} ns for {} samples", cpu_duration_ns, SAMPLES);
+    let time_per_sample = cpu_duration_ns/(SAMPLES as f64);
     println!("Tested on {} samples on {} CPUs with {} ns per field element multiplication", SAMPLES, cpus, time_per_sample);
+
+    println!("GPU Elapsed {} ns for {} samples", gpu_duration_ns, SAMPLES);
+    let time_per_sample = gpu_duration_ns/(SAMPLES as f64);
+    println!("Tested on {} samples on GPU with {} ns per field element multiplication", SAMPLES, time_per_sample);
+
+    let mut cpu_data_ref: Vec<Fr> = unsafe { std::mem::transmute(cpu.coeffs) };
+    assert!(cpu_data_ref == gpu_data_ref);
 }

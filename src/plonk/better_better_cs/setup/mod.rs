@@ -20,6 +20,8 @@ use std::io::{Read, Write};
 
 use crate::plonk::better_cs::keys::*;
 
+use crate::gpulock::{LockedFFTKernel, LockedMSMKernel};
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct Setup<E: Engine, C: Circuit<E>> {
     pub n: usize,
@@ -228,6 +230,7 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
             _marker: std::marker::PhantomData,
         };
 
+        let mut gpu_kern = LockedMSMKernel::<E>::new();
         for (p, c) in vec![
             (&setup.gate_setup_monomials, &mut new.gate_setup_commitments),
             (&setup.gate_selectors_monomials, &mut new.gate_selectors_commitments),
@@ -235,18 +238,18 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
             (&setup.lookup_tables_monomials, &mut new.lookup_tables_commitments),
         ].into_iter() {
             for p in p.iter() {
-                let commitment = commit_using_monomials(p, &crs, &worker)?;
+                let commitment = commit_using_monomials_gpu(p, &crs, &worker, &mut gpu_kern)?;
                 c.push(commitment);
             }
         }
 
         if let Some(p) = setup.lookup_selector_monomial.as_ref() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = commit_using_monomials_gpu(p, &crs, &worker, &mut gpu_kern)?;
             new.lookup_selector_commitment = Some(commitment);
         }
 
         if let Some(p) = setup.lookup_table_type_monomial.as_ref() {
-            let commitment = commit_using_monomials(p, &crs, &worker)?;
+            let commitment = commit_using_monomials_gpu(p, &crs, &worker, &mut gpu_kern)?;
             new.lookup_table_type_commitment = Some(commitment);
         }
 
@@ -254,7 +257,6 @@ impl<E: Engine, C: Circuit<E>> VerificationKey<E, C> {
 
         // new.non_residues
         //     .extend(make_non_residues::<E::Fr>(state_width - 1));
-
         Ok(new)
     }
 

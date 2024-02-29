@@ -1,3 +1,5 @@
+use ec_gpu_gen::fft::FftKernel;
+
 use super::*;
 
 #[derive(Clone, Debug, Hash, Default, serde::Serialize, serde::Deserialize)]
@@ -474,6 +476,190 @@ impl<E: Engine> MainGate<E> for SelectorOptimizedWidth4MainGateWithDNext {
                 coset_factor, 
                 monomials_storage, 
                 poly_storage
+            )?;
+        }
+
+        let ldes_storage = &*poly_storage;
+
+        // Q_A * A
+        let q_a_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 0)),
+            ldes_storage
+        );
+        let a_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
+            ldes_storage
+        );
+        let mut tmp = q_a_ref.clone();
+        tmp.mul_assign(&worker, a_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_a_ref);
+        drop(a_ref);
+
+        // Q_B * B
+        let q_b_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 1)),
+            ldes_storage
+        );
+        let b_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_b_ref);
+        tmp.mul_assign(&worker, b_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_b_ref);
+        drop(b_ref);
+
+        // // Q_C * C
+        let q_c_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 2)),
+            ldes_storage
+        );
+        let c_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_c_ref);
+        tmp.mul_assign(&worker, c_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_c_ref);
+        drop(c_ref);
+
+        // // Q_D * D
+        let q_d_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 3)),
+            ldes_storage
+        );
+        let d_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(3)),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_d_ref);
+        tmp.mul_assign(&worker, d_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_d_ref);
+        drop(d_ref);
+
+        // Q_M_AB * A * B
+        let q_m_ab_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, Self::AB_MULTIPLICATION_TERM_COEFF_INDEX)),
+            ldes_storage
+        );
+        let a_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
+            ldes_storage
+        );
+        let b_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(1)),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_m_ab_ref);
+        tmp.mul_assign(&worker, a_ref);
+        tmp.mul_assign(&worker, b_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_m_ab_ref);
+        drop(a_ref);
+        drop(b_ref);
+
+        // Q_M_AC * A * C
+        let q_m_ac_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, Self::AC_MULTIPLICATION_TERM_COEFF_INDEX)),
+            ldes_storage
+        );
+        let a_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(0)),
+            ldes_storage
+        );
+        let c_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::VariablesPolynomial(2)),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_m_ac_ref);
+        tmp.mul_assign(&worker, a_ref);
+        tmp.mul_assign(&worker, c_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_m_ac_ref);
+        drop(a_ref);
+        drop(c_ref);
+
+        // Q_D_next * D_next
+        let q_d_next_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, 7)),
+            ldes_storage
+        );
+        let d_next_ref = get_from_map_unchecked(
+            PolynomialInConstraint::from_id_and_dilation(PolyIdentifier::VariablesPolynomial(3), 1),
+            ldes_storage
+        );
+        tmp.reuse_allocation(q_d_next_ref);
+        tmp.mul_assign(&worker, d_next_ref);
+        t_1.add_assign(&worker, &tmp);
+        drop(q_d_next_ref);
+        drop(d_next_ref);
+
+        t_1.scale(&worker, challenges[0]);
+
+        Ok(t_1)
+    }
+
+    fn contribute_into_quotient_for_public_inputs_gpu<'a, 'b>(
+        &self, 
+        domain_size: usize,
+        public_inputs: &[E::Fr],
+        poly_storage: &mut AssembledPolynomialStorage<'a, E>,
+        monomials_storage: & AssembledPolynomialStorageForMonomialForms<'b, E>,
+        challenges: &[E::Fr],
+        worker: &Worker,
+        kern: &mut FftKernel<E::Fr>
+    ) -> Result<Polynomial<E::Fr, Values>, SynthesisError> {
+        assert!(domain_size.is_power_of_two());
+        assert_eq!(challenges.len(), <Self as GateInternal<E>>::num_quotient_terms(&self));
+
+        let lde_factor = poly_storage.lde_factor;
+        assert!(lde_factor.is_power_of_two());
+
+        assert!(poly_storage.is_bitreversed);
+
+        let coset_factor = E::Fr::multiplicative_generator();
+        // Include the public inputs
+        let mut inputs_poly = Polynomial::<E::Fr, Values>::new_for_size(domain_size)?;
+        for (idx, &input) in public_inputs.iter().enumerate() {
+            inputs_poly.as_mut()[idx] = input;
+        }
+        // go into monomial form
+
+        let mut inputs_poly = inputs_poly.ifft_gpu(&worker, &E::Fr::one(), kern)?;
+
+        // add constants selectors vector
+        let name = <Self as GateInternal<E>>::name(&self);
+
+        let key = PolyIdentifier::GateSetupPolynomial(name, Self::CONSTANT_TERM_COEFF_INDEX);
+        let constants_poly_ref = monomials_storage.get_poly(key);
+        inputs_poly.add_assign(&worker, constants_poly_ref);
+        drop(constants_poly_ref);
+
+        // LDE
+        let mut t_1 = inputs_poly.bitreversed_lde_using_gpu_fft(
+            &worker, 
+            lde_factor, 
+            &coset_factor,
+            kern
+        )?;
+
+        for &p in <Self as GateInternal<E>>::all_queried_polynomials(&self).into_iter() {
+            // skip public constants poly (was used in public inputs)
+            if p == PolynomialInConstraint::from_id(PolyIdentifier::GateSetupPolynomial(name, Self::CONSTANT_TERM_COEFF_INDEX)) {
+                continue;
+            }
+            ensure_in_map_or_create_gpu(&worker, 
+                p, 
+                domain_size, 
+                lde_factor, 
+                coset_factor, 
+                monomials_storage, 
+                poly_storage,
+                kern
             )?;
         }
 

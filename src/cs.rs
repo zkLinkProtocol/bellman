@@ -7,6 +7,8 @@ use std::error::Error;
 use std::io;
 use std::marker::PhantomData;
 
+use ec_gpu_gen::EcError;
+
 /// Computations are expressed in terms of arithmetic circuits, in particular
 /// rank-1 quadratic constraint systems. The `Circuit` trait represents a
 /// circuit that can be synthesized. The `synthesize` method is called during
@@ -175,7 +177,9 @@ pub enum SynthesisError {
     /// During verification, our verifying key was malformed.
     MalformedVerifyingKey,
     /// During CRS generation, we observed an unconstrained auxillary variable
-    UnconstrainedVariable
+    UnconstrainedVariable,
+    /// During synthesis, we encountered error from GPU calculation
+    GpuError(EcError)
 }
 
 impl From<io::Error> for SynthesisError {
@@ -184,6 +188,11 @@ impl From<io::Error> for SynthesisError {
     }
 }
 
+impl From<EcError> for SynthesisError {
+    fn from(e: EcError) -> SynthesisError {
+        SynthesisError::GpuError(e)
+    }
+}
 
 impl SynthesisError {
     pub fn self_description(&self) -> &str {
@@ -195,7 +204,8 @@ impl SynthesisError {
             SynthesisError::UnexpectedIdentity => "encountered an identity element in the CRS",
             SynthesisError::IoError(_) => "encountered an I/O error",
             SynthesisError::MalformedVerifyingKey => "malformed verifying key",
-            SynthesisError::UnconstrainedVariable => "auxillary variable was unconstrained"
+            SynthesisError::UnconstrainedVariable => "auxillary variable was unconstrained",
+            SynthesisError::GpuError(_) => "encountered a GPU error",
         }
     }
 }

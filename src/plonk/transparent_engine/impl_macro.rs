@@ -98,6 +98,12 @@ macro_rules! transparent_engine_impl {
             }
         }
 
+        impl ec_gpu::GpuName for $fr {
+            fn name() -> String {
+                ec_gpu::name!()
+            }
+        }
+
         #[derive(Copy, Clone)]
         pub struct FakePoint;
 

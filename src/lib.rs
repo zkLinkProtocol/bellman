@@ -46,6 +46,9 @@ mod source;
 mod multiexp;
 mod prefetch;
 
+pub mod gpulock;
+extern crate fs2;
+
 #[cfg(test)]
 mod tests;
 

@@ -23,6 +23,7 @@ pub use super::data_structures::*;
 pub use super::setup::*;
 
 pub use super::gates::main_gate_with_d_next::*;
+use ec_gpu_gen::fft::FftKernel;
 
 pub trait SynthesisMode: Clone + Send + Sync + std::fmt::Debug {
     const PRODUCE_WITNESS: bool;
@@ -186,6 +187,16 @@ pub trait MainGate<E: Engine>: Gate<E> {
         omegas_bitreversed: &BitReversedOmegas<E::Fr>,
         omegas_inv_bitreversed: &OmegasInvBitreversed<E::Fr>,
         worker: &Worker
+    ) -> Result<Polynomial<E::Fr, Values>, SynthesisError>;
+    fn contribute_into_quotient_for_public_inputs_gpu<'a, 'b>(
+        &self, 
+        domain_size: usize,
+        public_inputs: &[E::Fr],
+        poly_storage: &mut AssembledPolynomialStorage<'b, E>,
+        monomial_storage: & AssembledPolynomialStorageForMonomialForms<'a, E>,
+        challenges: &[E::Fr],
+        worker: &Worker,
+        kern: &mut FftKernel<E::Fr>
     ) -> Result<Polynomial<E::Fr, Values>, SynthesisError>;
     fn contribute_into_linearization_for_public_inputs<'a>(
         &self, 
@@ -558,6 +569,156 @@ pub fn ensure_in_map_or_create<'a, 'b, E: Engine>(
                 lde_factor, 
                 omegas_bitreversed, 
                 &coset_factor
+            )?;
+        
+            let final_lde = if dilation_value != 0 {
+                let rotation_factor = dilation_value * lde_factor;
+                let f = lde.clone_shifted_assuming_bitreversed(rotation_factor, worker)?;
+                drop(lde);
+        
+                f
+            } else {
+                lde
+            };
+
+            // insert back
+
+            let proxy = PolynomialProxy::from_owned(final_lde);
+
+            if dilation_value == 0 {
+                match key {
+                    k @ PolyIdentifier::VariablesPolynomial(..) => {
+                        ldes_map.state_map.insert(k, proxy);
+                    },
+                    k @ PolyIdentifier::WitnessPolynomial(..) => {
+                        ldes_map.witness_map.insert(k, proxy);
+                    },           
+                    k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                        ldes_map.setup_map.insert(k, proxy);
+                    },
+                    _ => {
+                        unreachable!();
+                    }
+                }
+            } else {
+                ldes_map.scratch_space.insert(key_with_dilation, proxy);
+            };
+
+            done = true;
+        }
+
+        assert!(done);
+    }
+
+    Ok(())
+}
+
+pub fn ensure_in_map_or_create_gpu<'a, 'b, E: Engine>(
+    worker: &Worker,
+    key_with_dilation: PolynomialInConstraint,
+    domain_size: usize,
+    lde_factor: usize,
+    coset_factor: E::Fr,
+    monomials_map: & AssembledPolynomialStorageForMonomialForms<'a, E>,
+    ldes_map: &mut AssembledPolynomialStorage<'b, E>,
+    kern: &mut FftKernel<E::Fr>,
+) -> Result<(), SynthesisError> {
+    assert!(ldes_map.is_bitreversed);
+    assert_eq!(ldes_map.lde_factor, lde_factor);
+
+    let (key, dilation_value) = key_with_dilation.into_id_and_raw_dilation();
+
+    let mut contains_in_scratch_or_maps = false;
+
+    if dilation_value == 0 {
+        match key {
+            k @ PolyIdentifier::VariablesPolynomial(..) => {
+                if ldes_map.state_map.get(&k).is_some() {
+                    contains_in_scratch_or_maps = true;
+                }
+            },
+            k @ PolyIdentifier::WitnessPolynomial(..) => {
+                if ldes_map.witness_map.get(&k).is_some() {
+                    contains_in_scratch_or_maps = true;
+                }
+            },           
+            k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                if ldes_map.setup_map.get(&k).is_some() {
+                    contains_in_scratch_or_maps = true;
+                }
+            },
+            _ => {
+                unreachable!();
+            }
+        }
+    } else {
+        if ldes_map.scratch_space.get(&key_with_dilation).is_some() {
+            contains_in_scratch_or_maps = true;
+        }
+    };
+
+    if !contains_in_scratch_or_maps {
+        // optimistic case: we have already calculated value without dilation
+        // but now need to just rotate
+        let lde_without_dilation = match key {
+            k @ PolyIdentifier::VariablesPolynomial(..) => {
+                ldes_map.state_map.get(&k)
+            },
+            k @ PolyIdentifier::WitnessPolynomial(..) => {
+                ldes_map.witness_map.get(&k)
+            },           
+            k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                ldes_map.setup_map.get(&k)
+            },
+            _ => {
+                unreachable!();
+            }
+        };
+
+        let mut done = false;
+
+        let rotated = if let Some(lde) = lde_without_dilation.as_ref() {
+            let rotation_factor = dilation_value * lde_factor;
+            let f = lde.as_ref().clone_shifted_assuming_bitreversed(rotation_factor, worker)?;
+            drop(lde);
+
+            Some(f)
+        } else {
+            None
+        };
+
+        drop(lde_without_dilation);
+
+        if let Some(f) = rotated {
+            let proxy = PolynomialProxy::from_owned(f);
+            ldes_map.scratch_space.insert(key_with_dilation, proxy);
+
+            done = true;
+        };
+
+        if !done {
+            // perform LDE and push
+
+            let monomial = match key {
+                k @ PolyIdentifier::VariablesPolynomial(..) => {
+                    monomials_map.state_map.get(&k).unwrap().as_ref()
+                },
+                k @ PolyIdentifier::WitnessPolynomial(..) => {
+                    monomials_map.witness_map.get(&k).unwrap().as_ref()
+                },           
+                k @ PolyIdentifier::GateSetupPolynomial(..) => {
+                    monomials_map.setup_map.get(&k).unwrap().as_ref()
+                },
+                _ => {
+                    unreachable!();
+                }
+            };
+        
+            let lde = monomial.clone().bitreversed_lde_using_gpu_fft(
+                &worker, 
+                lde_factor, 
+                &coset_factor,
+                kern
             )?;
         
             let final_lde = if dilation_value != 0 {
@@ -3014,6 +3175,62 @@ impl_assembly!{
 
             Ok(monomial_storage)
         }
+
+        pub fn create_monomial_storage_gpu<'a, 'b>(
+            worker: &Worker,
+            value_form_storage: &'a AssembledPolynomialStorage<E>,
+            include_setup: bool,
+            kern: &mut FftKernel<E::Fr>, 
+        ) -> Result<AssembledPolynomialStorageForMonomialForms<'b, E>, SynthesisError> {
+            assert_eq!(value_form_storage.lde_factor, 1);
+            assert!(value_form_storage.is_bitreversed == false);
+
+            let mut monomial_storage = AssembledPolynomialStorageForMonomialForms::<E>::new();
+
+            for (&k, v) in value_form_storage.state_map.iter() {
+                let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_gpu(
+                    &worker, 
+                    &E::Fr::one(),
+                    kern
+                )?;
+                let mon_form = PolynomialProxy::from_owned(mon_form);
+                monomial_storage.state_map.insert(k, mon_form);
+            }
+
+            for (&k, v) in value_form_storage.witness_map.iter() {
+                let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_gpu(
+                    &worker, 
+                    &E::Fr::one(),
+                    kern
+                )?;
+                let mon_form = PolynomialProxy::from_owned(mon_form);
+                monomial_storage.witness_map.insert(k, mon_form);
+            }
+
+            if include_setup {
+                for (&k, v) in value_form_storage.gate_selectors.iter() {
+                    let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_gpu(
+                        &worker, 
+                        &E::Fr::one(),
+                        kern
+                    )?;
+                    let mon_form = PolynomialProxy::from_owned(mon_form);
+                    monomial_storage.gate_selectors.insert(k, mon_form);
+                }
+
+                for (&k, v) in value_form_storage.setup_map.iter() {
+                    let mon_form = v.as_ref().clone_padded_to_domain()?.ifft_gpu(
+                        &worker, 
+                        &E::Fr::one(),
+                        kern
+                    )?;
+                    let mon_form = PolynomialProxy::from_owned(mon_form);
+                    monomial_storage.setup_map.insert(k, mon_form);
+                }
+            }
+
+            Ok(monomial_storage)
+        }    
     }
 }
 

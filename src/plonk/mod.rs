@@ -30,6 +30,7 @@ use crate::kate_commitment::*;
 use self::better_cs::cs::{PlonkCsWidth4WithNextStepParams, PlonkConstraintSystemParams};
 use crate::plonk::commitments::transcript::*;
 use crate::plonk::fft::cooley_tukey_ntt::*;
+use crate::pairing::ff::{PrimeField, Field};
 
 pub fn transpile<E: Engine, C: crate::Circuit<E>>(circuit: C) -> Result<Vec<(usize, TranspilationVariant)>, SynthesisError> {
     let mut transpiler = Transpiler::<E, PlonkCsWidth4WithNextStepParams>::new();
@@ -122,12 +123,10 @@ pub fn make_precomputations<E: Engine, P: PlonkConstraintSystemParams<E>>(
     setup: &SetupPolynomials<E, P>
 ) -> Result<SetupPolynomialsPrecomputations<E, P>, SynthesisError> {
     let worker = Worker::new();
-
     let precomputations = SetupPolynomialsPrecomputations::from_setup(
         &setup, 
         &worker, 
     )?;
-
     Ok(precomputations)
 }
 
@@ -153,7 +152,6 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
     println!("Synthesis taken {:?}", subtime.elapsed());
 
     let worker = Worker::new();
-
     let now = Instant::now();
 
     let mut transcript = if let Some(p) = transcript_init_params {
@@ -172,7 +170,7 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
     let (first_state, first_message) = assembly.first_step_with_monomial_form_key(
         &worker,
         csr_mon_basis,
-        &mut precomputed_omegas_inv
+        &mut precomputed_omegas_inv,
     )?;
 
     println!("First step (witness commitment) taken {:?}", subtime.elapsed());
@@ -209,7 +207,7 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         csr_mon_basis,
         &setup_precomputations,
         &mut precomputed_omegas_inv,
-        &worker
+        &worker,
     )?;
 
     println!("Second step (grand product commitment) taken {:?}", subtime.elapsed());
@@ -237,7 +235,7 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         &setup_precomputations,
         &mut precomputed_omegas,
         &mut precomputed_omegas_inv,
-        &worker
+        &worker,
     )?;
 
     println!("Third step (quotient calculation and commitment) taken {:?}", subtime.elapsed());
@@ -312,7 +310,7 @@ pub fn prove_native_by_steps<E: Engine, C: crate::plonk::better_cs::cs::Circuit<
         fourth_verifier_message,
         &setup,
         csr_mon_basis,
-        &worker
+        &worker,
     )?;
 
     println!("Fifth step (proving opening at z) taken {:?}", subtime.elapsed());
